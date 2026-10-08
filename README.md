@@ -1,8 +1,8 @@
-# MoneyMap
+# Lario
 
-![MoneyMap Icon](assets/branding/moneymap-icon.png)
+<img src="assets/branding/lario-logo.png" alt="Lario – Nest mit drei Familienpunkten unter einem schützenden Dachbogen" width="320">
 
-**MoneyMap** (Kurzform **MMap**) ist eine lokale Finanzplanungsanwendung mit unabhängiger mobiler Offline-Ausgabenerfassung.
+**Lario** ist eine lokale Finanzplanungsanwendung mit unabhängiger mobiler Offline-Ausgabenerfassung.
 
 ## Planung
 
@@ -20,8 +20,10 @@ Die Entwicklung beginnt als Greenfield-Projekt. Die Schritte und Abnahmekriterie
 
 ## Branding
 
-Das ursprüngliche App-Icon liegt unter [`assets/branding/moneymap-icon.png`](assets/branding/moneymap-icon.png).
+Der aktuelle [Logoentwurf](assets/branding/lario-logo.png) zeigt ein Nest mit drei Familienpunkten unter einem schützenden Dachbogen in Dunkelblau und Türkis. Der Name verbindet den persönlichen Bezug zu Mario mit der Idee eines Haushüters (Lar).
+
+Das Bild enthält Symbol und Schriftzug; eine separate App-Icon-Datei ist noch abzuleiten. Hinweise und der frühere Entwurf stehen unter [assets/branding](assets/branding/README.md).
 
 ## Entwicklungsstand
 
-Dieses Repository enthält zunächst die Planungsgrundlage und das App-Icon.
+Dieses Repository enthält zunächst die Planungsgrundlage und den Logoentwurf. Die Anwendung wird maßgeschneidert für den eigenen Haushalt entwickelt. Ein späterer Vertrieb ist eine Option, keine Voraussetzung für die Entwicklung.

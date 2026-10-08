@@ -1,6 +1,8 @@
-# MoneyMap – Architektur und Umsetzungsplan
+# Lario – Architektur und Umsetzungsplan
 
-**Festgelegter Name:** MoneyMap. **Kurzform:** MMap. Anwendung, Repository, .NET-Solution und Namespace verwenden `MoneyMap`. Der bisherige Projektname GSpend wird für die Neuentwicklung nicht weiterverwendet.
+**Projektname:** Lario. Anwendung, Repository, .NET-Solution und Namespace verwenden `Lario`. Der bisherige Projektname GSpend wird für die Neuentwicklung nicht weiterverwendet.
+
+**Logo:** [Lario-Logo](../assets/branding/lario-logo.png). Der Entwurf zeigt ein Nest mit drei Familienpunkten unter einem schützenden Dachbogen in Dunkelblau und Türkis. Lario verbindet den persönlichen Bezug zu Mario mit der Idee eines Haushüters (Lar).
 
 Stand: 8. Oktober 2026. Ergänzung zu Finanzplanung_Entwicklungskonzept.md. Technischer Vorschlag für die Umsetzung durch einen Entwickler oder ein lokales Coding-LLM. Verbindliche Entscheidung: Greenfield-Neuentwicklung ohne Altdatenmigration. Die frühere Python-Anwendung enthält keine Nutzdaten.
 
@@ -52,10 +54,10 @@ Vier .NET-Projekte reichen als Ausgangspunkt:
 
 | Projekt | Zuständigkeit |
 |---|---|
-| MoneyMap.Domain | Geldbeträge, Buchungsregeln, Reservierungsregeln, Zeiträume und Invarianten; unabhängig von HTTP und Datenbank |
-| MoneyMap.Application | Anwendungsfälle wie Ausgabe buchen, Transfer bestätigen, Vorhaben abschließen und Monatsübersicht berechnen |
-| MoneyMap.Infrastructure | EF Core/SQLite, Migrationen, Backups, Geräteverwaltung und Synchronisationsspeicherung |
-| MoneyMap.Host | API, Authentifizierung, statische Oberfläche, Konfiguration und Programmstart |
+| Lario.Domain | Geldbeträge, Buchungsregeln, Reservierungsregeln, Zeiträume und Invarianten; unabhängig von HTTP und Datenbank |
+| Lario.Application | Anwendungsfälle wie Ausgabe buchen, Transfer bestätigen, Vorhaben abschließen und Monatsübersicht berechnen |
+| Lario.Infrastructure | EF Core/SQLite, Migrationen, Backups, Geräteverwaltung und Synchronisationsspeicherung |
+| Lario.Host | API, Authentifizierung, statische Oberfläche, Konfiguration und Programmstart |
 
 Domain hat keine Abhängigkeit auf Infrastructure. Application nutzt Domain und gezielte Schnittstellen. Infrastructure implementiert diese Schnittstellen. Host verbindet die Komponenten. Keine generische Repository-Schicht um jede EF-Tabelle; Datenzugriffe folgen den tatsächlichen Anwendungsfällen.
 
@@ -194,4 +196,3 @@ PDF-/JPEG-/PNG-Originaldateien werden bereits im Grundumfang als lokale Hostdate
 Die Datensicherung muss Datenbank und referenzierte Dateien konsistent erfassen. Nach Restore wird eine neue Datenbankgeneration ausgegeben. Geräte dürfen ihren jüngeren Stand nicht automatisch verwerfen; fehlende Vorgänge werden kontrolliert wieder abgestimmt.
 
 Spätere mobile Kamera-/Importfunktion nutzt dieselben Attachment-IDs und ergänzt Gerätedateispeicher und wiederaufnehmbaren Dateitransfer. Binärdateien gehören nicht als Base64-Payload in normale Buchungsoperationen. OCR ist ein weiterer späterer Ausbau, der lediglich bestätigungsbedürftige Entwürfe erzeugt.
-

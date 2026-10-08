@@ -1,6 +1,8 @@
-# MoneyMap – Fachliches Entwicklungskonzept
+# Lario – Fachliches Entwicklungskonzept
 
-**Festgelegter Name:** MoneyMap. **Kurzform:** MMap. Anwendung, Repository, .NET-Solution und Namespace verwenden `MoneyMap`. Der bisherige Projektname GSpend wird für die Neuentwicklung nicht weiterverwendet.
+**Projektname:** Lario. Anwendung, Repository, .NET-Solution und Namespace verwenden `Lario`. Der bisherige Projektname GSpend wird für die Neuentwicklung nicht weiterverwendet.
+
+**Logo:** [Lario-Logo](../assets/branding/lario-logo.png). Der Entwurf zeigt ein Nest mit drei Familienpunkten unter einem schützenden Dachbogen in Dunkelblau und Türkis. Lario verbindet den persönlichen Bezug zu Mario mit der Idee eines Haushüters (Lar).
 
 Stand: 8. Oktober 2026. Fachliches Konzept aus dem gemeinsamen Gespräch; Grundlage für ein neues Greenfield-Projekt ohne Übernahme von Altdaten. Technologiestack und Plattformen sind im Architekturplan festgelegt. Das neue Projekt startet ohne Altdaten.
 
@@ -233,4 +235,3 @@ Spätere Android-Erweiterung: Kameraaufnahme, digitaler Import/Teilen, lokale Of
 ## 18. Ergänzende Abnahmen
 
 Steuerlich markierte 80 € einer 120-€-Ausgabe ändern den Finanzsaldo um 120 € und erscheinen mit 80 € in der Steuersammlung. Kategorievorbelegungen und ausdrückliche Ausnahmen bleiben historisch stabil. Unterkategorien summieren sich exakt einmal. PDF-/Bildnachweise lassen sich nach Neustart öffnen und mit Zuordnung exportieren. Nach Restore sind Buchungen und Belegdateien zusammen verfügbar. Mobile Geräte erkennen eine neue Restoregeneration und behalten neuere gespeicherte Eingaben für die Wiederabstimmung.
-

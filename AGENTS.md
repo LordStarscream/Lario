@@ -1,10 +1,10 @@
-# MoneyMap – Anweisungen für Coding-Agenten
+# Lario – Anweisungen für Coding-Agenten
 
 Diese Datei gilt für das gesamte Repository und ist der Einstieg für pi. Starte pi im Repository-Hauptverzeichnis. Arbeite mit den vorhandenen Werkzeugen; zusätzliche Agenten, Erweiterungen oder externe Dienste sind nicht erforderlich. Nutzeraufträge haben Vorrang vor diesen Projektkonventionen.
 
 ## Auftrag und maßgebliche Dokumente
 
-MoneyMap (Kurzform MMap) ist eine lokale Finanzplanung mit unabhängiger Android-Ausgabenerfassung. Greenfield: keine Altdatenmigration, keine Kompatibilität zur früheren Python-Anwendung GSpend.
+Lario ist eine lokale Finanzplanung mit unabhängiger Android-Ausgabenerfassung. Greenfield: keine Altdatenmigration, keine Kompatibilität zur früheren Python-Anwendung GSpend.
 
 Lies vor der ersten Implementierung:
 1. `docs/Finanzplanung_Implementierungsplan.md`
@@ -22,7 +22,7 @@ Bei dokumentierten Abweichungen gelten die aktuellen Entscheidungen im Implement
 - Kurz Ziel, Voraussetzungen und geplante Prüfungen nennen; anschließend den beauftragten Umfang einschließlich Prüfungen fertigstellen.
 - Kleine, überprüfbare Änderungen bevorzugen. Keine umfassenden Refactorings, zusätzlichen Frameworks oder vorgezogenen Funktionen ohne konkreten Bedarf.
 - Nach Neustart oder Kontextkürzung den aktuellen Auftrag, `git diff` und relevante Planabschnitte erneut prüfen. Session-Erinnerung ist kein Beleg für bestandene Tests.
-- Keine lokalen Provider, API-Schlüssel oder globale pi-Konfiguration verändern. Modellwahl bleibt beim Nutzer. Keine LLM-Laufzeit in MoneyMap einbauen.
+- Keine lokalen Provider, API-Schlüssel oder globale pi-Konfiguration verändern. Modellwahl bleibt beim Nutzer. Keine LLM-Laufzeit in Lario einbauen.
 - Routineentscheidungen eigenständig treffen. Fehlende Werkzeuge, gesperrte Downloads und nicht verfügbare Gerätetests klar benennen; nicht als erfolgreiche Abnahme darstellen.
 
 ## Architektur und Technologie
@@ -31,14 +31,14 @@ Modularer Monolith, Linux als primäre Plattform:
 - .NET 10 / ASP.NET Core, EF Core und SQLite.
 - Angular 22 für Web; Angular/Capacitor 8 für Android, eigener dauerhafter SQLite-Speicher.
 - Kompatible Patchstände und Plugin-Versionen vor Festlegung prüfen und in `global.json`, Projektdateien und Lockfiles festhalten. Keine stillen Major-Upgrades.
-- `MoneyMap.Domain`: Werte, Regeln und Invarianten; keine HTTP-, EF- oder UI-Abhängigkeit.
-- `MoneyMap.Application`: Anwendungsfälle, Domain und gezielte Schnittstellen.
-- `MoneyMap.Infrastructure`: EF/SQLite, Speicher, Migrationen und Schnittstellenimplementierungen.
-- `MoneyMap.Host`: API, Authentifizierung, Konfiguration und statische Weboberfläche.
+- `Lario.Domain`: Werte, Regeln und Invarianten; keine HTTP-, EF- oder UI-Abhängigkeit.
+- `Lario.Application`: Anwendungsfälle, Domain und gezielte Schnittstellen.
+- `Lario.Infrastructure`: EF/SQLite, Speicher, Migrationen und Schnittstellenimplementierungen.
+- `Lario.Host`: API, Authentifizierung, Konfiguration und statische Weboberfläche.
 
 C# ist die maßgebliche Finanzengine. UI und mobile App teilen Eingabekomponenten und generierte OpenAPI-Verträge, keine unabhängig rechnende vollständige Saldenengine. Wohnung ist eine Ansicht derselben Fachlogik. Keine Microservices, Broker oder generische Repository-Abstraktion für jede Tabelle.
 
-Vorgesehene Ordner, sobald der jeweilige Schritt sie benötigt: `src/` für .NET, `tests/` für .NET-Tests, `frontend/` für den gemeinsamen Angular-Workspace, `docs/` für Pläne und Betriebsanleitungen, `assets/branding/` für das Icon. Bestehende sinnvolle Struktur erhalten. Keine leeren Zukunftsprojekte anlegen.
+Vorgesehene Ordner, sobald der jeweilige Schritt sie benötigt: `src/` für .NET, `tests/` für .NET-Tests, `frontend/` für den gemeinsamen Angular-Workspace, `docs/` für Pläne und Betriebsanleitungen, `assets/branding/` für Logo und App-Icon. Bestehende sinnvolle Struktur erhalten. Keine leeren Zukunftsprojekte anlegen.
 
 ## Verbindliche Finanzregeln
 

@@ -1,6 +1,8 @@
-# MoneyMap – Geprüfter Implementierungsplan
+# Lario – Geprüfter Implementierungsplan
 
-**Festgelegter Name:** MoneyMap. **Kurzform:** MMap. Anwendung, Repository, .NET-Solution und Namespace verwenden `MoneyMap`. Der bisherige Projektname GSpend wird für die Neuentwicklung nicht weiterverwendet.
+**Projektname:** Lario. Anwendung, Repository, .NET-Solution und Namespace verwenden `Lario`. Der bisherige Projektname GSpend wird für die Neuentwicklung nicht weiterverwendet.
+
+**Logo:** [Lario-Logo](../assets/branding/lario-logo.png). Der Entwurf zeigt ein Nest mit drei Familienpunkten unter einem schützenden Dachbogen in Dunkelblau und Türkis. Lario verbindet den persönlichen Bezug zu Mario mit der Idee eines Haushüters (Lar).
 
 Stand: 8. Oktober 2026. Verbindlicher Arbeitsplan für eine Greenfield-Neuentwicklung. Ergänzt und konkretisiert Fachkonzept und Architekturplan. Bei Abweichungen gelten die hier dokumentierten aktuellen Entscheidungen.
 
@@ -95,7 +97,7 @@ Zu Beginn Git-Repository mit kleinen nachvollziehbaren Commits und reproduzierba
 
 **Voraussetzung:** 0.
 
-**Implementieren:** MoneyMap.Domain, Application, Infrastructure, Host; Testprojekte und Angular-Workspace für Haupt- und Mobiloberfläche. Host liefert minimale Oberfläche und Health-/Versionsendpunkt. SDK/Pakete festschreiben, Konfiguration und lokales Datenverzeichnis anlegen. OpenAPI-Vertrag und TypeScript-Generierung vorbereiten.
+**Implementieren:** Lario.Domain, Application, Infrastructure, Host; Testprojekte und Angular-Workspace für Haupt- und Mobiloberfläche. Host liefert minimale Oberfläche und Health-/Versionsendpunkt. SDK/Pakete festschreiben, Konfiguration und lokales Datenverzeichnis anlegen. OpenAPI-Vertrag und TypeScript-Generierung vorbereiten.
 
 **Prüfen:** Aus frischem Checkout bauen, Host unter Linux starten, Browser öffnen, Testlauf durchführen und API-Client generieren. Neustart darf keine leere zweite Datenablage erzeugen.
 
