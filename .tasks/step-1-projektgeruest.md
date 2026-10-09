@@ -54,6 +54,9 @@ in Schritt 2 direkt mit `@capacitor/core` + `@capacitor/android` 8.5.3 (geprüft
       Konfiguration `Lario:DataDirectory`, ASPNETCORE_URLS-Default `http://localhost:8080`
       → Refpacks verfügbar (System-SDK 10.0.112); /api/health, /api/version, /, /openapi/v1.json
       und SPA-Fallback per curl 200 verifiziert (9. Okt. 2026)
+      → Abnahmekorrektur: generierter Client ruft API relativ zum Origin auf
+        (`OpenAPI.BASE = ''` in `app.config.ts`, außerhalb des generierten Codes);
+        Override im ausgelieferten Bundle verifiziert
 - [x] Task 6: Domain-Tests (24/24: Money-Referenzwerte, Grenzfälle, Overflow) +
       Infrastructure-Tests (6/6: Datenverzeichnis Determinismus/Neustart, XDG-Override) mit xUnit
 - [x] Task 7: Angular-Workspace in `frontend/`: Apps `host` + `mobile`, ESLint
@@ -66,8 +69,9 @@ in Schritt 2 direkt mit `@capacitor/core` + `@capacitor/android` 8.5.3 (geprüft
       Stand grün; Host-Start auf Linux, Health-/Versionsendpunkt und Weboberfläche per curl
       verifiziert; Neustart erzeugt keine zweite Datenablage
       → Klon nach /tmp/lario-checkout: build 0 Fehler, 30/30 Tests, npm ci, lint grün,
-        beide Builds 0 Warnungen (9. Okt. 2026). Datenverzeichnis wird in Schritt 1 bewusst
-        nicht angelegt (mit der DB in Schritt 3); Auflösung ist deterministisch und 6/6 getestet.
+        beide Builds 0 Warnungen (9. Okt. 2026). Datenverzeichnis wird beim Host-Start
+        angelegt (EnsureCreated, idempotent — Neustart ohne zweite Ablage); Auflösung
+        deterministisch und 8/8 getestet (Abnahmekorrektur 9. Okt.).
 - [x] Task 10: README: reproduzierbarer Build-/Startweg; Übergabemeldung;
       Commit nur auftragsbezogener Dateien (4 thematische Commits, kein .pi/, keine
       Binärdaten); **Push erst nach Nutzerfreigabe**
@@ -96,9 +100,33 @@ in Schritt 2 direkt mit `@capacitor/core` + `@capacitor/android` 8.5.3 (geprüft
       + idempotent per Test gesichert; substanzielle Prüfung mit der DB in Schritt 3)
 - [x] Dokumentierter Start-/Buildweg (README)
 
+## Abnahmekorrekturen (9. Okt. 2026, 4 Punkte)
+
+1. **OpenAPI-Basisadresse**: generierter Client hatte `BASE: 'http://localhost:8080'`
+   → `OpenAPI.BASE = ''` in `frontend/apps/host/src/app/app.config.ts` (außerhalb des
+   generierten Codes; Host auf jedem Port/Rechner, im Devserver via proxy.conf.json).
+2. **XDG_DATA_HOME**: `LarioDataPaths.Resolve` liest die Umgebung `XDG_DATA_HOME`, wenn
+   kein expliziter Parameter übergeben wird (Host-Fall); expliziter Parameter gewinnt
+   weiterhin für Tests. 2 neue Tests + Default-Test umweltunabhängig (32/32 grün).
+   Host-Level verifiziert: `XDG_DATA_HOME=/tmp/lario-xdg-check` → Health meldet
+   `/tmp/lario-xdg-check/lario`, Verzeichnis angelegt.
+3. **Verzeichnisanlage**: Host legt Datenverzeichnis beim Start an
+   (`Resolve(...).EnsureCreated()` in Program.cs) — Neustart findet bestehende Ablage,
+   es entsteht keine zweite. Verifiziert: `~/.local/share/lario` existiert nach Start.
+4. **README**: korrigiert (SDK 10.0.112 statt „10.0.1xx", eingebauter .NET-OpenAPI statt
+   NSwag, ESLint 10.12.0, tatsächliche Testanzahl 32, keine „Architektur-Tests");
+   Startanleitung mit Umgebungsnotiz ergänzt.
+
+**Umgebungsnotiz (diese Maschine):** .NET-SDK liegt in `/usr/share/dotnet`,
+Microsoft-AspNetCore-Runtime nur in `~/.dotnet/shared`. `dotnet run` / `dotnet <dll>`
+(Muxer) finden die Runtime nicht; Apphost mit `DOTNET_ROOT=$HOME/.dotnet` schon.
+Dokumentiert im README. Systemseitige Sanierung (z. B. `aspnetcore`-Paket oder
+Symlink) nur nach Nutzerfreigabe.
+
 ## Ergebnis (9. Okt. 2026)
 
-- .NET: `dotnet build Lario.slnx` 0 Fehler/0 Warnungen; `dotnet test` 30/30 grün
+- .NET: `dotnet build Lario.slnx` 0 Fehler/0 Warnungen; `dotnet test` 32/32 grün
+  (Money 24, LarioDataPaths 8)
 - Frontend: `npm ci && npm run lint && npm run build` grün (host + mobile, 0 Warnungen)
 - Host läuft auf http://localhost:8080: /api/health, /api/version, / (SPA „Lario"),
   /openapi/v1.json, SPA-Fallback für Client-Routen — alle 200
