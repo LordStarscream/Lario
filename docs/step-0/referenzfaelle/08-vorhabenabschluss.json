@@ -2,8 +2,9 @@
   "meta": {
     "name": "Referenzfall 8: Vorhabenabschluss mit zweckerhaltendem Parken",
     "planBezug": "Implementierungsplan §5 Schritt 0; Vorhaben Schritt 14",
-    "zweck": "Vorhaben-Lebenszyklus: 2.000,00 € aus pool-flex in proj-urlaub reservieren, 1.500,00 € zweckerhaltend auf das verzinstes Konto parken, zurücküberweisen, 1.750,00 € als Vorhabenausgabe bezahlen und abschließen: 250,00 € frei (an pool-flex freigegeben), keine Zusatzbuchung beim Abschluss.",
-    "rechenvertrag": "docs/step-0/rechenvertrag.md — §5.3 (Vorhaben: reserviert → laufend → abgeschlossen; Reservierung verändert keinen Kontostand; Transfers erhalten Reservierungen; Ausgabe reduziert die Reservierung; Abschluss gibt nur den Rest frei; Erstattung nach Abschluss → Herkunftspool), §3.3, §3.8",
+    "zweck": "Vorhaben-Lebenszyklus: 2.000,00 € aus pool-flex für proj-urlaub reservieren, 1.500,00 € zweckerhaltend auf das verzinstes Konto parken, zurücküberweisen, 1.750,00 € als Vorhabenausgabe bezahlen und abschließen: 250,00 € frei (wieder im Herkunftspool pool-flex), keine Zusatzbuchung beim Abschluss.",
+    "modellanmerkung": "Die Reservierung ist ein Anspruch im Herkunftspool, KEIN Pooltransfer (Rechenvertrag §3.3: 'Reservierung: Konten unverändert, Poolbestand unverändert; der frei verfügbare Anteil sinkt, die Reservierung steigt'; Plan: 'Reservierung | Unverändert | Bestand unverändert | Frei verfügbar sinkt'). pool-flex behält in allen Zuständen seinen Bestand; der reservierte Anteil sinkt den frei verfügbaren Anteil. pool-vorhaben-urlaub existiert in den Stammdaten als an proj-urlaub verknüpfter Pool, hält in Version 1 aber keinen eigenen Bestand (0 in allen Zuständen) — die Reservierung wird über den Reservierungsnachweis des Vorhabens getrackt, nicht über Poolbestände. Gilt analog für den Abschluss (§3.3: 'Abschluss/Abbruch: Konten unverändert, Poolbestand unverändert; der Rest wird im Herkunftspool wieder frei').",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §5.3 (Vorhaben: reserviert → laufend → abgeschlossen; Reservierung verändert keinen Kontostand, nur die Reservierung im Pool; Transfers erhalten Reservierungen; Ausgabe reduziert die Reservierung; Abschluss gibt nur den Rest frei; Erstattung nach Abschluss → Herkunftspool), §3.3, §3.4, §3.8",
     "planPruefen": "Implementierungsplan Schritt 14 Prüfen: '2.000 € reservieren, 1.500 € auf verzinstes Konto verschieben, zurücküberweisen, 1.750 € bezahlen und abschließen: 250 € frei, keine Zusatzbuchung beim Abschluss. Ausgabe über Reservierung benötigt erkennbare Zusatzdeckung.'"
   },
   "startzustand": {
@@ -28,10 +29,10 @@
     "reservierungen": [
       {
         "projektId": "proj-urlaub",
-        "poolId": "pool-vorhaben-urlaub",
+        "poolId": "pool-flex",
         "betrag": 0,
         "status": "reserviert",
-        "hinweis": "proj-urlaub existiert mit status reserviert und herkunftPool pool-flex (stammdaten.json); die konkrete Reservierungsbuchung ist vorgang 1 (bk-2026-1207)."
+        "hinweis": "proj-urlaub existiert mit status reserviert und herkunftPool pool-flex (stammdaten.json); die Reservierung ist ein Anspruch im Herkunftspool pool-flex (meta.modellanmerkung). Die konkrete Reservierungsbuchung ist vorgang 1 (bk-2026-1207)."
       }
     ],
     "zuordnung": [
@@ -55,13 +56,12 @@
         "date": "2026-11-09",
         "type": "reservierung",
         "fromPoolId": "pool-flex",
-        "toPoolId": "pool-vorhaben-urlaub",
-        "amount": 200000,
         "projectId": "proj-urlaub",
+        "amount": 200000,
         "note": "Urlaub reservieren",
         "baseRevision": 1
       },
-      "beschreibung": "Reservierung: 2.000,00 € von pool-flex in pool-vorhaben-urlaub (status reserviert). Vorhaben proj-urlaub reserviert damit 200000. Konten und Poolbestände bleiben unverändert — nur der frei verfügbare Anteil sinkt, die Reservierung steigt.",
+      "beschreibung": "Reservierung: 2.000,00 € aus pool-flex für proj-urlaub reserviert. KEIN Pooltransfer: Konten und Poolbestände bleiben unverändert (pool-flex 200000) — nur der frei verfügbare Anteil sinkt (200000 → 0), die Reservierung steigt (0 → 200000). Die Zuordnungsmatrix ändert sich nicht.",
       "zwischenstand": {
         "kontostaende": {
           "acc-haupt": 200000,
@@ -70,17 +70,31 @@
           "acc-wohnung": 0
         },
         "poolbestaende": {
-          "pool-flex": 0,
+          "pool-flex": 200000,
           "pool-freizeit": 30000,
           "pool-wohnung": 0,
           "pool-jahreskosten": 0,
           "pool-ruecklage": 0,
-          "pool-vorhaben-urlaub": 200000
+          "pool-vorhaben-urlaub": 0
+        },
+        "reservierungen": [
+          {
+            "projektId": "proj-urlaub",
+            "poolId": "pool-flex",
+            "betrag": 200000,
+            "status": "reserviert"
+          }
+        ],
+        "freie_salden": {
+          "pool-flex": 0,
+          "pool-freizeit": 30000,
+          "pool-vorhaben-urlaub": 0,
+          "hinweis": "Freier Flex 0: der gesamte Bestand 200000 ist reserviert (Reservierung ≠ Bestand — der Bestand bleibt 200000, nur die freie Verfügbarkeit sinkt)."
         },
         "zuordnung": [
           {
             "accountId": "acc-haupt",
-            "poolId": "pool-vorhaben-urlaub",
+            "poolId": "pool-flex",
             "amount": 200000
           },
           {
@@ -104,7 +118,7 @@
         "note": "Reservierung auf verzinstes Konto parken",
         "baseRevision": 1
       },
-      "beschreibung": "Zweckerhaltender Transfer 1.500,00 € von acc-haupt auf acc-spar: die 150000 gehören weiterhin zu proj-urlaub via pool-vorhaben-urlaub — der Kontowechsel ändert den Zweck nicht (Reservierung bleibt erhalten).",
+      "beschreibung": "Zweckerhaltender Transfer 1.500,00 € von acc-haupt auf acc-spar: die reservierten 150000 behalten ihren Zweck (Anspruch auf pool-flex für proj-urlaub) — der Kontowechsel ändert den Zweck nicht, die Reservierung wird erhalten (Rechenvertrag §3.3, §5.3). Die Zuordnung wandert mit (acc-haupt/flex 200000 → 50000, acc-spar/flex 0 → 150000); Pools und Reservierungsbetrag bleiben unverändert.",
       "zwischenstand": {
         "kontostaende": {
           "acc-haupt": 50000,
@@ -113,17 +127,31 @@
           "acc-wohnung": 0
         },
         "poolbestaende": {
-          "pool-flex": 0,
+          "pool-flex": 200000,
           "pool-freizeit": 30000,
           "pool-wohnung": 0,
           "pool-jahreskosten": 0,
           "pool-ruecklage": 0,
-          "pool-vorhaben-urlaub": 200000
+          "pool-vorhaben-urlaub": 0
+        },
+        "reservierungen": [
+          {
+            "projektId": "proj-urlaub",
+            "poolId": "pool-flex",
+            "betrag": 200000,
+            "status": "reserviert",
+            "anmerkung": "Wird über den Kontowechsel erhalten: 150000 physisch auf acc-spar, 50000 auf acc-haupt (Zuordnung)."
+          }
+        ],
+        "freie_salden": {
+          "pool-flex": 0,
+          "pool-freizeit": 30000,
+          "pool-vorhaben-urlaub": 0
         },
         "zuordnung": [
           {
             "accountId": "acc-haupt",
-            "poolId": "pool-vorhaben-urlaub",
+            "poolId": "pool-flex",
             "amount": 50000
           },
           {
@@ -133,7 +161,7 @@
           },
           {
             "accountId": "acc-spar",
-            "poolId": "pool-vorhaben-urlaub",
+            "poolId": "pool-flex",
             "amount": 150000
           }
         ]
@@ -152,7 +180,7 @@
         "note": "Reservierung zurückholen",
         "baseRevision": 1
       },
-      "beschreibung": "Rücktransfer 1.500,00 € von acc-spar auf acc-haupt, zweckerhaltend: die Vorhaben-Zuordnung (pool-vorhaben-urlaub) wandert zurück, proj-urlaub bleibt reserviert.",
+      "beschreibung": "Rücktransfer 1.500,00 € von acc-spar auf acc-haupt, zweckerhaltend: die Zuordnung wandert zurück (acc-spar/flex 150000 → 0, acc-haupt/flex 50000 → 200000), proj-urlaub bleibt mit 200000 reserviert; Pools und Reservierungsbetrag unverändert.",
       "zwischenstand": {
         "kontostaende": {
           "acc-haupt": 200000,
@@ -161,17 +189,30 @@
           "acc-wohnung": 0
         },
         "poolbestaende": {
-          "pool-flex": 0,
+          "pool-flex": 200000,
           "pool-freizeit": 30000,
           "pool-wohnung": 0,
           "pool-jahreskosten": 0,
           "pool-ruecklage": 0,
-          "pool-vorhaben-urlaub": 200000
+          "pool-vorhaben-urlaub": 0
+        },
+        "reservierungen": [
+          {
+            "projektId": "proj-urlaub",
+            "poolId": "pool-flex",
+            "betrag": 200000,
+            "status": "reserviert"
+          }
+        ],
+        "freie_salden": {
+          "pool-flex": 0,
+          "pool-freizeit": 30000,
+          "pool-vorhaben-urlaub": 0
         },
         "zuordnung": [
           {
             "accountId": "acc-haupt",
-            "poolId": "pool-vorhaben-urlaub",
+            "poolId": "pool-flex",
             "amount": 200000
           },
           {
@@ -190,7 +231,6 @@
         "type": "expense",
         "account": "acc-haupt",
         "totalAmount": 175000,
-        "poolId": "pool-vorhaben-urlaub",
         "projectId": "proj-urlaub",
         "categoryId": "cat-frei-urlaub",
         "note": "Urlaub bezahlen",
@@ -199,7 +239,7 @@
           {
             "id": "sp-8",
             "amount": 175000,
-            "poolId": "pool-vorhaben-urlaub",
+            "poolId": "pool-flex",
             "categoryId": "cat-frei-urlaub",
             "tax": {
               "relevant": false
@@ -207,7 +247,7 @@
           }
         ]
       },
-      "beschreibung": "Vorhabenausgabe: 1.750,00 € vom Hauptkonto, Zuordnung an proj-urlaub via pool-vorhaben-urlaub (Kategorie cat-frei-urlaub, steuerlich relevant=false laut taxPreset). Die Reservierung sinkt: 200000 − 175000 = 25000 verbleiben.",
+      "beschreibung": "Vorhabenausgabe: 1.750,00 € vom Hauptkonto, verknüpft mit proj-urlaub (projectId) und Kategorie cat-frei-urlaub (steuerlich relevant=false laut taxPreset). Der Split verbraucht pool-flex (den Herkunftspool, in dem die Reservierung liegt): Pool 200000 → 25000. Die zugeordnete Reservierung sinkt um denselben Betrag: 200000 → 25000 (Rechenvertrag §3.3: 'Zugeordnete Reservierung sinkt'). Die Ausgabe ist durch die Reservierung gedeckt (175000 ≤ 200000).",
       "zwischenstand": {
         "kontostaende": {
           "acc-haupt": 25000,
@@ -216,17 +256,32 @@
           "acc-wohnung": 0
         },
         "poolbestaende": {
-          "pool-flex": 0,
+          "pool-flex": 25000,
           "pool-freizeit": 30000,
           "pool-wohnung": 0,
           "pool-jahreskosten": 0,
           "pool-ruecklage": 0,
-          "pool-vorhaben-urlaub": 25000
+          "pool-vorhaben-urlaub": 0
+        },
+        "reservierungen": [
+          {
+            "projektId": "proj-urlaub",
+            "poolId": "pool-flex",
+            "betrag": 25000,
+            "status": "reserviert",
+            "anmerkung": "Rest-Reservierung nach Ausgabe 175000: 200000 − 175000 = 25000; verbleibt bis zum Abschluss reserviert (freier Flex 0)."
+          }
+        ],
+        "freie_salden": {
+          "pool-flex": 0,
+          "pool-freizeit": 30000,
+          "pool-vorhaben-urlaub": 0,
+          "hinweis": "Freier Flex bleibt 0: die Rest-Reservierung 25000 ist bis zum Abschluss nicht frei verfügbar."
         },
         "zuordnung": [
           {
             "accountId": "acc-haupt",
-            "poolId": "pool-vorhaben-urlaub",
+            "poolId": "pool-flex",
             "amount": 25000
           },
           {
@@ -247,7 +302,7 @@
         "freigegebenAn": "pool-flex",
         "freigegebenerRest": 25000
       },
-      "beschreibung": "Vorhabenabschluss: proj-urlaub wird abgeschlossen. Der Rest von 25000 wird an den Herkunftspool pool-flex freigegeben — OHNE zusätzliche Buchung (KEINE Buchung im Journal für den Abschluss selbst). Bereits verbrauchte Anteile (175000) fließen nicht zurück.",
+      "beschreibung": "Vorhabenabschluss: proj-urlaub wird abgeschlossen. KEINE Buchung, KEINE Kontobewegung, KEINE Poolbewegung (Rechenvertrag §3.3: 'Abschluss/Abbruch: Konten unverändert, Poolbestand unverändert; der Rest wird im Herkunftspool wieder frei'): nur die Rest-Reservierung 25000 wird aufgelöst — der Betrag wird im Herkunftspool pool-flex wieder frei (freier Flex 0 → 25000). Bereits verbrauchte Anteile (175000) fließen nicht zurück.",
       "zwischenstand": {
         "kontostaende": {
           "acc-haupt": 25000,
@@ -261,6 +316,21 @@
           "pool-wohnung": 0,
           "pool-jahreskosten": 0,
           "pool-ruecklage": 0,
+          "pool-vorhaben-urlaub": 0
+        },
+        "reservierungen": [
+          {
+            "projektId": "proj-urlaub",
+            "poolId": "pool-flex",
+            "betrag": 0,
+            "status": "abgeschlossen",
+            "freigegebenAn": "pool-flex",
+            "hinweis": "Nur der Rest (25000) wird freigegeben, nicht die Summe aus reserviert und ausgegeben (200000)."
+          }
+        ],
+        "freie_salden": {
+          "pool-flex": 25000,
+          "pool-freizeit": 30000,
           "pool-vorhaben-urlaub": 0
         },
         "zuordnung": [
@@ -278,7 +348,7 @@
       }
     }
   ],
-  "erwarteter_endzustand": {
+  "endzustand": {
     "kontostaende": {
       "acc-haupt": 25000,
       "acc-freizeit": 30000,
@@ -296,38 +366,51 @@
     "reservierungen": [
       {
         "projektId": "proj-urlaub",
-        "poolId": "pool-vorhaben-urlaub",
+        "poolId": "pool-flex",
         "betrag": 0,
         "status": "abgeschlossen",
         "freigegebenAn": "pool-flex",
-        "freigegebenerRest": 25000,
-        "hinweis": "Rest 25000 freigegeben an pool-flex; bereits verbrauchte 175000 fließen nicht zurück."
+        "freigegebenerRest": 25000
       }
     ],
     "freie_salden": {
       "pool-flex": 25000,
       "pool-freizeit": 30000,
-      "pool-wohnung": 0,
-      "pool-jahreskosten": 0,
-      "pool-ruecklage": 0,
-      "pool-vorhaben-urlaub": 0,
-      "kontoliquiditaet": {
-        "acc-haupt": 25000,
-        "acc-freizeit": 30000,
-        "acc-spar": 0,
-        "acc-wohnung": 0
-      }
+      "pool-vorhaben-urlaub": 0
     },
-    "offene_ausgleichspositionen": []
+    "kontoliquiditaet": {
+      "acc-haupt": 25000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "zuordnung": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 25000
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 30000
+      }
+    ]
   },
   "pruefungen": [
-    "Reservierung verändert keinen Kontostand: nach vorgang 1 bleiben acc-haupt 200000 und acc-spar 0; pool-vorhaben-urlaub 0 → 200000, pool-flex 200000 → 0 (nur die Reservierung im Pool steigt, der frei verfügbare Anteil sinkt).",
-    "Zweckerhaltender Transfer: die 150000 behalten ihre Vorhaben-Zuordnung (pool-vorhaben-urlaub) über den Kontowechsel haupt → spar → haupt (vorgaenge 2–3); Pools bleiben in beiden Transfers unverändert (vorhaben-urlaub 200000).",
-    "Vorhabenausgabe 175000 reduziert pool-vorhaben-urlaub von 200000 auf 25000; Kontostand acc-haupt 200000 → 25000; Splitregel: 175000 = totalAmount.",
-    "Abschluss: Rest 25000 wird an den Herkunftspool pool-flex freigegeben, OHNE zusätzliche Buchung (keine Buchung im Journal für den Abschluss selbst); bereits verbrauchte 175000 fließen nicht zurück.",
-    "Summe Konten = Summe Pools in jedem Zwischenzustand: Start 230000 (200000 + 30000); nach Reservierung, Parken, Rücktransfer weiterhin 230000; nach Ausgabe 175000 sinkt sie auf 55000 (25000 + 30000); der Abschluss ändert die Summe nicht (55000) — Reservierung und Transfers sind reine Umverteilungen.",
-    "Ausgabe über Reservierung ohne ausreichende Zusatzdeckung wäre blockiert: z. B. eine Ausgabe von 300000 > Reservierung 200000 benötigt erkennbare Zusatzdeckung (hier nicht der Fall — 175000 ≤ 200000).",
-    "Erstattung nach Abschluss (z. B. 5000 nach Abschluss) fließt standardmäßig in pool-flex zurück und öffnet proj-urlaub nicht wieder.",
-    "Keine Doppelbindung: die Reservierung entsteht genau einmal (bk-2026-1207), die Ausgabe reduziert sie nur; keine Ausgleichspositionen."
+    "Reservierung verändert keinen Kontostand und keinen Poolbestand (Plan: 'Reservierung | Unverändert | Bestand unverändert | Frei verfügbar sinkt'; Rechenvertrag §3.3): nach Vorgang 1 sind acc-haupt 200000, pool-flex 200000 — nur freier Flex sinkt (200000 → 0) und die Reservierung steigt (0 → 200000).",
+    "Die Reservierung ist ein Anspruch im Herkunftspool, KEIN Pooltransfer: pool-vorhaben-urlaub hat in allen fünf Zuständen Bestand 0; die Zuordnungsmatrix ist nach der Reservierung unverändert (acc-haupt/pool-flex 200000).",
+    "Zweckerhaltender Transfer erhält die Reservierung (Rechenvertrag §5.3: 'Transfers erhalten Reservierungen'): nach Vorgang 2 sind Pools unverändert (flex 200000), die Reservierung 200000 bleibt erhalten, die Zuordnung wandert mit dem Geld (acc-haupt/flex 50000, acc-spar/flex 150000); Rücktransfer (Vorgang 3) dreht das um, ohne Pool oder Reservierung zu ändern.",
+    "Vorhabenausgabe 175000: Konto acc-haupt 200000 → 25000; Split verbraucht den Herkunftspool pool-flex 200000 → 25000; die zugeordnete Reservierung sinkt 200000 → 25000 (Rechenvertrag §3.3: 'Zugeordnete Reservierung sinkt'); Splitregel: 175000 = totalAmount 175000.",
+    "Keine Zusatzbuchung beim Abschluss: Vorgang 5 hat buchungen null, Konten und Poolbestände bleiben unverändert (acc-haupt 25000, pool-flex 25000); nur die Reservierung wird aufgelöst: 25000 → 0, status abgeschlossen, freigegebenAn pool-flex (Herkunftspool).",
+    "Der Rest wird im Herkunftspool wieder frei: freier pool-flex 0 → 25000; bereits verbrauchte 175000 fließen nicht zurück (freier Flex 25000, nicht 200000).",
+    "In jedem Zwischenstand: Summe Konten = Summe Pools (Start 230000; nach Reservierung/Parken/Rücktransfer 230000; nach Ausgabe 55000; End 55000) und jede Zeile der Zuordnungsmatrix summiert zum Kontostand, jede Spalte zum Poolbestand (End: Zeile acc-haupt 25000 = Konto 25000; Zeile acc-freizeit 30000 = Konto 30000; Spalte pool-flex 25000 = Pool 25000; Spalte pool-freizeit 30000 = Pool 30000).",
+    "Freie Salden werden separat geführt: Reservierung ≠ Bestand — nach Vorgang 1 ist freier Flex 0, obwohl der Poolbestand 200000 beträgt; nach der Ausgabe bleibt freier Flex 0 trotz Rest-Reservierung 25000; erst der Abschluss gibt die 25000 frei."
+  ],
+  "anmerkungen": [
+    "Modellentscheidung (Rechenvertrag §3.3/§5.3): Die Reservierung ist ein Anspruch im Herkunftspool, kein Pooltransfer — pool-flex behält in allen Zuständen seinen Bestand, der reservierte Anteil senkt nur die freie Verfügbarkeit. pool-vorhaben-urlaub ist der in den Stammdaten an proj-urlaub verknüpfte Pool; in Version 1 hält er keinen eigenen Bestand (0 in allen Zuständen), weil die Reservierung über den Reservierungsnachweis des Vorhabens getrackt wird. Damit sind Reservierung und Abschluss keine Kontobewegungen und keine Poolbewegungen.",
+    "Die Vorhabenausgabe (bk-2026-1210) verbraucht über ihren Split den Herkunftspool pool-flex und reduziert die zugeordnete Reservierung — nicht pool-vorhaben-urlaub (dessen Bestand 0 ist). Die Verknüpfung zum Vorhaben trägt das Feld projectId der Buchung; die steuerliche Voreinstellung relevant=false für cat-frei-urlaub aus der Stammdaten wird geerbt, ohne eine Steuerberechnung auszulösen.",
+    "Startabweichung: acc-haupt startet mit 200000 statt des Regelankers 100000, damit Reservierung (200000), Transfer (150000) und Ausgabe (175000) ohne negatives Konto ablaufen — die Vorgangsbeträge sind vom Plan vorgegeben (Schritt 14 Prüfen).",
+    "Ausgabe über Reservierung benötigt erkennbare Zusatzdeckung (Implementierungsplan Schritt 14 Prüfen; Rechenvertrag §5.3): wäre die Ausgabe größer als die Reservierung, müsste die Zusatzdeckung sichtbar benannt werden — dieser Fall ist bewusst nicht Teil des Referenzszenarios."
   ]
 }
