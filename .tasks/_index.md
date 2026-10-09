@@ -1,7 +1,7 @@
 # Aufgaben-Index — Lario
 _Last updated: 9. Okt. 2026_
 
-**Aktiv:** Schritt 1 (Branch `step/1-projektgeruest`, abgeleitet von `step/0-rechenvertrag` — Schritt 0 vom Nutzer abgenommen, Merge nach main noch offen)
+**Nächster:** Schritt 2 (Android-/LAN-Prototyp) — Schritt 1 fertig (9. Okt. 2026, Branch `step/1-projektgeruest`, wartet auf Push nach Nutzerfreigabe). Schritt 0 (Branch `step/0-rechenvertrag`) abgenommen, Merge nach main noch offen.
 
 ## Legende
 
@@ -26,7 +26,7 @@ _Last updated: 9. Okt. 2026_
 | Schritt | Aufgabe | Kurzbeschreibung | Voraussetzungen | Status |
 |---|---|---|---|---|
 | 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario)); Review-Runde 1 (`e91f156`), 2 (`e7bf514`: Fall 8 — Reservierung ist Anspruch im Herkunftspool, kein Pooltransfer) und 3 (`60f3407`: Revisionskonzept vereinheitlicht, Fall-4-Richtung, Fall-8-Format) umgesetzt; Runden 1–4 **gepusht** auf `origin/step/0-rechenvertrag` (Runde 4: `4773461` Sync-Neuanlage — expectedBaseRevision null statt 1), abgenommen vom Nutzer 9. Okt. 2026, gepusht auf `origin/step/0-rechenvertrag`, wartet auf Merge nach main |
-| 1 | `step-1-projektgeruest` | Projektgerüst (4 .NET-Projekte, Tests, Angular-Workspace), Linux-Start, OpenAPI-Generierung | 0 | **aktiv** (Branch `step/1-projektgeruest`, 9. Okt. 2026) |
+| 1 | `step-1-projektgeruest` | Projektgerüst (4 .NET-Projekte, Tests, Angular-Workspace), Linux-Start, OpenAPI-Generierung | 0 | **fertig** (9. Okt. 2026; Commits `ffe799f` Gerüst, `e3f501f` Domain/Infra/Host+Tests, `a1d5281` Angular-Workspace+Client, `030bfd8` README; Fresh-Checkout-Test grün; Push nach Nutzerfreigabe) |
 | 2 | — | Früher Android-/LAN-Prototyp: Capacitor-App, SQLite-Adapter, Offline-Nachweis auf echtem Gerät | 1 | geplant |
 | 3 | — | Stammdaten (Konten/Pools/Kategorien/Steuerkategorien), Anfangsbestand, erste Migration | 0–1 | geplant |
 | 4 | — | Kernbuchungen: Einnahmen/Ausgaben/Splits, Postings, Steuerkennzeichnung je Teilposten | 3 | geplant |

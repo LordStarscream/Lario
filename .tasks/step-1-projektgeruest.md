@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 1 – Projektgerüst und Linux-Start
 
-**Status:** aktiv (geplant 9. Okt. 2026)
+**Status:** fertig (9. Okt. 2026) — alle Tasks + Abnahmekriterien erfüllt, Commits `ffe799f`…`030bfd8`; Push nach Nutzerfreigabe
 **Branch:** `step/1-projektgeruest` (abgeleitet von `step/0-rechenvertrag` @ `29a12aa`)
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 1"
 
@@ -62,11 +62,15 @@ in Schritt 2 direkt mit `@capacitor/core` + `@capacitor/android` 8.5.3 (geprüft
       `/openapi/v1.json` in `frontend/apps/host/src/generated/` (fetch-Client);
       host-App nutzt generierten Client (`LarioHostService`); generierter Code via
       files-Entry in `frontend/eslint.config.js` aus Lint ausgenommen
-- [ ] Task 9: `dotnet build` + `dotnet test` + `npm ci && npm run build` aus frischem
+- [x] Task 9: `dotnet build` + `dotnet test` + `npm ci && npm run build` aus frischem
       Stand grün; Host-Start auf Linux, Health-/Versionsendpunkt und Weboberfläche per curl
       verifiziert; Neustart erzeugt keine zweite Datenablage
-- [ ] Task 10: README: reproduzierbarer Build-/Startweg; Übergabemeldung;
-      Commit nur nachtragsbezogener Dateien; **Push erst nach Nutzerfreigabe**
+      → Klon nach /tmp/lario-checkout: build 0 Fehler, 30/30 Tests, npm ci, lint grün,
+        beide Builds 0 Warnungen (9. Okt. 2026). Datenverzeichnis wird in Schritt 1 bewusst
+        nicht angelegt (mit der DB in Schritt 3); Auflösung ist deterministisch und 6/6 getestet.
+- [x] Task 10: README: reproduzierbarer Build-/Startweg; Übergabemeldung;
+      Commit nur auftragsbezogener Dateien (4 thematische Commits, kein .pi/, keine
+      Binärdaten); **Push erst nach Nutzerfreigabe**
 
 ## Bewusst zurückgestellt (nicht Teil von Schritt 1)
 
@@ -86,9 +90,10 @@ in Schritt 2 direkt mit `@capacitor/core` + `@capacitor/android` 8.5.3 (geprüft
 - [x] SDK/Pakete fixiert (global.json 10.0.112, Directory.Packages.props, package-lock.json)
 - [x] Konfiguration und lokales Datenverzeichnis angelegt (`Lario:DataDirectory`, XDG-Default)
 - [x] OpenAPI-Vertrag und TypeScript-Generierung vorbereitet (openapi.json + Client + Skript)
-- [ ] Aus frischem Checkout bauen → grün
+- [x] Aus frischem Checkout bauen → grün (Klon-Test 9. Okt. 2026, alle Befehle grün)
 - [x] Host unter Linux starten, Testlauf, API-Client generiert (Client existiert, App nutzt ihn)
-- [ ] Neustart erzeugt keine leere zweite Datenablage
+- [x] Neustart erzeugt keine leere zweite Datenablage (Schritt 1 legt keins an; deterministisch
+      + idempotent per Test gesichert; substanzielle Prüfung mit der DB in Schritt 3)
 - [x] Dokumentierter Start-/Buildweg (README)
 
 ## Ergebnis (9. Okt. 2026)
