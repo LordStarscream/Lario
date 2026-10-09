@@ -215,7 +215,7 @@ Drei getrennte Ebenen, die nicht vermischt werden dürfen:
 - **Sync-Operation (Operation):** Geräteste Einheit für die Synchronisation (Datenmodell in Schritt 0; Endpoints, Cursor-Verfahren, Generationen und Quittungsprotokoll sind Schritt 9/10):
   - Stabile **Operations-ID** (geräteseitig vergeben, dauerhaft).
   - **Payloadnachweis:** Hash des fachlichen Payloads.
-  - **Erwartete Basisrevision** der Zielinstanz.
+  - **Erwartete Basisrevision** der Zielinstanz — **nur bei Änderungen existierender Entitäten**; bei Neuanlagen null (Ziel-ID darf noch nicht existieren), Abschnitt 5.5.
   - **Wiederholung derselben Operations-ID mit gleichem Inhalt = idempotent** (wird nicht erneut angewendet, wird quittiert).
   - **Derselben Operations-ID mit anderem Inhalt = Fehler** (sichtbar, kein Stillstand).
   - **Quittung nur nach expliziter Bestätigung** der Übernahme.
@@ -226,8 +226,10 @@ Drei getrennte Ebenen, die nicht vermischt werden dürfen:
 
 - Jede Fachentität (Konten, Pools, Kategorien, Regeln, Vorhaben, Buchungen, Operationen) trägt **eigene Basisrevision** — ein pro Entität geführter Zähler, keine globale Vorgangsnummer. Verschiedene Buchungen dürfen denselben Revisionswert haben (z. B. beide 1); es gibt keine fortlaufende Nummerierung über Entitäten hinweg.
 - **Neue Entitäten beginnen mit dem einheitlichen Startwert 1** (in den Testfixtures aller Stammdaten und Buchungen).
-- **Die erwartete Basisrevision (expectedBaseRevision) gehört zu einer Änderung einer existierenden Entität** (Korrektur, Storno, Sync-Operation): Die Änderung wird nur angewendet, wenn die erwartete Revision mit der aktuellen Revision der Zielentität übereinstimmt; eine erfolgreich angewendete Änderung erhöht die Revision der Entität um 1.
+- **Neuanlage (create):** Es gibt noch **keine** erwartete Basisrevision — das Feld wird weggelassen oder als `null` übertragen; stattdessen muss die **Ziel-ID noch nicht existieren** (existiert sie bereits mit anderem Inhalt = Fehler). Die neu angelegte Entität erhält Revision 1.
+- **Änderung (update):** Die **erwartete Basisrevision** (expectedBaseRevision) gehört ausschließlich zu einer Änderung einer existierenden Entität (Korrektur, Storno, Sync-Operation): Die Änderung wird nur angewendet, wenn die erwartete Revision mit der aktuellen Revision der Zielentität übereinstimmt; eine erfolgreich angewendete Änderung erhöht die Revision der Entität um 1.
 - Eine Änderung mit **abweichender Basisrevision** (erwartete ≠ aktuelle) ist ein **Revisionskonflikt**: Fehler, sichtbar dem Nutzer, kein Last-Write-Wins.
+- **Wiederholung (Idempotenz):** Zuerst die **Operations-ID** auf bereits erfolgte Verarbeitung prüfen — eine Wiederholung mit gleichem Inhalt wird nur quittiert und berührt die Revision der Zielentität nicht; erst danach gelten die Regeln für Neuanlage/Änderung.
 
 ---
 

@@ -45,7 +45,8 @@
       },
       "payloadHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "payloadHashHinweis": "Platzhalter; echter Hash wird bei Erzeugung der Operation berechnet.",
-      "expectedBaseRevision": 1,
+      "expectedBaseRevision": null,
+      "expectedBaseRevisionHinweis": "Neuanlage: es existiert auf dem Host noch keine Revision zum Vergleichen — daher null (rechenvertrag.md §5.5). Stattdessen muss die Ziel-ID bk-2026-1101 noch nicht existieren; die neue Buchung erhält den einheitlichen Startwert Revision 1.",
       "createdAt": "2026-11-05T14:30:00Z",
       "status": "queued"
     },
@@ -117,7 +118,8 @@
       },
       "payloadHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "payloadHashHinweis": "Platzhalter; identisch zum Hash der Operation mit gleicher operationId (gleicher Inhalt).",
-      "expectedBaseRevision": 1,
+      "expectedBaseRevision": null,
+      "expectedBaseRevisionHinweis": "Neuanlage: null (wie bei der ersten op-2026-1101-001) — Wiederholung mit gleichem Inhalt wird über die Operations-ID erkannt und nur quittiert, die Revision der Zielentität wird nicht erneut angewendet (rechenvertrag.md §5.5).",
       "createdAt": "2026-11-05T14:45:00Z",
       "status": "acknowledged",
       "note": "Demonstriert Idempotenz: gleiche operationId und gleicher payloadHash wie op-2026-1101-001 (Wiederholung nach verloren gegangener Antwort); wird nicht erneut angewendet, nur quittiert."
@@ -129,6 +131,7 @@
     "Quittung nur nach expliziter Bestätigung der Übernahme",
     "Cursor erst nach lokaler atomarer Übernahme (ChangeLog-Eintrag + Buchung zusammen)",
     "nicht quittierte Operationen bei Pull erhalten (kein Verlust nach Server-Restore)",
-    "expectedBaseRevision bezieht sich auf die Revision der ZIELENTITÄT (rechenvertrag.md §5.5, pro Entität, keine globale Operations-Nummer): für createBooking der einheitliche Startwert 1 der neuen Buchung, für updateBooking die aktuelle Revision der Zielbuchung (hier bk-2026-1101, aktuell 1)"
+    "Wiederholung zuerst über die Operations-ID erkennen: gleiche operationId + gleicher payloadHash wird nur quittiert und ändert die Revision der Zielentität nicht — erst danach gelten die Regeln für Neuanlage/Änderung (rechenvertrag.md §5.5)",
+    "expectedBaseRevision (rechenvertrag.md §5.5): bei createBooking null — auf dem Host existiert noch keine Revision zum Vergleichen, stattdessen muss die Ziel-ID noch nicht existieren und die neue Buchung erhält Revision 1; bei updateBooking die aktuelle Revision der ZIELENTITÄT (hier bk-2026-1101, aktuell 1), die nach erfolgreicher Änderung um 1 erhöht wird; abweichende Revision bei Änderung = Revisionskonflikt"
   ]
 }
