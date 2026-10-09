@@ -1,7 +1,7 @@
 # Aufgaben-Index — Lario
 _Last updated: 9. Okt. 2026_
 
-**Nächster:** Schritt 2 (Android-/LAN-Prototyp) — Schritt 1 fertig (9. Okt. 2026, Branch `step/1-projektgeruest`, wartet auf Push nach Nutzerfreigabe). Schritt 0 (Branch `step/0-rechenvertrag`) abgenommen, Merge nach main noch offen.
+**Nächster:** Schritt 2 (Android-/LAN-Prototyp) — Schritt 1 fertig (9. Okt. 2026, Branch `step/1-projektgeruest`, **gepusht** auf origin). Schritt 0 (Branch `step/0-rechenvertrag`) abgenommen, **PR #1** offen (step/0-rechenvertrag → main).
 
 ## Legende
 
@@ -25,7 +25,7 @@ _Last updated: 9. Okt. 2026_
 
 | Schritt | Aufgabe | Kurzbeschreibung | Voraussetzungen | Status |
 |---|---|---|---|---|
-| 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario)); Review-Runde 1 (`e91f156`), 2 (`e7bf514`: Fall 8 — Reservierung ist Anspruch im Herkunftspool, kein Pooltransfer) und 3 (`60f3407`: Revisionskonzept vereinheitlicht, Fall-4-Richtung, Fall-8-Format) umgesetzt; Runden 1–4 **gepusht** auf `origin/step/0-rechenvertrag` (Runde 4: `4773461` Sync-Neuanlage — expectedBaseRevision null statt 1), abgenommen vom Nutzer 9. Okt. 2026, gepusht auf `origin/step/0-rechenvertrag`, wartet auf Merge nach main |
+| 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario)); Review-Runde 1 (`e91f156`), 2 (`e7bf514`: Fall 8 — Reservierung ist Anspruch im Herkunftspool, kein Pooltransfer) und 3 (`60f3407`: Revisionskonzept vereinheitlicht, Fall-4-Richtung, Fall-8-Format) umgesetzt; Runden 1–4 **gepusht** auf `origin/step/0-rechenvertrag` (Runde 4: `4773461` Sync-Neuanlage — expectedBaseRevision null statt 1), abgenommen vom Nutzer 9. Okt. 2026, gepusht auf `origin/step/0-rechenvertrag`; **PR #1** (9. Okt. 2026, `step/0-rechenvertrag` → `main`) offen, wartet auf Merge |
 | 1 | `step-1-projektgeruest` | Projektgerüst (4 .NET-Projekte, Tests, Angular-Workspace), Linux-Start, OpenAPI-Generierung | 0 | **fertig** (9. Okt. 2026; Commits `ffe799f` Gerüst, `e3f501f` Domain/Infra/Host+Tests, `a1d5281` Angular-Workspace+Client, `030bfd8` README, `37dbeb8` Abnahme; Fresh-Checkout-Test grün; **gepusht** auf `origin/step/1-projektgeruest`) |
 | 2 | — | Früher Android-/LAN-Prototyp: Capacitor-App, SQLite-Adapter, Offline-Nachweis auf echtem Gerät | 1 | geplant |
 | 3 | — | Stammdaten (Konten/Pools/Kategorien/Steuerkategorien), Anfangsbestand, erste Migration | 0–1 | geplant |
