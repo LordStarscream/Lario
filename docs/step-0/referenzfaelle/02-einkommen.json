@@ -1,0 +1,84 @@
+{
+  "meta": {
+    "name": "Referenzfall 2: Einkommen mit Finanzierungsmonat",
+    "planBezug": "Implementierungsplan §5 Schritt 0; Einkommen Schritt 4, Finanzierungsmonat Schritt 12",
+    "zweck": "Einnahme am Konto und Pool: Buchungsdatum und Finanzierungsmonat sind getrennte Angaben — Gehalt am 28. Oktober finanziert standardmäßig den November; ein späterer Eingang (30.10.) ändert den Finanzierungsmonat nicht. Die Einnahme erzeugt allein noch keine Bindung an Verpflichtungen (Bindung siehe Fall 07).",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §2.2, §2.3 (Gehalt finanziert standardmäßig den Folgemonat), §3.3 (Einnahme: Account+ und Pool+)"
+  },
+  "startzustand": {
+    "basis": "docs/step-0/data/stammdaten.json",
+    "anpassungen": [],
+    "kontostaende": {
+      "acc-haupt": 100000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": []
+  },
+  "vorgaenge": [
+    {
+      "typ": "einnahme",
+      "buchung": {
+        "id": "bk-2026-1201",
+        "date": "2026-10-28",
+        "type": "income",
+        "account": "acc-haupt",
+        "amount": 300000,
+        "poolId": "pool-flex",
+        "fundingMonth": "2026-11",
+        "note": "Gehalt Oktober",
+        "baseRevision": 1
+      },
+      "beschreibung": "Gehalt Oktober: 3.000,00 € Eingang am 2026-10-28 auf acc-haupt, Zuweisung vollständig an pool-flex, Finanzierungsmonat 2026-11 (standardmäßig der Folgemonat)."
+    }
+  ],
+  "erwarteter_endzustand": {
+    "kontostaende": {
+      "acc-haupt": 400000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 400000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [],
+    "freie_salden": {
+      "pool-flex": 400000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0,
+      "kontoliquiditaet": {
+        "acc-haupt": 400000,
+        "acc-freizeit": 30000,
+        "acc-spar": 0,
+        "acc-wohnung": 0
+      }
+    },
+    "offene_ausgleichspositionen": []
+  },
+  "pruefungen": [
+    "Kontozugang +300000 am 2026-10-28 (acc-haupt 100000 → 400000); Pool flex steigt von 100000 auf 400000.",
+    "Summe Konten = Summe Pools = 430000 (400000 + 30000 = 400000 + 30000).",
+    "Buchungsdatum (2026-10-28) und Finanzierungsmonat (2026-11) sind getrennte Angaben; Gehalt am Monatsende finanziert standardmäßig den Folgemonat.",
+    "Variante: Derselbe Eingang am 2026-10-30 ändert den Finanzierungsmonat nicht (2026-11) und verschiebt weder Monatsbeginn noch Richtwertzeitraum.",
+    "Diese Einnahme erzeugt allein noch keine Bindung an Verpflichtungen (Bindung ist Fall 07); Reservierungen bleiben leer, keine offenen Ausgleichspositionen.",
+    "Erwartete Steuererstattung (geplanter Vorgang, keine Buchung) erhöht Bestand und Pool nicht."
+  ]
+}

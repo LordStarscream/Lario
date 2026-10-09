@@ -1,0 +1,121 @@
+{
+  "meta": {
+    "name": "Referenzfall 4: Interner Ausgleich (Kontotransfer löst Ausgleichsposition)",
+    "planBezug": "Implementierungsplan §5 Schritt 0; interne Ausgleiche Schritt 5",
+    "zweck": "Der erste Kernfall der manuellen Referenzfälle: der offene Ausgleich von 20,00 € (set-0010 aus Fall 3) wird durch den Transfer 20,00 € von acc-freizeit nach acc-haupt (Rückfluss der Vorfinanzierung) beglichen. Pools bleiben unverändert, die negative Zuordnung löst sich auf, Kontostand und Poolbestand decken sich wieder vollständig.",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §3.3 (reiner Kontotransfer: Account−/Account+, Gesamtpoolbestand unverändert), §3.4 (nach Ausgleich Konten 935/280 €, Zuordnung 0 €), §3.5 (offene Ausgleichspositionen, Teilbegleichung)"
+  },
+  "startzustand": {
+    "basis": "docs/step-0/data/stammdaten.json",
+    "anpassungen": [
+      "Startzustand = Endzustand von Fall 3 (03-split.json): Journal enthält init-2026-01-01, init-2026-01-01-freizeit und bk-2026-1202 (85,00 € gemischter Einkauf vom Hauptkonto). Offene Ausgleichsposition set-0010 (2000, acc-haupt → pool-freizeit), negative Zuordnung acc-haupt/pool-freizeit = −2000."
+    ],
+    "kontostaende": {
+      "acc-haupt": 91500,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 93500,
+      "pool-freizeit": 28000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [],
+    "offene_ausgleichspositionen": [
+      {
+        "id": "set-0010",
+        "amount": 2000,
+        "restAmount": 2000,
+        "sourceAccountId": "acc-haupt",
+        "targetPoolId": "pool-freizeit",
+        "status": "offen",
+        "createdByBooking": "bk-2026-1202"
+      }
+    ]
+  },
+  "vorgaenge": [
+    {
+      "typ": "transfer",
+      "buchung": {
+        "id": "bk-2026-1203",
+        "date": "2026-11-06",
+        "type": "transfer",
+        "fromAccountId": "acc-freizeit",
+        "toAccountId": "acc-haupt",
+        "amount": 2000,
+        "note": "Ausgleich 20 € (Rückfluss der Vorfinanzierung: Freizeit → Haupt)",
+        "baseRevision": 1,
+        "relatedSettlementId": "set-0010"
+      },
+      "beschreibung": "Reiner Kontotransfer 20,00 € von acc-freizeit auf acc-haupt (Rückfluss der Vorfinanzierung, die beim Einkauf am Hauptkonto entstanden war), verknüpft mit der offenen Ausgleichsposition set-0010 (relatedSettlementId). Keine Poolbewegung, keine Kategorie, kein Finanzierungsmonat."
+    }
+  ],
+  "erwarteter_endzustand": {
+    "kontostaende": {
+      "acc-haupt": 93500,
+      "acc-freizeit": 28000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 93500,
+      "pool-freizeit": 28000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [],
+    "freie_salden": {
+      "pool-flex": 93500,
+      "pool-freizeit": 28000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0,
+      "kontoliquiditaet": {
+        "acc-haupt": 93500,
+        "acc-freizeit": 28000,
+        "acc-spar": 0,
+        "acc-wohnung": 0,
+        "hinweis": "Kontostand = Poolbestand, keine 'eingesperrten' Mittel mehr: Kontoliquidität und Poolbestand decken sich vollständig."
+      }
+    },
+    "offene_ausgleichspositionen": [],
+    "ausgleichsposition_set-0010": {
+      "id": "set-0010",
+      "amount": 2000,
+      "restAmount": 0,
+      "sourceAccountId": "acc-haupt",
+      "targetPoolId": "pool-freizeit",
+      "status": "beglichen",
+      "createdByBooking": "bk-2026-1202",
+      "settledByBooking": "bk-2026-1203"
+    },
+    "zuordnung": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 93500
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 28000
+      }
+    ],
+    "zuordnung_hinweis": "acc-haupt/pool-freizeit ist aufgelöst (0) und wird nicht mehr ausgeführt (implizit 0)."
+  },
+  "pruefungen": [
+    "Transfer ändert Pools nicht: pool-flex 93500 und pool-freizeit 28000 unverändert (reiner Kontotransfer, rechenvertrag.md §3.3).",
+    "Offene Ausgleichsposition set-0010 erreicht 0 (2000 − 2000) und wird mit status beglichen (settledByBooking bk-2026-1203).",
+    "Negative Zuordnung acc-haupt/pool-freizeit ist aufgelöst (0); Zeilensummen = Kontostände (93500/28000), Spaltensummen = Poolbestände (93500/28000).",
+    "Summe Konten = Summe Pools = 121500 (vorher und nachher identisch — reine Umverteilung: 91500 + 30000 = 93500 + 28000).",
+    "Teilbegleichung (Plan Schritt 5): ein Transfer von 500 von 2000 würde set-0010 um 500 senken und Rest 1500 offen lassen (5 € Teilbegleichung lässt 15 € offen); vollständige Begleichung nur bei Rest 0.",
+    "Konten: acc-haupt 91500 → 93500, acc-freizeit 30000 → 28000; keine Kategorie, kein Finanzierungsmonat, keine Reservierungswirkung."
+  ]
+}

@@ -1,0 +1,310 @@
+{
+  "meta": {
+    "name": "Lario Stammdaten-Snapshot",
+    "zweck": "Gemeinsamer Startzustand aller Referenzfälle (Batch C). Enthält Konten, Pools, das Vorhaben, Alltagskategorien, Steuerkategorien, steuerliche Voreinstellungen und die Anfangsbestände.",
+    "bezug": "docs/step-0/rechenvertrag.md — §3.1 (Kernbegriffe), §3.4 (Regelanker: Hauptkonto/Flex 1.000 €, Freizeitkonto/Freizeit 300 €), §3.7 (Anfangsbestand mit Stichtag, explizite Pool-Verteilung, keine Einnahme), §5.3 (Vorhaben-Status)",
+    "konventionen": {
+      "geld": "Alle Geldbeträge als ganzzahlige EUR-Cent (z. B. 100000 = 1.000,00 €). Kein float.",
+      "ids": "Stabile String-IDs im Format <typ>-<kurzname> (z. B. acc-haupt, pool-flex, cat-wohnung).",
+      "datums": "Fachdaten als Datumswerte YYYY-MM-DD ohne Zeit.",
+      "revision": "Jede Fachentität trägt ihre eigene baseRevision (rechenvertrag.md §5.5) — pro Entität, keine globale Nummer; neue Entitäten starten mit dem einheitlichen Startwert 1. Die erwartete Basisrevision (expectedBaseRevision) gehört zu Änderungen existierender Entitäten (Korrektur, Sync-Operation)."
+    },
+    "startzustand": {
+      "kontostaende": {
+        "acc-haupt": 100000,
+        "acc-freizeit": 30000,
+        "acc-spar": 0,
+        "acc-wohnung": 0
+      },
+      "poolbestaende": {
+        "pool-flex": 100000,
+        "pool-freizeit": 30000,
+        "pool-wohnung": 0,
+        "pool-jahreskosten": 0,
+        "pool-ruecklage": 0,
+        "pool-vorhaben-urlaub": 0
+      },
+      "pruefung": "Summe Konten = Summe Pools = 130000 Cent (1.300,00 €). acc-spar und acc-wohnung starten leer: kein Anfangsbestand, Startsaldo 0 (ergibt sich aus dem Fehlen in initialBalances)."
+    }
+  },
+  "currency": "EUR",
+  "accounts": [
+    {
+      "id": "acc-haupt",
+      "name": "Hauptkonto",
+      "type": "bank",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "acc-freizeit",
+      "name": "Freizeitkonto",
+      "type": "bank",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "acc-spar",
+      "name": "Sparkonto",
+      "type": "sparen",
+      "verzinst": true,
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "acc-wohnung",
+      "name": "Wohnungskonto",
+      "type": "bank",
+      "status": "active",
+      "baseRevision": 1
+    }
+  ],
+  "pools": [
+    {
+      "id": "pool-flex",
+      "name": "Flex",
+      "baseRevision": 1
+    },
+    {
+      "id": "pool-freizeit",
+      "name": "Freizeit",
+      "baseRevision": 1
+    },
+    {
+      "id": "pool-wohnung",
+      "name": "Wohnung",
+      "baseRevision": 1
+    },
+    {
+      "id": "pool-jahreskosten",
+      "name": "Jahreskosten",
+      "baseRevision": 1
+    },
+    {
+      "id": "pool-ruecklage",
+      "name": "Rücklage",
+      "baseRevision": 1
+    },
+    {
+      "id": "pool-vorhaben-urlaub",
+      "name": "Vorhaben: Urlaub",
+      "linkedProjectId": "proj-urlaub",
+      "baseRevision": 1
+    }
+  ],
+  "projects": [
+    {
+      "id": "proj-urlaub",
+      "name": "Vorhaben Urlaub",
+      "status": "reserviert",
+      "herkunftPool": "pool-flex",
+      "baseRevision": 1
+    }
+  ],
+  "categories": [
+    {
+      "id": "cat-lebensmittel",
+      "name": "Lebensmittel",
+      "parentId": null,
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-lem-obst",
+      "name": "Obst & Gemüse",
+      "parentId": "cat-lebensmittel",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-lem-feinkost",
+      "name": "Feinkost",
+      "parentId": "cat-lebensmittel",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-wohnung",
+      "name": "Wohnung",
+      "parentId": null,
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-woh-miete",
+      "name": "Miete",
+      "parentId": "cat-wohnung",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-woh-energie",
+      "name": "Energie",
+      "parentId": "cat-wohnung",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-woh-reparatur",
+      "name": "Reparatur",
+      "parentId": "cat-wohnung",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-freizeit",
+      "name": "Freizeit",
+      "parentId": null,
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-frei-kino",
+      "name": "Kino",
+      "parentId": "cat-freizeit",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-frei-urlaub",
+      "name": "Urlaub",
+      "parentId": "cat-freizeit",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-gesundheit",
+      "name": "Gesundheit",
+      "parentId": null,
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-ges-arzt",
+      "name": "Arzt",
+      "parentId": "cat-gesundheit",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-verkehr",
+      "name": "Verkehr",
+      "parentId": null,
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-ver-opnv",
+      "name": "ÖPNV",
+      "parentId": "cat-verkehr",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "cat-sonstiges",
+      "name": "Sonstiges",
+      "parentId": null,
+      "status": "active",
+      "baseRevision": 1
+    }
+  ],
+  "taxCategories": [
+    {
+      "id": "tax-werbungskosten",
+      "name": "Werbungskosten",
+      "parentId": null,
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "tax-wk-arbeitsmittel",
+      "name": "Arbeitsmittel",
+      "parentId": "tax-werbungskosten",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "tax-wk-reise",
+      "name": "Reisekosten",
+      "parentId": "tax-werbungskosten",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "tax-vermietung",
+      "name": "Vermietung",
+      "parentId": null,
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "tax-ver-instandhaltung",
+      "name": "Instandhaltung",
+      "parentId": "tax-vermietung",
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "tax-haus",
+      "name": "Haus",
+      "parentId": null,
+      "status": "active",
+      "baseRevision": 1
+    },
+    {
+      "id": "tax-ha-renovierung",
+      "name": "Renovierung",
+      "parentId": "tax-haus",
+      "status": "active",
+      "baseRevision": 1
+    }
+  ],
+  "taxPresets": [
+    {
+      "categoryId": "cat-wohnung",
+      "taxRelevant": true,
+      "taxCategoryId": "tax-wk-arbeitsmittel",
+      "inheritToChildren": true
+    },
+    {
+      "categoryId": "cat-gesundheit",
+      "taxRelevant": null,
+      "inheritToChildren": true
+    },
+    {
+      "categoryId": "cat-frei-urlaub",
+      "taxRelevant": false,
+      "inheritToChildren": false
+    }
+  ],
+  "initialBalances": [
+    {
+      "id": "init-2026-01-01",
+      "date": "2026-01-01",
+      "accountId": "acc-haupt",
+      "total": 100000,
+      "baseRevision": 1,
+      "distribution": [
+        {
+          "poolId": "pool-flex",
+          "amount": 100000
+        }
+      ],
+      "note": "Anfangsbestand, keine Einnahme (keine Finanzierungsmonat-, keine Deckungsberechnung). Plan-Kernfall: Hauptkonto/Flex 1.000 €."
+    },
+    {
+      "id": "init-2026-01-01-freizeit",
+      "date": "2026-01-01",
+      "accountId": "acc-freizeit",
+      "total": 30000,
+      "baseRevision": 1,
+      "distribution": [
+        {
+          "poolId": "pool-freizeit",
+          "amount": 30000
+        }
+      ],
+      "note": "Anfangsbestand, keine Einnahme. Plan-Kernfall: Freizeitkonto/Freizeit 300 €."
+    }
+  ]
+}

@@ -1,0 +1,107 @@
+{
+  "meta": {
+    "name": "Referenzfall 1: Anfangsbestand",
+    "planBezug": "Implementierungsplan §5 Schritt 0; Stammdaten Schritt 3",
+    "zweck": "Anfangsbestand mit Stichtag und expliziter Pool-Verteilung: keine Einnahme, kein Finanzierungsmonat, keine Deckungsberechnung; idempotentes Anlegen (gleiche ID erzeugt keine zweite Buchung). Regelanker-Start: Hauptkonto/Flex 1.000,00 €, Freizeitkonto/Freizeit 300,00 €.",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §3.4 (Regelanker), §3.7 (Anfangsbestand, Idempotenz)"
+  },
+  "startzustand": {
+    "basis": "docs/step-0/data/stammdaten.json",
+    "anpassungen": [
+      "Leeres Journal: die Anfangsbestände init-2026-01-01 und init-2026-01-01-freizeit aus stammdaten.json sind noch nicht gebucht — alle Konten und alle Pools stehen auf 0, keine Reservierungen, keine Ausgleichspositionen. Nur die Stammdaten (Konten, Pools, Vorhaben, Kategorien, Steuerkategorien) existieren."
+    ],
+    "kontostaende": {
+      "acc-haupt": 0,
+      "acc-freizeit": 0,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 0,
+      "pool-freizeit": 0,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": []
+  },
+  "vorgaenge": [
+    {
+      "typ": "anfangsbestand",
+      "buchung": {
+        "id": "init-2026-01-01",
+        "date": "2026-01-01",
+        "accountId": "acc-haupt",
+        "total": 100000,
+        "baseRevision": 1,
+        "distribution": [
+          {
+            "poolId": "pool-flex",
+            "amount": 100000
+          }
+        ],
+        "note": "Anfangsbestand, keine Einnahme (keine Finanzierungsmonat-, keine Deckungsberechnung). Plan-Kernfall: Hauptkonto/Flex 1.000 €."
+      },
+      "beschreibung": "Anfangsbestand Hauptkonto: 1.000,00 € mit Stichtag 2026-01-01, vollständig auf pool-flex verteilt. Trägt keine Kategorie, keinen Finanzierungsmonat und durchläuft keine Deckungsberechnung."
+    },
+    {
+      "typ": "anfangsbestand",
+      "buchung": {
+        "id": "init-2026-01-01-freizeit",
+        "date": "2026-01-01",
+        "accountId": "acc-freizeit",
+        "total": 30000,
+        "baseRevision": 1,
+        "distribution": [
+          {
+            "poolId": "pool-freizeit",
+            "amount": 30000
+          }
+        ],
+        "note": "Anfangsbestand, keine Einnahme. Plan-Kernfall: Freizeitkonto/Freizeit 300 €."
+      },
+      "beschreibung": "Anfangsbestand Freizeitkonto: 300,00 € mit Stichtag 2026-01-01, vollständig auf pool-freizeit verteilt."
+    }
+  ],
+  "erwarteter_endzustand": {
+    "kontostaende": {
+      "acc-haupt": 100000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [],
+    "freie_salden": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0,
+      "kontoliquiditaet": {
+        "acc-haupt": 100000,
+        "acc-freizeit": 30000,
+        "acc-spar": 0,
+        "acc-wohnung": 0
+      }
+    },
+    "offene_ausgleichspositionen": []
+  },
+  "pruefungen": [
+    "Anfangsbestand ist keine Einnahme: keine Einnahme-Buchung im Journal, kein Finanzierungsmonat, keine Deckungsberechnung (keine Bindungen an Verpflichtungen, keine Richtwertwirkung).",
+    "Summe Konten = Summe Pools = 130000 (100000 + 30000 = 100000 + 30000).",
+    "Verteilung ist Teil der Vorgabedaten und exakt: init-2026-01-01 verteilt 100000 = total, init-2026-01-01-freizeit verteilt 30000 = total; kein Rest in 'noch nicht zugeordnet'.",
+    "Idempotenz: erneutes Anlegen desselben Anfangsbestands (gleiche ID init-2026-01-01) erzeugt keine zweite Buchung; der Kontostand acc-haupt bleibt 100000 und der Pool pool-flex 100000.",
+    "Freier Flex = 100000, freie Freizeit = 30000; keine Bindungen, keine Reservierungen, keine offenen Ausgleichspositionen.",
+    "Zeilensummen der Zuordnung = Kontostände (acc-haupt/flex 100000, acc-freizeit/freizeit 30000), Spaltensummen = Poolbestände (flex 100000, freizeit 30000)."
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "meta": {
+    "name": "Lario Buchungen — Kern-Typen mit Postings und Splits",
+    "zweck": "Demonstriert die Struktur bestätigter Buchungen (Ledger-Journal) für die drei Kern-Typen: Ausgabe mit Splits (Plan-Kernfall 85 € gemischter Einkauf), Einnahme mit Finanzierungsmonat und reiner Kontotransfer als Ausgleich. Weitere Typen (umwidmung, storno, erstatung, korrektion, reservierung) werden in den Referenzfällen (Batch C, referenzfaelle/) instanziiert.",
+    "bezug": "docs/step-0/rechenvertrag.md — §3.2 (Buchung, atomare Postings), §3.3 (Posting-Wirkungen je Typ, Splitregel: Summe der Splits = totalAmount), §3.4 (Regelanker: 85 € Einkauf → Konten 915/300 €, Pools 935/280 €), §2.2 (Fachdatum; Einnahmen optional mit Finanzierungsmonat)",
+    "konventionen": {
+      "geld": "Alle Beträge als ganzzahlige EUR-Cent. Splits summieren sich exakt zum totalAmount (Prüfpflicht, rechenvertrag.md §2.1).",
+      "ids": "Stabile String-IDs: bk-<JJMM>-<fortlaufend> für Buchungen, sp-<n> für Splits.",
+      "datums": "Fachdatum als YYYY-MM-DD; fundingMonth als Kalendermonat YYYY-MM.",
+      "revision": "baseRevision pro Buchung (rechenvertrag.md §5.5); jede neue Buchung startet mit dem einheitlichen Startwert 1 — keine globale Nummer über Buchungen hinweg. Die erwartete Basisrevision (expectedBaseRevision) gehört zu einer Änderung einer existierenden Buchung (Korrektur, Sync-Operation), nicht zu ihrer Erzeugung."
+    }
+  },
+  "postingWirkungen": {
+    "bk-2026-1101": "Account acc-haupt −8500; Pool pool-flex −6500; Pool pool-freizeit −2000. Erzeugt negative Zuordnung acc-haupt/pool-freizeit = −2000 und offene Ausgleichsposition set-0001 (siehe zuordnung_ausgleich.json).",
+    "bk-2026-1102": "Account acc-haupt +300000; Pool pool-flex +300000 (Zuweisung erhöht den Poolbestand). Demonstriert: Gehalt am 28.10. finanziert November — Buchungsdatum und Finanzierungsmonat sind getrennte Angaben (rechenvertrag.md §2.2, §2.3).",
+    "bk-2026-1103": "Account acc-haupt +2000; Account acc-freizeit −2000; Gesamtpoolbestand bleibt unverändert (reiner Kontotransfer, rechenvertrag.md §3.3). Begleicht die offene Ausgleichsposition set-0001 vollständig (2000 Cent), löst die negative Zuordnung acc-haupt/pool-freizeit auf. Die 20 € fließen vom Freizeitkonto (Vorfinanzierung durch das Hauptkonto) zurück an das Hauptkonto: Freizeit 300 → 280 €, Haupt 915 → 935 € (Regelanker §3.4)."
+  },
+  "hinweise": {
+    "bk-2026-1102": "Steht chronologisch vor bk-2026-1101 (2026-10-28 < 2026-11-05) und ist für die Zuordnungs-Matrix in zuordnung_ausgleich.json NICHT enthalten: die Fixture zeigt ausschließlich Startzustand + Ausgabe + Transfer (Regelanker §3.4). In den Referenzfällen (Batch C) wird diese Buchung ab dem Journal-Stand nach dem 28.10.2026 angewendet.",
+    "bk-2026-1103": "relatedSettlementId verweist auf die Ausgleichsposition aus zuordnung_ausgleich.json (set-0001)."
+  },
+  "bookings": [
+    {
+      "id": "bk-2026-1101",
+      "date": "2026-11-05",
+      "type": "expense",
+      "account": "acc-haupt",
+      "totalAmount": 8500,
+      "note": "Gemischter Einkauf",
+      "baseRevision": 1,
+      "splits": [
+        {
+          "id": "sp-1",
+          "amount": 6500,
+          "poolId": "pool-flex",
+          "categoryId": "cat-lebensmittel",
+          "tax": null
+        },
+        {
+          "id": "sp-2",
+          "amount": 2000,
+          "poolId": "pool-freizeit",
+          "categoryId": "cat-freizeit",
+          "tax": {
+            "relevant": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "bk-2026-1102",
+      "date": "2026-10-28",
+      "type": "income",
+      "account": "acc-haupt",
+      "amount": 300000,
+      "poolId": "pool-flex",
+      "fundingMonth": "2026-11",
+      "note": "Gehalt Oktober",
+      "baseRevision": 1
+    },
+    {
+      "id": "bk-2026-1103",
+      "date": "2026-11-06",
+      "type": "transfer",
+      "fromAccountId": "acc-freizeit",
+      "toAccountId": "acc-haupt",
+      "amount": 2000,
+      "note": "Ausgleich 20 € (Rückfluss der Vorfinanzierung: Freizeit → Haupt)",
+      "baseRevision": 1,
+      "relatedSettlementId": "set-0001"
+    }
+  ]
+}

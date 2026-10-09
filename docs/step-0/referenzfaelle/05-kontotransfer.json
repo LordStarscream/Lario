@@ -1,0 +1,112 @@
+{
+  "meta": {
+    "name": "Referenzfall 5: Reiner Kontotransfer (zweckerhaltend)",
+    "planBezug": "Implementierungsplan §5 Schritt 0; Transfers Schritt 5",
+    "zweck": "Reiner Kontotransfer 800,00 € von acc-haupt auf acc-wohnung: weder Einnahme noch Ausgabe — keine Poolbewegung, keine Kategorie, kein Finanzierungsmonat. Die Konto-Pool-Zuordnung wird mitgeführt (80.000 Cent wandern als pool-flex-Zuordnung mit), Reservierungen blieben erhalten.",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §3.3 (Reiner Kontotransfer: Account−/Account+, Gesamtpoolbestand unverändert, Zweck bleibt erhalten), §3.4 (Zuordnung wird mitgeführt)"
+  },
+  "startzustand": {
+    "basis": "docs/step-0/data/stammdaten.json",
+    "anpassungen": [],
+    "kontostaende": {
+      "acc-haupt": 100000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [],
+    "zuordnung": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 100000
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 30000
+      }
+    ]
+  },
+  "vorgaenge": [
+    {
+      "typ": "transfer",
+      "buchung": {
+        "id": "bk-2026-1204",
+        "date": "2026-11-07",
+        "type": "transfer",
+        "fromAccountId": "acc-haupt",
+        "toAccountId": "acc-wohnung",
+        "amount": 80000,
+        "note": "Wohnungskonto befüllen",
+        "baseRevision": 1
+      },
+      "beschreibung": "Reiner Kontotransfer 800,00 € von acc-haupt auf acc-wohnung (kein Zweckwechsel): die 80.000 Cent behalten ihren pool-flex-Zweck und wandern als Zuordnung mit."
+    }
+  ],
+  "erwarteter_endzustand": {
+    "kontostaende": {
+      "acc-haupt": 20000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 80000
+    },
+    "poolbestaende": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [],
+    "freie_salden": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0,
+      "kontoliquiditaet": {
+        "acc-haupt": 20000,
+        "acc-freizeit": 30000,
+        "acc-spar": 0,
+        "acc-wohnung": 80000
+      }
+    },
+    "offene_ausgleichspositionen": [],
+    "zuordnung": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 20000
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 30000
+      },
+      {
+        "accountId": "acc-wohnung",
+        "poolId": "pool-flex",
+        "amount": 80000
+      }
+    ]
+  },
+  "pruefungen": [
+    "Reiner Kontotransfer ist weder Einnahme noch Ausgabe: keine Poolbewegung, keine Kategorie, kein Finanzierungsmonat.",
+    "Konten: acc-haupt 100000 → 20000, acc-wohnung 0 → 80000; Summe Konten = Summe Pools = 130000 (unverändert).",
+    "Zuordnung wird mitgeführt: die 80000 wandern als pool-flex-Zuordnung von acc-haupt auf acc-wohnung mit (acc-haupt/flex 20000, acc-wohnung/flex 80000); Zeilensummen = Kontostände, Spaltensummen = Poolbestände.",
+    "Transfer erhält bestehende Reservierungen (in diesem Fall keine vorhanden).",
+    "Pools unverändert: pool-flex 100000, pool-freizeit 30000 — der Gesamtpoolbestand bleibt konstant.",
+    "Keine negativen Zuordnungen, keine offenen Ausgleichspositionen."
+  ]
+}

@@ -1,0 +1,137 @@
+{
+  "meta": {
+    "name": "Lario Sync-Operationen — Datenmodell",
+    "zweck": "Demonstriert das Datenmodell der Sync-Operation (geräteste Einheit für die Synchronisation): stabile Operations-ID, Payloadnachweis (Hash), erwartete Basisrevision, Status und Idempotenz bei Wiederholung. NUR Datenmodell — Endpoints, Cursor-Verfahren, Generationen und Quittungsprotokoll sind Schritt 9/10.",
+    "bezug": "docs/step-0/rechenvertrag.md — §5.4 (Trennung Entwurf / bestätigte Buchung / Sync-Operation; Sync-Regeln), §5.5 (Revision, Revisionskonflikt)",
+    "konventionen": {
+      "operationId": "Geräteseitig vergeben und dauerhaft (Format op-<JJMM>-<fortlaufend>-<n>).",
+      "payloadHash": "Platzhalter im Format sha256:<64-hex>; der echte Hash des fachlichen Payloads wird bei Erzeugung der Operation berechnet. Platzhalter-Bindestelle: meta.payloadHashHinweis.",
+      "atomaritaet": "Korrekturen, die mehrere Teilbeträge betreffen (z. B. zwei Splits einer Buchung), sind ATOMAR in EINER Operation: alle geänderten Teilbeträge stehen im Payload, und die Splitregel (Summe Splits = totalAmount, rechenvertrag.md §2.1) gilt für den korrigierten Gesamtzustand.",
+      "zeitstempel": "Technische Zeitstempel als ISO 8601 UTC mit Z (rechenvertrag.md §2.2)."
+    },
+    "payloadHashHinweis": "Alle payloadHash-Werte in dieser Datei sind Platzhalter; der echte Hash wird bei Erzeugung der jeweiligen Operation aus dem fachlichen Payload berechnet."
+  },
+  "operations": [
+    {
+      "operationId": "op-2026-1101-001",
+      "deviceId": "dev-pixel-8",
+      "type": "createBooking",
+      "payload": {
+        "id": "bk-2026-1101",
+        "date": "2026-11-05",
+        "type": "expense",
+        "account": "acc-haupt",
+        "totalAmount": 8500,
+        "note": "Gemischter Einkauf",
+        "baseRevision": 1,
+        "splits": [
+          {
+            "id": "sp-1",
+            "amount": 6500,
+            "poolId": "pool-flex",
+            "categoryId": "cat-lebensmittel",
+            "tax": null
+          },
+          {
+            "id": "sp-2",
+            "amount": 2000,
+            "poolId": "pool-freizeit",
+            "categoryId": "cat-freizeit",
+            "tax": {
+              "relevant": false
+            }
+          }
+        ]
+      },
+      "payloadHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "payloadHashHinweis": "Platzhalter; echter Hash wird bei Erzeugung der Operation berechnet.",
+      "expectedBaseRevision": null,
+      "expectedBaseRevisionHinweis": "Neuanlage: es existiert auf dem Host noch keine Revision zum Vergleichen — daher null (rechenvertrag.md §5.5). Stattdessen muss die Ziel-ID bk-2026-1101 noch nicht existieren; die neue Buchung erhält den einheitlichen Startwert Revision 1.",
+      "createdAt": "2026-11-05T14:30:00Z",
+      "status": "queued"
+    },
+    {
+      "operationId": "op-2026-1102-002",
+      "deviceId": "dev-pixel-8",
+      "type": "updateBooking",
+      "payload": {
+        "bookingId": "bk-2026-1101",
+        "totalAmount": 8500,
+        "correction": {
+          "splits": [
+            {
+              "id": "sp-1",
+              "amount": 6000,
+              "poolId": "pool-flex",
+              "categoryId": "cat-lebensmittel",
+              "tax": null
+            },
+            {
+              "id": "sp-2",
+              "amount": 2500,
+              "poolId": "pool-freizeit",
+              "categoryId": "cat-freizeit",
+              "tax": {
+                "relevant": false
+              }
+            }
+          ],
+          "hinweis": "Beispiel-Korrektur, atomar in einer Operation: sp-1 6500 → 6000 UND sp-2 2000 → 2500; Summe der Splits bleibt exakt 8500 = totalAmount (Splitregel, rechenvertrag.md §2.1). Würde nur ein Split geändert, ergäbe sich 8000 ≠ 8500 und die Korrektur ist unzulässig."
+        }
+      },
+      "payloadHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "payloadHashHinweis": "Platzhalter; echter Hash wird bei Erzeugung der Operation berechnet.",
+      "expectedBaseRevision": 1,
+      "createdAt": "2026-11-05T15:00:00Z",
+      "status": "queued"
+    },
+    {
+      "operationId": "op-2026-1101-001",
+      "deviceId": "dev-pixel-8",
+      "type": "createBooking",
+      "payload": {
+        "id": "bk-2026-1101",
+        "date": "2026-11-05",
+        "type": "expense",
+        "account": "acc-haupt",
+        "totalAmount": 8500,
+        "note": "Gemischter Einkauf",
+        "baseRevision": 1,
+        "splits": [
+          {
+            "id": "sp-1",
+            "amount": 6500,
+            "poolId": "pool-flex",
+            "categoryId": "cat-lebensmittel",
+            "tax": null
+          },
+          {
+            "id": "sp-2",
+            "amount": 2000,
+            "poolId": "pool-freizeit",
+            "categoryId": "cat-freizeit",
+            "tax": {
+              "relevant": false
+            }
+          }
+        ]
+      },
+      "payloadHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "payloadHashHinweis": "Platzhalter; identisch zum Hash der Operation mit gleicher operationId (gleicher Inhalt).",
+      "expectedBaseRevision": null,
+      "expectedBaseRevisionHinweis": "Neuanlage: null (wie bei der ersten op-2026-1101-001) — Wiederholung mit gleichem Inhalt wird über die Operations-ID erkannt und nur quittiert, die Revision der Zielentität wird nicht erneut angewendet (rechenvertrag.md §5.5).",
+      "createdAt": "2026-11-05T14:45:00Z",
+      "status": "acknowledged",
+      "note": "Demonstriert Idempotenz: gleiche operationId und gleicher payloadHash wie op-2026-1101-001 (Wiederholung nach verloren gegangener Antwort); wird nicht erneut angewendet, nur quittiert."
+    }
+  ],
+  "rules": [
+    "gleiche operationId + gleicher payloadHash = idempotent, nur quittiert (wird nicht erneut angewendet)",
+    "gleiche operationId + anderer payloadHash = Fehler (sichtbar, kein Stillstand)",
+    "Quittung nur nach expliziter Bestätigung der Übernahme",
+    "Cursor erst nach lokaler atomarer Übernahme (ChangeLog-Eintrag + Buchung zusammen)",
+    "nicht quittierte Operationen bei Pull erhalten (kein Verlust nach Server-Restore)",
+    "Wiederholung zuerst über die Operations-ID erkennen: gleiche operationId + gleicher payloadHash wird nur quittiert und ändert die Revision der Zielentität nicht — erst danach gelten die Regeln für Neuanlage/Änderung (rechenvertrag.md §5.5)",
+    "expectedBaseRevision (rechenvertrag.md §5.5): bei createBooking null — auf dem Host existiert noch keine Revision zum Vergleichen, stattdessen muss die Ziel-ID noch nicht existieren und die neue Buchung erhält Revision 1; bei updateBooking die aktuelle Revision der ZIELENTITÄT (hier bk-2026-1101, aktuell 1), die nach erfolgreicher Änderung um 1 erhöht wird; abweichende Revision bei Änderung = Revisionskonflikt"
+  ]
+}

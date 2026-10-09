@@ -1,0 +1,148 @@
+{
+  "meta": {
+    "name": "Referenzfall 3: Split mit negativer Zuordnung (Regelanker)",
+    "planBezug": "Implementierungsplan §5 Schritt 0; Splitregel Schritt 4",
+    "zweck": "Der Regelanker des Rechenvertrags: gemischter Einkauf 85,00 € vom Hauptkonto (65,00 € Flex + 20,00 € Freizeit) ergibt Konten 915,00/300,00 €, Pools 935,00/280,00 €, die negative Zuordnung acc-haupt/pool-freizeit = −2000 Cent und die offene Ausgleichsposition set-0010. Die freie Verfügbarkeit ist getrennt vom Gesamtpool und von der physischen Kontoliquidität.",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §2.1 (Splitregel), §3.3 (Ausgabe: Account− und Pool− je Split), §3.4 (signierte Zuordnung, Regelanker 1.000/300 € → 915/300 €, 935/280 €), §3.5 (offene Ausgleichsposition), §3.6 (freie Verfügbarkeit)",
+    "strukturBezug": "Buchungsstruktur identisch mit docs/step-0/data/buchung.json (bk-2026-1101); hier neue fortlaufende Buchung ID ab bk-2026-1201 und Ausgleichsposition set-0010"
+  },
+  "startzustand": {
+    "basis": "docs/step-0/data/stammdaten.json",
+    "anpassungen": [],
+    "kontostaende": {
+      "acc-haupt": 100000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": []
+  },
+  "vorgaenge": [
+    {
+      "typ": "ausgabe",
+      "buchung": {
+        "id": "bk-2026-1202",
+        "date": "2026-11-05",
+        "type": "expense",
+        "account": "acc-haupt",
+        "totalAmount": 8500,
+        "note": "Gemischter Einkauf",
+        "baseRevision": 1,
+        "splits": [
+          {
+            "id": "sp-1",
+            "amount": 6500,
+            "poolId": "pool-flex",
+            "categoryId": "cat-lebensmittel",
+            "tax": null
+          },
+          {
+            "id": "sp-2",
+            "amount": 2000,
+            "poolId": "pool-freizeit",
+            "categoryId": "cat-freizeit",
+            "tax": {
+              "relevant": false
+            }
+          }
+        ]
+      },
+      "beschreibung": "Gemischter Einkauf 85,00 € vom Hauptkonto: 65,00 € pool-flex (cat-lebensmittel, steuerlich nicht gekennzeichnet) und 20,00 € pool-freizeit (cat-freizeit, steuerlich relevant=false). Der Freizeit-Anteil wird über das Hauptkonto bezahlt, obwohl das Geld im Freizeitpool liegt → negative Zuordnung und interne Vorfinanzierung.",
+      "abgeleitete_wirkung": {
+        "zuordnung": [
+          {
+            "accountId": "acc-haupt",
+            "poolId": "pool-freizeit",
+            "amount": -2000
+          }
+        ],
+        "ausgleichsposition": {
+          "id": "set-0010",
+          "amount": 2000,
+          "sourceAccountId": "acc-haupt",
+          "targetPoolId": "pool-freizeit",
+          "status": "offen",
+          "createdByBooking": "bk-2026-1202",
+          "note": "Vorfinanzierung: Freizeit-Pool über Hauptkonto bezahlt; mit der negativen Zuordnung acc-haupt/pool-freizeit = −2000 verknüpft."
+        }
+      }
+    }
+  ],
+  "erwarteter_endzustand": {
+    "kontostaende": {
+      "acc-haupt": 91500,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 93500,
+      "pool-freizeit": 28000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [],
+    "freie_salden": {
+      "pool-flex": 93500,
+      "pool-freizeit": 28000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0,
+      "kontoliquiditaet": {
+        "acc-haupt": 91500,
+        "acc-freizeit": 28000,
+        "acc-spar": 0,
+        "acc-wohnung": 0,
+        "hinweis": "Vor dem Ausgleich: am Freizeitkonto 30000 physisch, aber 2000 bereits verbrauchtes Geld → nur 28000 frei; am Hauptkonto 91500 physisch, obwohl Pool flex 93500 zeigt."
+      }
+    },
+    "offene_ausgleichspositionen": [
+      {
+        "id": "set-0010",
+        "amount": 2000,
+        "restAmount": 2000,
+        "sourceAccountId": "acc-haupt",
+        "targetPoolId": "pool-freizeit",
+        "status": "offen",
+        "createdByBooking": "bk-2026-1202"
+      }
+    ],
+    "zuordnung": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 93500
+      },
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-freizeit",
+        "amount": -2000
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 30000
+      }
+    ]
+  },
+  "pruefungen": [
+    "Splitregel: 6500 + 2000 = 8500 = totalAmount (exakt, keine Abweichung); eine Abweichung (z. B. 8499) wird abgelehnt.",
+    "Regelanker: Konten 91500/30000 (915,00/300,00 €), Pools 93500/28000 (935,00/280,00 €).",
+    "Negative Zuordnung acc-haupt/pool-freizeit = −2000 ist an die Ausgleichsposition set-0010 verknüpft und wird nicht als vorhandenes Geld angezeigt.",
+    "Summe Konten = Summe Pools = 121500 (91500 + 30000 = 93500 + 28000).",
+    "Freie Verfügbarkeit getrennt von Gesamtpool: Pool flex zeigt 93500 frei, physisch am Hauptkonto aber nur 91500 auszahlbar; Kontoliquidität acc-freizeit = 28000 (physisch 30000, davon 2000 bereits verbraucht) — Bindungen und Ausgleichsbedarfe reduzieren den Gesamtpool nicht nochmals (keine doppelte Abrechnung).",
+    "Steuerkennzeichnung an sp-2 (relevant false) verändert keine Finanzsalden (Konten und Pools exakt wie ohne Kennzeichnung).",
+    "Keine Doppelbindung: set-0010 entsteht genau einmal aus bk-2026-1202 und trägt createdByBooking bk-2026-1202."
+  ]
+}
