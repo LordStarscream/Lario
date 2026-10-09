@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Lario.Domain: Werte, Regeln und Invarianten der Finanzplanung.
+    Keine Abhängigkeit von HTTP, EF Core oder UI.
+  -->
+</Project>
