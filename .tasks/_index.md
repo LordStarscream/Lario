@@ -25,7 +25,7 @@ _Last updated: 9. Okt. 2026_
 
 | Schritt | Aufgabe | Kurzbeschreibung | Voraussetzungen | Status |
 |---|---|---|---|---|
-| 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario)); Review-Runde 1 (`e91f156`), 2 (`e7bf514`: Fall 8 — Reservierung ist Anspruch im Herkunftspool, kein Pooltransfer) und 3 (`60f3407`: Revisionskonzept vereinheitlicht, Fall-4-Richtung, Fall-8-Format) umgesetzt; alle drei Runden **gepusht** auf `origin/step/0-rechenvertrag` (`1a0f078`), wartet auf Re-Review |
+| 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario)); Review-Runde 1 (`e91f156`), 2 (`e7bf514`: Fall 8 — Reservierung ist Anspruch im Herkunftspool, kein Pooltransfer) und 3 (`60f3407`: Revisionskonzept vereinheitlicht, Fall-4-Richtung, Fall-8-Format) umgesetzt; alle drei Runden **gepusht** auf `origin/step/0-rechenvertrag` (`00c20ec`), wartet auf Re-Review |
 | 1 | — | Projektgerüst (4 .NET-Projekte, Tests, Angular-Workspace), Linux-Start, OpenAPI-Generierung | 0 | geplant |
 | 2 | — | Früher Android-/LAN-Prototyp: Capacitor-App, SQLite-Adapter, Offline-Nachweis auf echtem Gerät | 1 | geplant |
 | 3 | — | Stammdaten (Konten/Pools/Kategorien/Steuerkategorien), Anfangsbestand, erste Migration | 0–1 | geplant |
