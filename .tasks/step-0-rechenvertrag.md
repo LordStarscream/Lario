@@ -82,9 +82,14 @@ Pool-, Reservierungs- und freien Salden; jede Vorgangsart hat eindeutige Wirkung
 - [x] Task 9: Fertigmeldung (Übergabevorlage Plan §7) erstellen — siehe Session-Antwort
   > - 1. Umgesetzter Schritt + Verhalten, 2. Dateien + Abweichungen, 3. Prüfungen + Ergebnis, 4. offene Abnahmen, 5. Übergabe an Review
 - [x] Task 10: Commit auf `step/0-rechenvertrag`
-  > - `ed2133e` docs(step-0): Rechenvertrag, data/, referenzfaelle/ (15 Dateien, 2084 Zeilen)
-  > - `a4946e3` chore: .tasks/ + .gitignore (.pi/ und Schlüssel-Ausschlüsse)
+  > - `0583ce2` docs(step-0): Rechenvertrag, data/, referenzfaelle/ (15 Dateien, 2084 Zeilen)
+  > - `a118a25` chore: .tasks/ + .gitignore (.pi/ und Schlüssel-Ausschlüsse)
   > - Working tree clean; **Push erst nach expliziter Nutzerfreigabe**
+- [x] Task 11: Rebase auf origin/main (de854f8 „Rename project documentation to Lario")
+  > - Konfliktfrei (keine Datei-Überlappung); Branch jetzt auf `de854f8`
+  > - Fachliche Prüfung des main-Commits: **nur Projektname MoneyMap (MMap) → Lario** (Solution, Namespaces, Projekte `Lario.*`, AGENTS.md, README, Planungsdocs) + neues Logo `assets/branding/lario-logo.png`, altes Icon nach `archive/`, README ergänzt „maßgeschneidert für den eigenen Haushalt, Vertrieb ist Option“
+  > - **Keine Änderung an Finanzregeln, Schritten 0–18 oder Abnahmekriterien** → Referenzfälle und Rechenvertrag bleiben fachlich gültig
+  > - Namensänderung in Schritt-0-Dokumenten, Beispieldaten und Task-Index nachgezogen: `43ee021`
 
 ## Offene Punkte (für Schritt 1 / später)
 - Fall 7 `pl-ver-2026-11`: Kategorie der Jahresversicherung ist im Plan nicht vorgegeben → Platzhalter `cat-sonstiges`, im JSON als `_todo` markiert; vor Schritt 3 (Stammdaten) korrigieren
