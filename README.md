@@ -9,11 +9,11 @@ und unabhängige Android-Ausgabenerfassung (ab Schritt 2/8). Planung und Abnahme
 
 | Bereich | Wahl | Fixiert in |
 |---|---|---|
-| .NET | .NET 10.0.100 SDK (STS) | `global.json` |
-| Web-UI | Angular 22.2 (workspace `frontend/`, App `host`) | `frontend/package.json` |
-| OpenAPI | NSwag 14.x (Code-Gen Host-API → TypeScript-Client) | `Directory.Packages.props` |
-| Lint | ESLint 9.39 flat config + `@angular-eslint` 22 | `frontend/package.json` |
-| Tests | xUnit 2.9.5 / .NET 10 | `Directory.Packages.props` |
+| .NET | .NET 10.0.112 SDK | `global.json` |
+| Web-UI | Angular 22.2 (workspace `frontend/`, App `host`) | `frontend/package.json` + Lockfile |
+| OpenAPI | eingebauter .NET-OpenAPI (`Microsoft.AspNetCore.OpenApi` 10.0.12); TypeScript-Client via `openapi-typescript-codegen` 0.31.0 | `Directory.Packages.props`, `frontend/package.json` |
+| Lint | ESLint 10.12.0 flat config + `@angular-eslint` 22.5 | `frontend/package.json` + Lockfile |
+| Tests | xUnit 2.9.3 / .NET 10 | `Directory.Packages.props` |
 
 Patchstände werden bei Upgrades bewusst geändert und in Commit-Nachrichten begründet
 (keine stillen Major-Upgrades).
@@ -25,10 +25,11 @@ Lario.slnx                 Solution (net10)
 src/
   Lario.Domain/            Werte, Regeln, Invarianten — keine HTTP/EF/UI-Abhängigkeit
   Lario.Application/       Anwendungsfälle, Domain + gezielte Schnittstellen
-  Lario.Infrastructure/    EF Core 10 / SQLite (ab Schritt 3)
+  Lario.Infrastructure/    Datenablage-Pfade (EF Core 10 / SQLite ab Schritt 3)
   Lario.Host/              API, Web-UI (wwwroot), /api/health, /api/version
 tests/
-  Lario.Domain.Tests/      xUnit-Tests
+  Lario.Domain.Tests/      xUnit-Tests: Money (24)
+  Lario.Infrastructure.Tests/  xUnit-Tests: LarioDataPaths (8)
 frontend/                  Angular-Workspace
   apps/host/               Web-App (Build → src/Lario.Host/wwwroot)
   openapi.json             Spec-Snapshot der Host-API (generate:client)
@@ -42,7 +43,7 @@ frontend/                  Angular-Workspace
 ## Build und Tests (reproduzierbar)
 
 ```bash
-# .NET: Solution bauen + Domain-Tests
+# .NET: Solution bauen + alle Tests
 dotnet build Lario.slnx
 dotnet test Lario.slnx
 
@@ -56,34 +57,58 @@ npm run build       # ng build host + ng build mobile
 ## Host starten (mit Web-UI)
 
 ```bash
-# 1) Frontend bauen (kopiert dist/host/browser nach src/Lario.Host/wwwroot)
+# 1) Frontend bauen (wird bei dotnet build des Hosts nach wwwroot kopiert)
 cd frontend && npm ci && npm run build:host
 
-# 2) Host starten
+# 2) Host bauen und starten
 cd ..
-dotnet run --project src/Lario.Host --urls http://localhost:8080
+dotnet build src/Lario.Host/Lario.Host.csproj
+ASPNETCORE_URLS=http://localhost:8080 DOTNET_ROOT=$HOME/.dotnet \
+  ./src/Lario.Host/bin/Debug/net10.0/Lario.Host
 # → http://localhost:8080            (SPA)
-# → http://localhost:8080/api/health (JSON: {"status":"ok",...})
+# → http://localhost:8080/api/health (JSON: {"status":"ok","dataDirectory":...})
 # → http://localhost:8080/api/version
-# → http://localhost:8080/openapi/v1.json (NSwag-Spec, Versionierung ab Schritt 3)
+# → http://localhost:8080/openapi/v1.json (OpenAPI-Spec der Host-API)
 ```
 
-Datenverzeichnis (ab Schritt 3): `~/.local/share/lario` (Linux XDG).
+> **Hinweis zu dieser Maschine:** Der .NET-SDK liegt unter `/usr/share/dotnet`,
+> das Microsoft-AspNetCore-Runtime-Framework aber nur unter `~/.dotnet/shared`.
+> `dotnet run` / `dotnet <dll>` (Muxer) finden das Framework nicht;
+> das Apphost-Executable mit `DOTNET_ROOT=$HOME/.dotnet` schon. Auf Systemen,
+> bei denen SDK und Runtime nebeneinander installiert sind, genügt
+> `dotnet run --project src/Lario.Host --urls http://localhost:8080`.
 
-## OpenAPI-Client generieren (ab Schritt 3)
+Das Web-Frontend ruft die API relativ zum eigenen Origin auf
+(`OpenAPI.BASE = ''` in `frontend/apps/host/src/app/app.config.ts`), deshalb
+funktioniert der Host auf jedem Port/jedem Rechner. Im Angular-Devserver
+(`npm start`) übernimmt `proxy.conf.json` die Weiterleitung `/api` → `localhost:8080`.
+
+### Datenverzeichnis
+
+Wird beim Host-Start angelegt (idempotent — Neustart erzeugt keine zweite Ablage):
+
+1. `Lario:DataDirectory` (appsettings oder `Lario__DataDirectory`), falls gesetzt
+2. sonst `$XDG_DATA_HOME/lario`
+3. sonst `~/.local/share/lario`
+
+Die SQLite-Datei (`lario.sqlite`) erscheint dort ab Schritt 3.
+
+## OpenAPI-Client generieren
 
 ```bash
-# Host muss laufen; generiert apps/host/src/generated/ (kein Commit-Pflicht-Problem:
-# generierter Code ist Teil des Frontend-Builds und wird via ESLint ausgenommen)
+# Host muss laufen; erzeugt openapi.json (Spec-Snapshot) +
+# apps/host/src/generated/ (fetch-Client, von ESLint ausgenommen).
+# app.config.ts setzt danach die Basisadresse außerhalb des generierten Codes.
 cd frontend
-npm run generate:client   # liest http://localhost:8080/openapi/v1.json → openapi.json + Client
+npm run generate:client   # liest http://localhost:8080/openapi/v1.json
 ```
 
 ## Entwicklungszustand
 
-**Schritt 1 (Projektgerüst) ist abgeschlossen:** Solution, vier Projektordner mit
-Architektur-Tests, Angular-Workspace mit host/mobile-Apps, Health-/Version-Endpunkte,
-SPA-Hosting mit SPA-Fallback, NSwag-Grundgerüst, Lint-Setup, .gitignore, Task-Tracking.
+**Schritt 1 (Projektgerüst) ist abgeschlossen:** Solution, vier Projektordner,
+xUnit-Tests (Money 24, LarioDataPaths 8), Angular-Workspace mit host/mobile-Apps,
+Health-/Version-Endpunkte, SPA-Hosting mit SPA-Fallback, OpenAPI-Vertrag und
+TypeScript-Client-Generierung, Lint-Setup, .gitignore, Task-Tracking.
 
-Nächster Schritt: 2 — Android-App-Grundgerüst (Capacitor, echtes Testgerät).
+Nächster Schritt: 2 — Android-/LAN-Prototyp (Capacitor, echtes Testgerät).
 Details: `.tasks/step-1-projektgeruest.md`, `.tasks/_index.md`.
