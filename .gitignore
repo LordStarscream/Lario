@@ -1,0 +1,11 @@
+# pi-Arbeitsdateien (Session-Exporte, Memory) — nicht committen (AGENTS.md: Git und vertrauliche Daten)
+.pi/
+
+# Vorbeugung: echte Finanzdaten, DB-/Backupdateien, Schlüssel
+*.db
+*.sqlite
+*.db-shm
+*.db-wal
+backups/
+*.p12
+*.keystore
