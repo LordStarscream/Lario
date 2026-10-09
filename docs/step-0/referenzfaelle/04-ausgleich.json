@@ -2,7 +2,7 @@
   "meta": {
     "name": "Referenzfall 4: Interner Ausgleich (Kontotransfer löst Ausgleichsposition)",
     "planBezug": "Implementierungsplan §5 Schritt 0; interne Ausgleiche Schritt 5",
-    "zweck": "Der erste Kernfall der manuellen Referenzfälle: der offene Ausgleich von 20,00 € (set-0010 aus Fall 3) wird durch den Transfer 20,00 € von acc-haupt nach acc-freizeit beglichen. Pools bleiben unverändert, die negative Zuordnung löst sich auf, Kontostand und Poolbestand decken sich wieder vollständig.",
+    "zweck": "Der erste Kernfall der manuellen Referenzfälle: der offene Ausgleich von 20,00 € (set-0010 aus Fall 3) wird durch den Transfer 20,00 € von acc-freizeit nach acc-haupt (Rückfluss der Vorfinanzierung) beglichen. Pools bleiben unverändert, die negative Zuordnung löst sich auf, Kontostand und Poolbestand decken sich wieder vollständig.",
     "rechenvertrag": "docs/step-0/rechenvertrag.md — §3.3 (reiner Kontotransfer: Account−/Account+, Gesamtpoolbestand unverändert), §3.4 (nach Ausgleich Konten 935/280 €, Zuordnung 0 €), §3.5 (offene Ausgleichspositionen, Teilbegleichung)"
   },
   "startzustand": {
@@ -44,14 +44,14 @@
         "id": "bk-2026-1203",
         "date": "2026-11-06",
         "type": "transfer",
-        "fromAccountId": "acc-haupt",
-        "toAccountId": "acc-freizeit",
+        "fromAccountId": "acc-freizeit",
+        "toAccountId": "acc-haupt",
         "amount": 2000,
-        "note": "Ausgleich 20 €",
+        "note": "Ausgleich 20 € (Rückfluss der Vorfinanzierung: Freizeit → Haupt)",
         "baseRevision": 1,
         "relatedSettlementId": "set-0010"
       },
-      "beschreibung": "Reiner Kontotransfer 20,00 € von acc-haupt auf acc-freizeit, verknüpft mit der offenen Ausgleichsposition set-0010 (relatedSettlementId). Keine Poolbewegung, keine Kategorie, kein Finanzierungsmonat."
+      "beschreibung": "Reiner Kontotransfer 20,00 € von acc-freizeit auf acc-haupt (Rückfluss der Vorfinanzierung, die beim Einkauf am Hauptkonto entstanden war), verknüpft mit der offenen Ausgleichsposition set-0010 (relatedSettlementId). Keine Poolbewegung, keine Kategorie, kein Finanzierungsmonat."
     }
   ],
   "erwarteter_endzustand": {

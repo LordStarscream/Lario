@@ -49,6 +49,7 @@ Entscheidungen auf Major-Ebene mit Begründung. Konkrete Patch-Stände (global.j
 - `float`/`double` darf für Geldbeträge **niemals** verwendet werden — weder in Berechnungen, noch in Persistenz, noch in der Übertragung (API-Payload enthält Cent-Werte als Ganzzahlen).
 - Währung ist in Version 1 ausschließlich EUR. Keine Mehrwährung, keine Umrechnung.
 - Splits und Verteilungen: Teilbeträge werden als Ganzzahl-Cent berechnet. Bei Aufteilung auf mehrere Teile wird mit `decimal` gerechnet und mit dem Rundungsmodus **Half Away From Zero** auf Cent gerundet; der letzte Teil erhält den Residualbetrag (Gesamtbetrag minus Summe der vorherigen Teile). Die Summe der Teilbeträge muss exakt den Gesamtbetrag ergeben; die Anwendung muss dies bei jeder Verteilung prüfen.
+  - **Grenzfall (verbindlicher Testfall):** 3 Cent auf 6 gleiche Teile. Teil 1–5: `3/6 = 0,5 Cent` → Half Away From Zero → je **1 Cent** (Summe 5 Cent). Teil 6 (Rest): `3 − 5 = −2 Cent`. Die Summe ist exakt 3 Cent, der Residualteil ist aber **negativ** — das ist ein sichtbarer Fehler, keine zulässige Verteilung. **Regel:** ein Teilbetrag darf nicht negativ sein und nicht den Gesamtbetrag übersteigen; der Verteilungsalgorithmus muss den Grenzfall erkennen (z. B. durch Aufteilung auf maximal `max(1, ⌊Gesamt/1⌋)` Teile oder durch Ablehnung mit sichtbarem Hinweis). Eine Prüfung nur auf die Gesamtsumme genügt nicht.
 - Steuervermerkte Teilbeträge dürfen den Splitbetrag nicht übersteigen (Prüfpflicht).
 
 ### 2.2 Zeit und Daten

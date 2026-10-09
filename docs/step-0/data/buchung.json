@@ -13,7 +13,7 @@
   "postingWirkungen": {
     "bk-2026-1101": "Account acc-haupt −8500; Pool pool-flex −6500; Pool pool-freizeit −2000. Erzeugt negative Zuordnung acc-haupt/pool-freizeit = −2000 und offene Ausgleichsposition set-0001 (siehe zuordnung_ausgleich.json).",
     "bk-2026-1102": "Account acc-haupt +300000; Pool pool-flex +300000 (Zuweisung erhöht den Poolbestand). Demonstriert: Gehalt am 28.10. finanziert November — Buchungsdatum und Finanzierungsmonat sind getrennte Angaben (rechenvertrag.md §2.2, §2.3).",
-    "bk-2026-1103": "Account acc-haupt −2000; Account acc-freizeit +2000; Gesamtpoolbestand bleibt unverändert (reiner Kontotransfer, rechenvertrag.md §3.3). Begleicht die offene Ausgleichsposition set-0001 vollständig (2000 Cent), löst die negative Zuordnung acc-haupt/pool-freizeit auf."
+    "bk-2026-1103": "Account acc-haupt +2000; Account acc-freizeit −2000; Gesamtpoolbestand bleibt unverändert (reiner Kontotransfer, rechenvertrag.md §3.3). Begleicht die offene Ausgleichsposition set-0001 vollständig (2000 Cent), löst die negative Zuordnung acc-haupt/pool-freizeit auf. Die 20 € fließen vom Freizeitkonto (Vorfinanzierung durch das Hauptkonto) zurück an das Hauptkonto: Freizeit 300 → 280 €, Haupt 915 → 935 € (Regelanker §3.4)."
   },
   "hinweise": {
     "bk-2026-1102": "Steht chronologisch vor bk-2026-1101 (2026-10-28 < 2026-11-05) und ist für die Zuordnungs-Matrix in zuordnung_ausgleich.json NICHT enthalten: die Fixture zeigt ausschließlich Startzustand + Ausgabe + Transfer (Regelanker §3.4). In den Referenzfällen (Batch C) wird diese Buchung ab dem Journal-Stand nach dem 28.10.2026 angewendet.",
@@ -62,10 +62,10 @@
       "id": "bk-2026-1103",
       "date": "2026-11-06",
       "type": "transfer",
-      "fromAccountId": "acc-haupt",
-      "toAccountId": "acc-freizeit",
+      "fromAccountId": "acc-freizeit",
+      "toAccountId": "acc-haupt",
       "amount": 2000,
-      "note": "Ausgleich 20 €",
+      "note": "Ausgleich 20 € (Rückfluss der Vorfinanzierung: Freizeit → Haupt)",
       "baseRevision": 1,
       "relatedSettlementId": "set-0001"
     }

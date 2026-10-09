@@ -6,6 +6,7 @@
     "konventionen": {
       "operationId": "Geräteseitig vergeben und dauerhaft (Format op-<JJMM>-<fortlaufend>-<n>).",
       "payloadHash": "Platzhalter im Format sha256:<64-hex>; der echte Hash des fachlichen Payloads wird bei Erzeugung der Operation berechnet. Platzhalter-Bindestelle: meta.payloadHashHinweis.",
+      "atomaritaet": "Korrekturen, die mehrere Teilbeträge betreffen (z. B. zwei Splits einer Buchung), sind ATOMAR in EINER Operation: alle geänderten Teilbeträge stehen im Payload, und die Splitregel (Summe Splits = totalAmount, rechenvertrag.md §2.1) gilt für den korrigierten Gesamtzustand.",
       "zeitstempel": "Technische Zeitstempel als ISO 8601 UTC mit Z (rechenvertrag.md §2.2)."
     },
     "payloadHashHinweis": "Alle payloadHash-Werte in dieser Datei sind Platzhalter; der echte Hash wird bei Erzeugung der jeweiligen Operation aus dem fachlichen Payload berechnet."
@@ -54,11 +55,27 @@
       "type": "updateBooking",
       "payload": {
         "bookingId": "bk-2026-1101",
+        "totalAmount": 8500,
         "correction": {
-          "splitId": "sp-1",
-          "amount": 6000,
-          "categoryId": "cat-lebensmittel",
-          "hinweis": "Beispiel-Korrektur: Split-Betrag korrigiert; Summe der Splits bleibt 8500 (zweite Split sp-2 entsprechend 2500, hier nur der korrigierte Split gezeigt)."
+          "splits": [
+            {
+              "id": "sp-1",
+              "amount": 6000,
+              "poolId": "pool-flex",
+              "categoryId": "cat-lebensmittel",
+              "tax": null
+            },
+            {
+              "id": "sp-2",
+              "amount": 2500,
+              "poolId": "pool-freizeit",
+              "categoryId": "cat-freizeit",
+              "tax": {
+                "relevant": false
+              }
+            }
+          ],
+          "hinweis": "Beispiel-Korrektur, atomar in einer Operation: sp-1 6500 → 6000 UND sp-2 2000 → 2500; Summe der Splits bleibt exakt 8500 = totalAmount (Splitregel, rechenvertrag.md §2.1). Würde nur ein Split geändert, ergäbe sich 8000 ≠ 8500 und die Korrektur ist unzulässig."
         }
       },
       "payloadHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",

@@ -93,13 +93,13 @@
           "restAmount": 0,
           "nachBuchung": "bk-2026-1103",
           "settledByBooking": "bk-2026-1103",
-          "anmerkung": "Vollständige Begleichung durch den Transfer 20 € von acc-haupt nach acc-freizeit; Position erreicht 0 und wird beglichen."
+          "anmerkung": "Vollständige Begleichung durch den Transfer 20 € von acc-freizeit nach acc-haupt (Rückfluss der Vorfinanzierung); Position erreicht 0 und wird beglichen."
         }
       ]
     }
   ],
   "allocationAfterTransfer": {
-    "beschreibung": "Nach dem Transfer bk-2026-1103 (2026-11-06, 20 € von acc-haupt nach acc-freizeit). Die Zuordnung acc-haupt/pool-freizeit ist 0 € und wird daher nicht mehr ausgeführt (implizit 0). Pools bleiben unverändert: Gesamtpoolbestand bei reinem Kontotransfer konstant.",
+    "beschreibung": "Nach dem Transfer bk-2026-1103 (2026-11-06, 20 € von acc-freizeit nach acc-haupt, Rückfluss der Vorfinanzierung). Die Zuordnung acc-haupt/pool-freizeit ist 0 € und wird daher nicht mehr ausgeführt (implizit 0). Pools bleiben unverändert: Gesamtpoolbestand bei reinem Kontotransfer konstant.",
     "matrix": [
       {
         "accountId": "acc-haupt",

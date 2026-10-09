@@ -1,9 +1,10 @@
 {
   "meta": {
-    "name": "Referenzfall 7: Fixkostendeckung und Bindungen",
+    "name": "Referenzfall 7: Fixkostendeckung, Bindung und Zahlung",
     "planBezug": "Implementierungsplan §5 Schritt 0; Deckung Schritt 12",
-    "zweck": "Deckungslogik: Gehalt 3.000,00 € (Buchungsdatum 2026-10-28, Finanzierungsmonat 2026-11) bindet die November-Verpflichtungen Miete 900,00 € + Jahresversicherung 1.100,00 € = 2.000,00 € einmalig. Zusätzlicher freier Flex-Anteil 1.000,00 €, Kontozugang 3.000,00 €. Keine Doppelverrechnung bei Zahlung, keine Doppelbindung bei Teileingängen.",
-    "rechenvertrag": "docs/step-0/rechenvertrag.md — §4 (Deckungsperiode und Bindungen: Regeln 1–9), §5.1 (geplanter Vorgang: geplant → bestätigt/abgebrochen)"
+    "zweck": "Deckungslogik durchgerechnet bis zur Zahlung: Gehalt 3.000,00 € (Buchungsdatum 2026-10-28, Finanzierungsmonat 2026-11) bindet die November-Verpflichtungen Miete 900,00 € + Jahresversicherung 1.100,00 € = 2.000,00 € einmalig. Zusätzlicher freier Flex-Anteil 1.000,00 €, Kontozugang 3.000,00 €. Die Finanzierung der Zahlung ist eindeutig: die gebundenen Beträge werden durch eine ausdrückliche Umwidmung Flex → Wohnung/Jahreskosten in die Zahlungenpools übertragen; die Zahlungen laufen aus diesen Pools. Die Zahlung löst dieselbe Bindung auf — die offene Verpflichtung wird nicht zusätzlich vom Flex-Rest abgezogen (keine Doppelverrechnung). Kontostand und freie Kontoliquidität werden getrennt ausgewiesen.",
+    "ziffern": "Die Beträge folgen den gemeinsamen Fixtures (data/buchung.json, Gehalt 3.000,00 €); die kleinere Beispieldarstellung in Plan-Schritt 12 (Flex 3.000,00 €, 1.500,00 € + 500,00 €, Gehalt 2.000,00 €) prüft dieselbe Regel.",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §4 (Deckungsperiode und Bindungen: Regeln 1–9), §3.3 (Umwidmung: Quelle sinkt, Ziel steigt, Konten unverändert), §3.6 (freie Verfügbarkeit vs. physische Liquidität), §5.1 (geplanter Vorgang: geplant → bestätigt/abgebrochen)"
   },
   "startzustand": {
     "basis": "docs/step-0/data/stammdaten.json",
@@ -38,7 +39,7 @@
         "note": "Gehalt Oktober",
         "baseRevision": 1
       },
-      "beschreibung": "Gehalt Oktober: 3.000,00 € Eingang am 2026-10-28 auf acc-haupt, Zuweisung an pool-flex, Finanzierungsmonat 2026-11 — bindet die November-Verpflichtungen (vorgaenge 2 und 3)."
+      "beschreibung": "Gehalt Oktober: 3.000,00 € Eingang am 2026-10-28 auf acc-haupt, Zuweisung an pool-flex, Finanzierungsmonat 2026-11 — finanziert die November-Verpflichtungen (vorgaenge 3 und 4)."
     },
     {
       "typ": "geplante_verpflichtung",
@@ -70,36 +71,197 @@
       },
       "beschreibung": "Geplante Verpflichtung Jahresversicherung: 1.100,00 € aus pool-jahreskosten, fällig 2026-11-15 (Planung, noch keine Buchung).",
       "todo": "_todo: Kategorie der Jahresversicherung nicht vorgegeben; hier cat-sonstiges als Platzhalter — vor Schritt 3 korrigieren."
-    }
-  ],
-  "bindungen": [
-    {
-      "id": "bind-1",
-      "plannedOccurrenceId": "pl-woh-miete-2026-11",
-      "sourceIncomeBookingId": "bk-2026-1206",
-      "financingMonth": "2026-11",
-      "amount": 90000,
-      "status": "gebindet"
     },
     {
-      "id": "bind-2",
-      "plannedOccurrenceId": "pl-ver-2026-11",
-      "sourceIncomeBookingId": "bk-2026-1206",
-      "financingMonth": "2026-11",
-      "amount": 110000,
-      "status": "gebindet"
+      "typ": "bindung",
+      "vorgang": {
+        "id": "bind-1",
+        "plannedOccurrenceId": "pl-woh-miete-2026-11",
+        "sourceIncomeBookingId": "bk-2026-1206",
+        "financingMonth": "2026-11",
+        "poolId": "pool-flex",
+        "amount": 90000,
+        "status": "gebindet",
+        "anmerkung": "Planungsvorgang ohne Kontobewegung: bindet 900,00 € des Flex-Pools an den geplanten Vorgang. Reduziert nur den freien Anteil, nicht den Bestand (rechenvertrag.md §4, Regel 1)."
+      },
+      "beschreibung": "Bindung 1: Miete November 900,00 € wird vom Gehalt (Finanzierungsmonat 2026-11) finanziert; das Geld verbleibt bis zur ausdrücklichen Finanzierung im Flex-Pool (Bindung, keine Umwidmung)."
+    },
+    {
+      "typ": "bindung",
+      "vorgang": {
+        "id": "bind-2",
+        "plannedOccurrenceId": "pl-ver-2026-11",
+        "sourceIncomeBookingId": "bk-2026-1206",
+        "financingMonth": "2026-11",
+        "poolId": "pool-flex",
+        "amount": 110000,
+        "status": "gebindet",
+        "anmerkung": "Planungsvorgang ohne Kontobewegung: bindet 1.100,00 € des Flex-Pools an den geplanten Vorgang. Reduziert nur den freien Anteil, nicht den Bestand (rechenvertrag.md §4, Regel 1)."
+      },
+      "beschreibung": "Bindung 2: Jahresversicherung November 1.100,00 € wird vom Gehalt (Finanzierungsmonat 2026-11) finanziert; das Geld verbleibt bis zur ausdrücklichen Finanzierung im Flex-Pool (Bindung, keine Umwidmung)."
+    },
+    {
+      "typ": "umwidmung",
+      "buchung": {
+        "id": "bk-2026-1207",
+        "date": "2026-11-01",
+        "type": "umwidmung",
+        "entries": [
+          {
+            "fromPoolId": "pool-flex",
+            "toPoolId": "pool-wohnung",
+            "amount": 90000,
+            "financingBindingId": "bind-1"
+          },
+          {
+            "fromPoolId": "pool-flex",
+            "toPoolId": "pool-jahreskosten",
+            "amount": 110000,
+            "financingBindingId": "bind-2"
+          }
+        ],
+        "note": "Finanzierung der November-Fixkosten: ausdrückliche Umwidmung der gebundenen Beträge in die Zahlungenpools",
+        "baseRevision": 2
+      },
+      "beschreibung": "Ausdrückliche Finanzierung (eindeutiger Link, Review-Punkt): die gebundenen 2.000,00 € werden per Umwidmung in die Pools übertragen, aus denen die Verpflichtungen bezahlt werden — Wohnung erhält 900,00 €, Jahreskosten 1.100,00 €. Konten bleiben unverändert. Ohne diese Umwidmung wären die Zahlungen aus den leeren Pools Wohnung/Jahreskosten nicht finanziert."
+    },
+    {
+      "typ": "ausgabe",
+      "buchung": {
+        "id": "bk-2026-1208",
+        "date": "2026-11-01",
+        "type": "expense",
+        "account": "acc-haupt",
+        "totalAmount": 90000,
+        "note": "Miete November",
+        "baseRevision": 3,
+        "settlesBindingId": "bind-1",
+        "splits": [
+          {
+            "id": "sp-1",
+            "amount": 90000,
+            "poolId": "pool-wohnung",
+            "categoryId": "cat-woh-miete",
+            "tax": null
+          }
+        ]
+      },
+      "beschreibung": "Zahlung Miete November: 900,00 € Abgang auf acc-haupt, Verbrauch von pool-wohnung. Löst dieselbe Bindung bind-1 auf (Auswirkung Z. 2 und 3) — der freie Flex-Anteil sinkt NICHT nochmals um 900,00 € (keine Doppelverrechnung)."
+    },
+    {
+      "typ": "ausgabe",
+      "buchung": {
+        "id": "bk-2026-1209",
+        "date": "2026-11-15",
+        "type": "expense",
+        "account": "acc-haupt",
+        "totalAmount": 110000,
+        "note": "Jahresversicherung",
+        "baseRevision": 4,
+        "settlesBindingId": "bind-2",
+        "splits": [
+          {
+            "id": "sp-1",
+            "amount": 110000,
+            "poolId": "pool-jahreskosten",
+            "categoryId": "cat-sonstiges",
+            "tax": null
+          }
+        ]
+      },
+      "beschreibung": "Zahlung Jahresversicherung: 1.100,00 € Abgang auf acc-haupt, Verbrauch von pool-jahreskosten. Löst dieselbe Bindung bind-2 auf (Auswirkung Z. 2 und 3) — der freie Flex-Anteil sinkt NICHT nochmals um 1.100,00 € (keine Doppelverrechnung)."
     }
   ],
+  "auswirkung": {
+    "1_bindung": "Keine Kontobewegung, keine Poolbewegung: der freie Anteil des Flex-Pools sinkt (400000 → 200000), der Bestand bleibt 400000. Die offene Verpflichtung ist sichtbar gebunden, nicht bezahlt.",
+    "2_umwidmung": "Konten unverändert. pool-flex sinkt (400000 → 200000), pool-wohnung steigt (0 → 90000), pool-jahreskosten steigt (0 → 110000). Die Bindung ist an den geplanten Vorgang gekoppelt, nicht an physische Cent: folgt der earmarkte Betrag durch die Umwidmung in den Zielpool, bleibt er dort gebunden (freier Anteil des Zielpools = 0), bis die Zahlung erfolgt. Finanzierung ist keine Zahlung.",
+    "3_zahlung": "Konto − (acc-haupt), Pool − (jeweiliger Zahlungenpool), dieselbe Bindung wird auf 0 gelöst (status beglichen). Der gebundene Betrag wurde bereits bei der Bindung aus dem freien Anteil herausgerechnet; er wird bei der Zahlung nicht ein zweites Mal abgezogen. Die offene Verpflichtung verschwindet aus der offenen Vergangenheit (bezahlt, nicht storniert)."
+  },
+  "zwischenstaende": {
+    "nach_gehalt_2026_10_28": {
+      "kontostaende": { "acc-haupt": 400000, "acc-freizeit": 30000, "acc-spar": 0, "acc-wohnung": 0 },
+      "poolbestaende": { "pool-flex": 400000, "pool-freizeit": 30000, "pool-wohnung": 0, "pool-jahreskosten": 0, "pool-ruecklage": 0, "pool-vorhaben-urlaub": 0 },
+      "reservierungen": [],
+      "freie_salden": {
+        "pool-flex": 400000,
+        "pool-freizeit": 30000,
+        "pool-wohnung": 0,
+        "pool-jahreskosten": 0,
+        "pool-ruecklage": 0,
+        "pool-vorhaben-urlaub": 0,
+        "kontoliquiditaet": {
+          "acc-haupt": 400000,
+          "acc-freizeit": 30000,
+          "acc-spar": 0,
+          "acc-wohnung": 0,
+          "hinweis": "Noch keine Bindungen: Kontostand = freie Liquidität."
+        }
+      },
+      "offene_ausgleichspositionen": []
+    },
+    "nach_bindungen": {
+      "kontostaende": { "acc-haupt": 400000, "acc-freizeit": 30000, "acc-spar": 0, "acc-wohnung": 0 },
+      "poolbestaende": { "pool-flex": 400000, "pool-freizeit": 30000, "pool-wohnung": 0, "pool-jahreskosten": 0, "pool-ruecklage": 0, "pool-vorhaben-urlaub": 0 },
+      "reservierungen": [
+        { "id": "bind-1", "projektId": "pl-woh-miete-2026-11", "poolId": "pool-flex", "betrag": 90000, "status": "gebindet" },
+        { "id": "bind-2", "projektId": "pl-ver-2026-11", "poolId": "pool-flex", "betrag": 110000, "status": "gebindet" }
+      ],
+      "freie_salden": {
+        "pool-flex": 200000,
+        "pool-freizeit": 30000,
+        "pool-wohnung": 0,
+        "pool-jahreskosten": 0,
+        "pool-ruecklage": 0,
+        "pool-vorhaben-urlaub": 0,
+        "kontoliquiditaet": {
+          "acc-haupt": 200000,
+          "acc-haupt_kontostand": 400000,
+          "acc-haupt_gebunden": 200000,
+          "acc-freizeit": 30000,
+          "acc-spar": 0,
+          "acc-wohnung": 0,
+          "hinweis": "Getrennte Werte (rechenvertrag.md §3.6): Kontostand 4.000,00 €, davon 2.000,00 € an offene Verpflichtungen gebunden → frei verfügbare Kontoliquidität 2.000,00 €. Der gebundene Anteil ist kein freies Geld."
+        }
+      },
+      "offene_ausgleichspositionen": []
+    },
+    "nach_umwidmung_2026_11_01": {
+      "kontostaende": { "acc-haupt": 400000, "acc-freizeit": 30000, "acc-spar": 0, "acc-wohnung": 0 },
+      "poolbestaende": { "pool-flex": 200000, "pool-freizeit": 30000, "pool-wohnung": 90000, "pool-jahreskosten": 110000, "pool-ruecklage": 0, "pool-vorhaben-urlaub": 0 },
+      "reservierungen": [
+        { "id": "bind-1", "projektId": "pl-woh-miete-2026-11", "poolId": "pool-wohnung", "betrag": 90000, "status": "gebindet", "anmerkung": "Folgt dem earmarkten Betrag in pool-wohnung (Auswirkung Z. 2); bis zur Zahlung bk-2026-1208 offen." },
+        { "id": "bind-2", "projektId": "pl-ver-2026-11", "poolId": "pool-jahreskosten", "betrag": 110000, "status": "gebindet", "anmerkung": "Folgt dem earmarkten Betrag in pool-jahreskosten (Auswirkung Z. 2); bis zur Zahlung bk-2026-1209 offen." }
+      ],
+      "freie_salden": {
+        "pool-flex": 200000,
+        "pool-freizeit": 30000,
+        "pool-wohnung": 0,
+        "pool-jahreskosten": 0,
+        "pool-ruecklage": 0,
+        "pool-vorhaben-urlaub": 0,
+        "kontoliquiditaet": {
+          "acc-haupt": 200000,
+          "acc-haupt_kontostand": 400000,
+          "acc-haupt_gebunden": 200000,
+          "acc-freizeit": 30000,
+          "acc-spar": 0,
+          "acc-wohnung": 0,
+          "hinweis": "Die Umwidmung verändert weder Kontostand noch freie Salden: freier Flex bleibt 2.000,00 € (= zusätzlicher freier Anteil des Gehalts 3.000 − 2.000 = 1.000 € zuzüglich 1.000 € aus dem Startbestand); die umgewidmeten 2.000,00 € sind im Zielpool gebunden (frei 0 €)."
+        }
+      },
+      "offene_ausgleichspositionen": []
+    }
+  },
   "erwarteter_endzustand": {
-    "hinweis": "Zustand nach Bindung, vor Zahlungen.",
+    "hinweis": "Zustand nach beiden Zahlungen (2026-11-15) — die behauptete Vermeidung der Doppelzählung ist hier überprüfbar.",
     "kontostaende": {
-      "acc-haupt": 400000,
+      "acc-haupt": 200000,
       "acc-freizeit": 30000,
       "acc-spar": 0,
       "acc-wohnung": 0
     },
     "poolbestaende": {
-      "pool-flex": 400000,
+      "pool-flex": 200000,
       "pool-freizeit": 30000,
       "pool-wohnung": 0,
       "pool-jahreskosten": 0,
@@ -107,20 +269,8 @@
       "pool-vorhaben-urlaub": 0
     },
     "reservierungen": [
-      {
-        "id": "bind-1",
-        "projektId": "pl-woh-miete-2026-11",
-        "poolId": "pool-flex",
-        "betrag": 90000,
-        "status": "gebindet"
-      },
-      {
-        "id": "bind-2",
-        "projektId": "pl-ver-2026-11",
-        "poolId": "pool-flex",
-        "betrag": 110000,
-        "status": "gebindet"
-      }
+      { "id": "bind-1", "projektId": "pl-woh-miete-2026-11", "poolId": "pool-flex", "betrag": 0, "status": "beglichen", "settledByBooking": "bk-2026-1208" },
+      { "id": "bind-2", "projektId": "pl-ver-2026-11", "poolId": "pool-flex", "betrag": 0, "status": "beglichen", "settledByBooking": "bk-2026-1209" }
     ],
     "freie_salden": {
       "pool-flex": 200000,
@@ -130,22 +280,32 @@
       "pool-ruecklage": 0,
       "pool-vorhaben-urlaub": 0,
       "kontoliquiditaet": {
-        "acc-haupt": 400000,
+        "acc-haupt": 200000,
+        "acc-haupt_kontostand": 200000,
+        "acc-haupt_gebunden": 0,
         "acc-freizeit": 30000,
         "acc-spar": 0,
         "acc-wohnung": 0,
-        "hinweis": "Freier Flex = 400000 − 200000 Bindungen = 200000 (zusätzlicher freier Flex-Anteil 1.000,00 €); die Kontoliquidität des Hauptkontos ist durch den Kontostand begrenzt (400000)."
+        "hinweis": "Nach Zahlung sind keine Bindungen mehr offen: Kontostand 2.000,00 € = freie Liquidität 2.000,00 €. Freier Flex 2.000,00 € = Rest des Gehalts (3.000,00 € − 2.000,00 € finanzierte Fixkosten)."
       }
     },
-    "offene_ausgleichspositionen": []
+    "offene_ausgleichspositionen": [],
+    "zuordnung": [
+      { "accountId": "acc-haupt", "poolId": "pool-flex", "amount": 200000 },
+      { "accountId": "acc-freizeit", "poolId": "pool-freizeit", "amount": 30000 }
+    ],
+    "zuordnung_hinweis": "Zeilensummen = Kontostände (200000/30000), Spaltensummen = Poolbestände (200000/30000). Die Umwidmung und die Zahlungen haben die Zuordnung acc-haupt/pool-flex von 400000 auf 200000 reduziert."
   },
   "pruefungen": [
-    "Zusätzlicher freier Flex-Anteil = 300000 − 200000 = 100000; Kontozugang = 300000 (Plan: 'zusätzlicher freier Flex-Anteil 1.000 €, Kontozugang 3.000 €').",
+    "Zusätzlicher freier Flex-Anteil = 300000 − 200000 = 100000; Kontozugang = 300000 (Plan: 'zusätzlicher freier Flex-Anteil 1.000 €, Kontozugang 3.000 €).",
     "Jede Bindung gehört zu einem konkreten geplanten Vorgang und wird nur einmal erzeugt (eine Bindung pro Vorgang: bind-1 → pl-woh-miete-2026-11, bind-2 → pl-ver-2026-11); Miete 90000 + Versicherung 110000 = 200000 Bindungen aus dem Gehalt 300000.",
     "Zweiter Teileingang (z. B. +50000 am 2026-10-30 für denselben Monat 2026-11) bindet Fixkosten nicht doppelt: Bindungen bleiben 200000, freier Flex steigt um 50000 auf 250000.",
-    "Zahlung einer gebundenen Rechnung (z. B. Miete 90000 wird am 2026-11-01 bezahlt) senkt den Poolbestand und löst dieselbe Bindung: freier Flex sinkt NICHT nochmals um 90000 (keine Doppelverrechnung: Bestand und Bindung fallen gemeinsam).",
+    "Eindeutige Finanzierung (Review-Punkt): Die Zahlungen laufen aus pool-wohnung bzw. pool-jahreskosten, die ausschließlich über die ausdrückliche Umwidmung bk-2026-1207 mit den gebundenen Beträgen gefüllt wurden. Ohne Umwidmung wären die Zahlungen aus den leeren Pools nicht finanziert — eine Zahlung 'aus Flex' ist in diesem Modell keine still zulässige Alternative, sondern müsste selbst als Umwidmung dokumentiert sein.",
+    "Keine Doppelverrechnung (überprüfbar über die Zwischenstände): Freier Flex ist nach den Bindungen 200000; nach Umwidmung und beiden Zahlungen immer noch 200000 (bestimmt durch 400000 Bestand − 200000 Bindung). Hätte die Zahlung den gebundenen Betrag ein zweites Mal abgezogen, läge der freie Flex bei 0 — das ist die geforderte Gegenprüfung.",
+    "Kontostand ≠ Kontoliquidität (Review-Punkt): Zwischenstand nach Bindungen zeigt acc-haupt_kontostand 400000 bei freier Liquidität 200000 (gebunden 200000); erst nach den Zahlungen decken sich beide (200000/200000).",
     "Erwartete Steuererstattung (nur geplant, keine Buchung) erhöht Bestand und freien Flex nicht.",
     "Dezembervorschau bindet nicht automatisch Dezemberkosten: Deckungsperiode = offene Vergangenheit + laufender Monat + ausdrücklich finanzierte Zukunftsmonate; alle anderen Monate nur Vorschau.",
-    "Summe Konten = Summe Pools = 430000 (400000 + 30000 = 400000 + 30000); die Bindungen verändern keinen Bestand, sie reduzieren nur den freien Anteil."
+    "Summe Konten = Summe Pools in jedem Zwischen- und Endzustand: nach Gehalt 430000 (400000+30000 = 400000+30000), nach Umwidmung 430000 (400000+30000 = 200000+30000+90000+110000), nach Zahlungen 230000 (200000+30000 = 200000+30000).",
+    "Die Bindungen und Umwidmungen verändern keinen Kontostand außer über die tatsächlichen Zahlungen (bk-2026-1208: −90000, bk-2026-1209: −110000): acc-haupt 400000 → 310000 → 200000."
   ]
 }
