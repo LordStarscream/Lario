@@ -8,8 +8,8 @@ namespace Lario.Infrastructure;
 /// Datenablage erzeugen — das Verzeichnis ist daher deterministisch:
 /// 1. explizite Konfiguration <c>Lario:DataDirectory</c> (appsettings oder
 ///    Umgebungsvariable Lario__DataDirectory), falls gesetzt;
-/// 2. sonst XDG-Standard: <c>$XDG_DATA_HOME/lario</c> bzw.
-///    <c>~/.local/share/lario</c>.
+/// 2. sonst die Umgebung <c>XDG_DATA_HOME</c> (Linux), falls gesetzt;
+/// 3. sonst <c>~/.local/share/lario</c>.
 /// </summary>
 public sealed class LarioDataPaths
 {
@@ -28,6 +28,8 @@ public sealed class LarioDataPaths
     /// Löst das Datenverzeichnis deterministisch ein (siehe Klassendokumentation).
     /// Alle Parameter können null sein; explizit übergebene Werte gewinnen
     /// vor dem Umgebungsleser, damit Aufrufer (Host, Tests) die Quelle kontrollieren.
+    /// Ohne expliziten <c>xdgDataHome</c>-Parameter wird die Umgebung
+    /// <c>XDG_DATA_HOME</c> gelesen — das ist der tatsächliche Host-Fall.
     /// </summary>
     public static LarioDataPaths Resolve(
         string? configuredDirectory = null,
@@ -38,6 +40,11 @@ public sealed class LarioDataPaths
         if (string.IsNullOrWhiteSpace(homeDirectory))
         {
             throw new InvalidOperationException("Kann das Home-Verzeichnis nicht ermitteln.");
+        }
+
+        if (string.IsNullOrWhiteSpace(xdgDataHome))
+        {
+            xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
         }
 
         string root = !string.IsNullOrWhiteSpace(configuredDirectory)

@@ -34,23 +34,89 @@ public class LarioDataPathsTests
     [Fact(DisplayName = "Ohne Konfiguration und ohne XDG_DATA_HOME: ~/.local/share/lario")]
     public void Resolve_DefaultXdgPath_WhenNothingSet()
     {
-        LarioDataPaths paths = LarioDataPaths.Resolve(
-            configuredDirectory: null,
-            homeDirectory: "/home/user",
-            xdgDataHome: null);
+        string? original = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        try
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", null);
 
-        Assert.Equal("/home/user/.local/share/lario", paths.Root);
+            LarioDataPaths paths = LarioDataPaths.Resolve(
+                configuredDirectory: null,
+                homeDirectory: "/home/user",
+                xdgDataHome: null);
+
+            Assert.Equal("/home/user/.local/share/lario", paths.Root);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", original);
+        }
+    }
+
+    [Fact(DisplayName = "Host-Fall: XDG_DATA_HOME wird aus der Umgebung gelesen (ohne Parameter)")]
+    public void Resolve_ReadsXdgDataHomeFromEnvironment()
+    {
+        string? original = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        string envBase = Path.Combine(Path.GetTempPath(), "lario-xdg-env", Guid.NewGuid().ToString("N"));
+        try
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", envBase);
+
+            // Exakt der Host-Aufruf (Program.cs): keine Konfiguration, kein
+            // XDG-Parameter — die Umgebung entscheidet.
+            LarioDataPaths paths = LarioDataPaths.Resolve();
+
+            Assert.Equal(Path.Combine(envBase, "lario"), paths.Root);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", original);
+            if (Directory.Exists(envBase))
+            {
+                Directory.Delete(envBase, recursive: true);
+            }
+        }
+    }
+
+    [Fact(DisplayName = "Expliziter XDG-Parameter gewinnt über XDG_DATA_HOME in der Umgebung")]
+    public void Resolve_ExplicitXdgParameter_WinsOverEnvironment()
+    {
+        string? original = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        try
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", "/tmp/lario-xdg-env-irrelevant");
+
+            LarioDataPaths paths = LarioDataPaths.Resolve(
+                configuredDirectory: null,
+                homeDirectory: "/home/user",
+                xdgDataHome: "/home/user/xdg");
+
+            Assert.Equal("/home/user/xdg/lario", paths.Root);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", original);
+        }
     }
 
     [Fact(DisplayName = "Leere Konfiguration wird ignoriert (fallback auf XDG)")]
     public void Resolve_WhiteSpaceConfig_FallsBackToXdg()
     {
-        LarioDataPaths paths = LarioDataPaths.Resolve(
-            configuredDirectory: "   ",
-            homeDirectory: "/home/user",
-            xdgDataHome: null);
+        string? original = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        try
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", "/home/user/xdg");
 
-        Assert.Equal("/home/user/.local/share/lario", paths.Root);
+            LarioDataPaths paths = LarioDataPaths.Resolve(
+                configuredDirectory: "   ",
+                homeDirectory: "/home/user",
+                xdgDataHome: null);
+
+            Assert.Equal("/home/user/xdg/lario", paths.Root);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", original);
+        }
     }
 
     [Fact(DisplayName = "Neustart: zweiter Start findet exakt dieselbe Ablage (keine zweite Datenablage)")]
