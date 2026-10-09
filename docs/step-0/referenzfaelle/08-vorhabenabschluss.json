@@ -1,0 +1,333 @@
+{
+  "meta": {
+    "name": "Referenzfall 8: Vorhabenabschluss mit zweckerhaltendem Parken",
+    "planBezug": "Implementierungsplan §5 Schritt 0; Vorhaben Schritt 14",
+    "zweck": "Vorhaben-Lebenszyklus: 2.000,00 € aus pool-flex in proj-urlaub reservieren, 1.500,00 € zweckerhaltend auf das verzinstes Konto parken, zurücküberweisen, 1.750,00 € als Vorhabenausgabe bezahlen und abschließen: 250,00 € frei (an pool-flex freigegeben), keine Zusatzbuchung beim Abschluss.",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §5.3 (Vorhaben: reserviert → laufend → abgeschlossen; Reservierung verändert keinen Kontostand; Transfers erhalten Reservierungen; Ausgabe reduziert die Reservierung; Abschluss gibt nur den Rest frei; Erstattung nach Abschluss → Herkunftspool), §3.3, §3.8",
+    "planPruefen": "Implementierungsplan Schritt 14 Prüfen: '2.000 € reservieren, 1.500 € auf verzinstes Konto verschieben, zurücküberweisen, 1.750 € bezahlen und abschließen: 250 € frei, keine Zusatzbuchung beim Abschluss. Ausgabe über Reservierung benötigt erkennbare Zusatzdeckung.'"
+  },
+  "startzustand": {
+    "basis": "docs/step-0/data/stammdaten.json",
+    "anpassungen": [
+      "Der Vorhaben-Fall braucht einen höheren Start als der Regelanker: acc-haupt startet mit 200000 (2.000,00 €) statt 100000, vollständig als pool-flex. Damit passen die vorgegebenen Vorgänge (Reservierung 200000, Transfer 150000, Ausgabe 175000) ohne negatives Konto. Vorhaben proj-urlaub vorhanden, status reserviert, herkunftPool pool-flex."
+    ],
+    "kontostaende": {
+      "acc-haupt": 200000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 200000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [
+      {
+        "projektId": "proj-urlaub",
+        "poolId": "pool-vorhaben-urlaub",
+        "betrag": 0,
+        "status": "reserviert",
+        "hinweis": "proj-urlaub existiert mit status reserviert und herkunftPool pool-flex (stammdaten.json); die konkrete Reservierungsbuchung ist vorgang 1 (bk-2026-1207)."
+      }
+    ],
+    "zuordnung": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 200000
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 30000
+      }
+    ]
+  },
+  "vorgaenge": [
+    {
+      "typ": "reservierung",
+      "buchung": {
+        "id": "bk-2026-1207",
+        "date": "2026-11-09",
+        "type": "reservierung",
+        "fromPoolId": "pool-flex",
+        "toPoolId": "pool-vorhaben-urlaub",
+        "amount": 200000,
+        "projectId": "proj-urlaub",
+        "note": "Urlaub reservieren",
+        "baseRevision": 1
+      },
+      "beschreibung": "Reservierung: 2.000,00 € von pool-flex in pool-vorhaben-urlaub (status reserviert). Vorhaben proj-urlaub reserviert damit 200000. Konten und Poolbestände bleiben unverändert — nur der frei verfügbare Anteil sinkt, die Reservierung steigt.",
+      "zwischenstand": {
+        "kontostaende": {
+          "acc-haupt": 200000,
+          "acc-freizeit": 30000,
+          "acc-spar": 0,
+          "acc-wohnung": 0
+        },
+        "poolbestaende": {
+          "pool-flex": 0,
+          "pool-freizeit": 30000,
+          "pool-wohnung": 0,
+          "pool-jahreskosten": 0,
+          "pool-ruecklage": 0,
+          "pool-vorhaben-urlaub": 200000
+        },
+        "zuordnung": [
+          {
+            "accountId": "acc-haupt",
+            "poolId": "pool-vorhaben-urlaub",
+            "amount": 200000
+          },
+          {
+            "accountId": "acc-freizeit",
+            "poolId": "pool-freizeit",
+            "amount": 30000
+          }
+        ]
+      }
+    },
+    {
+      "typ": "transfer",
+      "buchung": {
+        "id": "bk-2026-1208",
+        "date": "2026-11-09",
+        "type": "transfer",
+        "fromAccountId": "acc-haupt",
+        "toAccountId": "acc-spar",
+        "amount": 150000,
+        "zweckerhaltend": true,
+        "note": "Reservierung auf verzinstes Konto parken",
+        "baseRevision": 1
+      },
+      "beschreibung": "Zweckerhaltender Transfer 1.500,00 € von acc-haupt auf acc-spar: die 150000 gehören weiterhin zu proj-urlaub via pool-vorhaben-urlaub — der Kontowechsel ändert den Zweck nicht (Reservierung bleibt erhalten).",
+      "zwischenstand": {
+        "kontostaende": {
+          "acc-haupt": 50000,
+          "acc-freizeit": 30000,
+          "acc-spar": 150000,
+          "acc-wohnung": 0
+        },
+        "poolbestaende": {
+          "pool-flex": 0,
+          "pool-freizeit": 30000,
+          "pool-wohnung": 0,
+          "pool-jahreskosten": 0,
+          "pool-ruecklage": 0,
+          "pool-vorhaben-urlaub": 200000
+        },
+        "zuordnung": [
+          {
+            "accountId": "acc-haupt",
+            "poolId": "pool-vorhaben-urlaub",
+            "amount": 50000
+          },
+          {
+            "accountId": "acc-freizeit",
+            "poolId": "pool-freizeit",
+            "amount": 30000
+          },
+          {
+            "accountId": "acc-spar",
+            "poolId": "pool-vorhaben-urlaub",
+            "amount": 150000
+          }
+        ]
+      }
+    },
+    {
+      "typ": "transfer",
+      "buchung": {
+        "id": "bk-2026-1209",
+        "date": "2026-11-20",
+        "type": "transfer",
+        "fromAccountId": "acc-spar",
+        "toAccountId": "acc-haupt",
+        "amount": 150000,
+        "zweckerhaltend": true,
+        "note": "Reservierung zurückholen",
+        "baseRevision": 1
+      },
+      "beschreibung": "Rücktransfer 1.500,00 € von acc-spar auf acc-haupt, zweckerhaltend: die Vorhaben-Zuordnung (pool-vorhaben-urlaub) wandert zurück, proj-urlaub bleibt reserviert.",
+      "zwischenstand": {
+        "kontostaende": {
+          "acc-haupt": 200000,
+          "acc-freizeit": 30000,
+          "acc-spar": 0,
+          "acc-wohnung": 0
+        },
+        "poolbestaende": {
+          "pool-flex": 0,
+          "pool-freizeit": 30000,
+          "pool-wohnung": 0,
+          "pool-jahreskosten": 0,
+          "pool-ruecklage": 0,
+          "pool-vorhaben-urlaub": 200000
+        },
+        "zuordnung": [
+          {
+            "accountId": "acc-haupt",
+            "poolId": "pool-vorhaben-urlaub",
+            "amount": 200000
+          },
+          {
+            "accountId": "acc-freizeit",
+            "poolId": "pool-freizeit",
+            "amount": 30000
+          }
+        ]
+      }
+    },
+    {
+      "typ": "vorhabenausgabe",
+      "buchung": {
+        "id": "bk-2026-1210",
+        "date": "2026-11-21",
+        "type": "expense",
+        "account": "acc-haupt",
+        "totalAmount": 175000,
+        "poolId": "pool-vorhaben-urlaub",
+        "projectId": "proj-urlaub",
+        "categoryId": "cat-frei-urlaub",
+        "note": "Urlaub bezahlen",
+        "baseRevision": 1,
+        "splits": [
+          {
+            "id": "sp-8",
+            "amount": 175000,
+            "poolId": "pool-vorhaben-urlaub",
+            "categoryId": "cat-frei-urlaub",
+            "tax": {
+              "relevant": false
+            }
+          }
+        ]
+      },
+      "beschreibung": "Vorhabenausgabe: 1.750,00 € vom Hauptkonto, Zuordnung an proj-urlaub via pool-vorhaben-urlaub (Kategorie cat-frei-urlaub, steuerlich relevant=false laut taxPreset). Die Reservierung sinkt: 200000 − 175000 = 25000 verbleiben.",
+      "zwischenstand": {
+        "kontostaende": {
+          "acc-haupt": 25000,
+          "acc-freizeit": 30000,
+          "acc-spar": 0,
+          "acc-wohnung": 0
+        },
+        "poolbestaende": {
+          "pool-flex": 0,
+          "pool-freizeit": 30000,
+          "pool-wohnung": 0,
+          "pool-jahreskosten": 0,
+          "pool-ruecklage": 0,
+          "pool-vorhaben-urlaub": 25000
+        },
+        "zuordnung": [
+          {
+            "accountId": "acc-haupt",
+            "poolId": "pool-vorhaben-urlaub",
+            "amount": 25000
+          },
+          {
+            "accountId": "acc-freizeit",
+            "poolId": "pool-freizeit",
+            "amount": 30000
+          }
+        ]
+      }
+    },
+    {
+      "typ": "vorhabenabschluss",
+      "buchung": null,
+      "vorhaben": {
+        "id": "proj-urlaub",
+        "status": "abgeschlossen",
+        "herkunftPool": "pool-flex",
+        "freigegebenAn": "pool-flex",
+        "freigegebenerRest": 25000
+      },
+      "beschreibung": "Vorhabenabschluss: proj-urlaub wird abgeschlossen. Der Rest von 25000 wird an den Herkunftspool pool-flex freigegeben — OHNE zusätzliche Buchung (KEINE Buchung im Journal für den Abschluss selbst). Bereits verbrauchte Anteile (175000) fließen nicht zurück.",
+      "zwischenstand": {
+        "kontostaende": {
+          "acc-haupt": 25000,
+          "acc-freizeit": 30000,
+          "acc-spar": 0,
+          "acc-wohnung": 0
+        },
+        "poolbestaende": {
+          "pool-flex": 25000,
+          "pool-freizeit": 30000,
+          "pool-wohnung": 0,
+          "pool-jahreskosten": 0,
+          "pool-ruecklage": 0,
+          "pool-vorhaben-urlaub": 0
+        },
+        "zuordnung": [
+          {
+            "accountId": "acc-haupt",
+            "poolId": "pool-flex",
+            "amount": 25000
+          },
+          {
+            "accountId": "acc-freizeit",
+            "poolId": "pool-freizeit",
+            "amount": 30000
+          }
+        ]
+      }
+    }
+  ],
+  "erwarteter_endzustand": {
+    "kontostaende": {
+      "acc-haupt": 25000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 25000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [
+      {
+        "projektId": "proj-urlaub",
+        "poolId": "pool-vorhaben-urlaub",
+        "betrag": 0,
+        "status": "abgeschlossen",
+        "freigegebenAn": "pool-flex",
+        "freigegebenerRest": 25000,
+        "hinweis": "Rest 25000 freigegeben an pool-flex; bereits verbrauchte 175000 fließen nicht zurück."
+      }
+    ],
+    "freie_salden": {
+      "pool-flex": 25000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0,
+      "kontoliquiditaet": {
+        "acc-haupt": 25000,
+        "acc-freizeit": 30000,
+        "acc-spar": 0,
+        "acc-wohnung": 0
+      }
+    },
+    "offene_ausgleichspositionen": []
+  },
+  "pruefungen": [
+    "Reservierung verändert keinen Kontostand: nach vorgang 1 bleiben acc-haupt 200000 und acc-spar 0; pool-vorhaben-urlaub 0 → 200000, pool-flex 200000 → 0 (nur die Reservierung im Pool steigt, der frei verfügbare Anteil sinkt).",
+    "Zweckerhaltender Transfer: die 150000 behalten ihre Vorhaben-Zuordnung (pool-vorhaben-urlaub) über den Kontowechsel haupt → spar → haupt (vorgaenge 2–3); Pools bleiben in beiden Transfers unverändert (vorhaben-urlaub 200000).",
+    "Vorhabenausgabe 175000 reduziert pool-vorhaben-urlaub von 200000 auf 25000; Kontostand acc-haupt 200000 → 25000; Splitregel: 175000 = totalAmount.",
+    "Abschluss: Rest 25000 wird an den Herkunftspool pool-flex freigegeben, OHNE zusätzliche Buchung (keine Buchung im Journal für den Abschluss selbst); bereits verbrauchte 175000 fließen nicht zurück.",
+    "Summe Konten = Summe Pools in jedem Zwischenzustand: Start 230000 (200000 + 30000); nach Reservierung, Parken, Rücktransfer weiterhin 230000; nach Ausgabe 175000 sinkt sie auf 55000 (25000 + 30000); der Abschluss ändert die Summe nicht (55000) — Reservierung und Transfers sind reine Umverteilungen.",
+    "Ausgabe über Reservierung ohne ausreichende Zusatzdeckung wäre blockiert: z. B. eine Ausgabe von 300000 > Reservierung 200000 benötigt erkennbare Zusatzdeckung (hier nicht der Fall — 175000 ≤ 200000).",
+    "Erstattung nach Abschluss (z. B. 5000 nach Abschluss) fließt standardmäßig in pool-flex zurück und öffnet proj-urlaub nicht wieder.",
+    "Keine Doppelbindung: die Reservierung entsteht genau einmal (bk-2026-1207), die Ausgabe reduziert sie nur; keine Ausgleichspositionen."
+  ]
+}

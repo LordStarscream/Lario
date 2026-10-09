@@ -1,0 +1,100 @@
+{
+  "meta": {
+    "name": "Referenzfall 6: Umwidmung (Poolwechsel ohne Kontobewegung)",
+    "planBezug": "Implementierungsplan §5 Schritt 0; Umwidmung Schritt 5/13",
+    "zweck": "Umwidmung 500,00 € von pool-flex nach pool-ruecklage: Konten unverändert, nur Pool− (Quelle) und Pool+ (Ziel); keine Richtwertausgabe, keine Ausgabe. Sofort wirksam — der tatsächliche Kontotransfer (hier bewusst keiner) kann später separat bestätigt werden.",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §3.3 (Umwidmung: Konten unverändert, Pool−/Pool+, keine Richtwertausgabe), §5.2 (Umwidmung kann sofort gelten, Kontotransfer später)"
+  },
+  "startzustand": {
+    "basis": "docs/step-0/data/stammdaten.json",
+    "anpassungen": [],
+    "kontostaende": {
+      "acc-haupt": 100000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": []
+  },
+  "vorgaenge": [
+    {
+      "typ": "umwidmung",
+      "buchung": {
+        "id": "bk-2026-1205",
+        "date": "2026-11-08",
+        "type": "umwidmung",
+        "fromPoolId": "pool-flex",
+        "toPoolId": "pool-ruecklage",
+        "amount": 50000,
+        "note": "Rücklage aufbauen",
+        "baseRevision": 1
+      },
+      "beschreibung": "Umwidmung 500,00 € von pool-flex nach pool-ruecklage: sofort wirksam, kein Kontotransfer verbunden, keine Vormerkung. Die 50.000 Cent bleiben physisch am Hauptkonto, wechseln nur ihren Zweck."
+    }
+  ],
+  "erwarteter_endzustand": {
+    "kontostaende": {
+      "acc-haupt": 100000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 50000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 50000,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [],
+    "freie_salden": {
+      "pool-flex": 50000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 50000,
+      "pool-vorhaben-urlaub": 0,
+      "kontoliquiditaet": {
+        "acc-haupt": 100000,
+        "acc-freizeit": 30000,
+        "acc-spar": 0,
+        "acc-wohnung": 0
+      }
+    },
+    "offene_ausgleichspositionen": [],
+    "zuordnung": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 50000
+      },
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-ruecklage",
+        "amount": 50000
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 30000
+      }
+    ]
+  },
+  "pruefungen": [
+    "Umwidmung ist keine Kontobewegung: Kontenstände bleiben 100000/30000/0/0 (kein Account-Posting).",
+    "Pools: pool-flex 100000 → 50000, pool-ruecklage 0 → 50000; Summe Pools = 130000 (unverändert).",
+    "Keine Richtwertausgabe: die Umwidmung reduziert keinen Richtwert und erzeugt keine Ausgabe (keine Kategorie, keine laufende Nettoausgabe).",
+    "Kombination möglich: Umwidmung kann sofort gelten, während der tatsächliche Kontotransfer (z. B. 50000 auf acc-spar) später bestätigt wird — hier bewusst ohne Kontotransfer.",
+    "Summe Konten = Summe Pools = 130000 (100000 + 30000 = 50000 + 30000 + 50000).",
+    "Zuordnung bleibt konsistent: acc-haupt trägt 50000 flex + 50000 ruecklage (Zeilensumme 100000 = Kontostand), Spaltensummen = Poolbestände."
+  ]
+}

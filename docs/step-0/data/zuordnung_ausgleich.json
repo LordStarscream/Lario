@@ -1,0 +1,131 @@
+{
+  "meta": {
+    "name": "MoneyMap Konto-Pool-Zuordnung und offene Ausgleichspositionen",
+    "zweck": "Zeigt die signierte AccountPoolAllocation-Matrix und die zugehörigen offenen Ausgleichspositionen in drei Zuständen: nach Anfangsbestand (vor Ausgabe), nach der Ausgabe bk-2026-1101 (Plan-Kernfall 85 € gemischter Einkauf) und nach dem Transfer bk-2026-1103 (Ausgleich). Jede Matrix erfüllt zwingend: Zeilensumme je Account = Kontostand, Spaltensumme je Pool = Poolbestand.",
+    "bezug": "docs/step-0/rechenvertrag.md — §3.4 (signierte Konto-Pool-Zuordnung, Regelanker: Start 1.000 €/300 €, nach 85 € Einkauf Konten 915/300 €, Pools 935/280 €, nach Transfer Konten 935/280 €, Zuordnung haupt/freizeit 0 €), §3.5 (offene interne Ausgleichspositionen, Teilbegleichung), §3.6 (freie Verfügbarkeit vs. physische Liquidität)",
+    "konventionen": {
+      "geld": "Alle Beträge als ganzzahlige EUR-Cent, signiert (negative Zuordnung = interne Vorfinanzierung).",
+      "matrix": "Array von {accountId, poolId, amount}; Zellen mit Wert 0 sind weggelassen, wenn sie keinen Sachverhalt tragen.",
+      "salden": "Abgeleitete Werte, immer aus Postings rekonstruierbar (rechenvertrag.md §3.2); hier als Prüfsummen der Matrix dokumentiert."
+    }
+  },
+  "allocationBefore": {
+    "beschreibung": "Nach Anfangsbestand (init-2026-01-01, init-2026-01-01-freizeit), vor der Ausgabe bk-2026-1101.",
+    "matrix": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 100000
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 30000
+      }
+    ],
+    "kontostaende": {
+      "acc-haupt": 100000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    }
+  },
+  "allocationAfterExpense": {
+    "beschreibung": "Nach der Ausgabe bk-2026-1101 (2026-11-05, 85 €: 65 € Flex + 20 € Freizeit vom Hauptkonto). Negative Zuordnung acc-haupt/pool-freizeit = −2000 ist eine interne Vorfinanzierung und ist mit der offenen Ausgleichsposition set-0001 verknüpft; sie wird nicht als vorhandenes Geld angezeigt.",
+    "matrix": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 93500
+      },
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-freizeit",
+        "amount": -2000
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 30000
+      }
+    ],
+    "kontostaende": {
+      "acc-haupt": 91500,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 93500,
+      "pool-freizeit": 28000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    }
+  },
+  "settlements": [
+    {
+      "id": "set-0001",
+      "amount": 2000,
+      "sourceAccountId": "acc-haupt",
+      "targetPoolId": "pool-freizeit",
+      "status": "offen",
+      "createdByBooking": "bk-2026-1101",
+      "note": "Vorfinanzierung: Freizeit-Pool über Hauptkonto bezahlt",
+      "history": [
+        {
+          "stand": "offen",
+          "restAmount": 2000,
+          "nachBuchung": "bk-2026-1101",
+          "anmerkung": "Entsteht aus der negativen Zuordnung acc-haupt/pool-freizeit = −2000 (rechenvertrag.md §3.5)."
+        },
+        {
+          "stand": "beglichen",
+          "restAmount": 0,
+          "nachBuchung": "bk-2026-1103",
+          "settledByBooking": "bk-2026-1103",
+          "anmerkung": "Vollständige Begleichung durch den Transfer 20 € von acc-haupt nach acc-freizeit; Position erreicht 0 und wird beglichen."
+        }
+      ]
+    }
+  ],
+  "allocationAfterTransfer": {
+    "beschreibung": "Nach dem Transfer bk-2026-1103 (2026-11-06, 20 € von acc-haupt nach acc-freizeit). Die Zuordnung acc-haupt/pool-freizeit ist 0 € und wird daher nicht mehr ausgeführt (implizit 0). Pools bleiben unverändert: Gesamtpoolbestand bei reinem Kontotransfer konstant.",
+    "matrix": [
+      {
+        "accountId": "acc-haupt",
+        "poolId": "pool-flex",
+        "amount": 93500
+      },
+      {
+        "accountId": "acc-freizeit",
+        "poolId": "pool-freizeit",
+        "amount": 28000
+      }
+    ],
+    "kontostaende": {
+      "acc-haupt": 93500,
+      "acc-freizeit": 28000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 93500,
+      "pool-freizeit": 28000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    }
+  },
+  "liquidityNote": "Vor dem Ausgleich (Zustand allocationAfterExpense): Der Flex-Pool zeigt 935 € frei, aber physisch liegen nur 915 € am Hauptkonto — die 20 € Freizeit-Ausgabe wurden über das Hauptkonto bezahlt und lagen als „eingesperrtes“ Geld am Freizeitkonto (dort 300 €, von denen 20 € bereits verbraucht), sodass am Freizeitkonto nur 280 € als frei angezeigt werden (rechenvertrag.md §3.4, §3.6). Nach dem Transfer (Zustand allocationAfterTransfer): 935 € physisch am Hauptkonto, 280 € am Freizeitkonto; Kontoliquidität und Poolbestand decken sich wieder vollständig."
+}

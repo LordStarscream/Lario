@@ -1,0 +1,151 @@
+{
+  "meta": {
+    "name": "Referenzfall 7: Fixkostendeckung und Bindungen",
+    "planBezug": "Implementierungsplan §5 Schritt 0; Deckung Schritt 12",
+    "zweck": "Deckungslogik: Gehalt 3.000,00 € (Buchungsdatum 2026-10-28, Finanzierungsmonat 2026-11) bindet die November-Verpflichtungen Miete 900,00 € + Jahresversicherung 1.100,00 € = 2.000,00 € einmalig. Zusätzlicher freier Flex-Anteil 1.000,00 €, Kontozugang 3.000,00 €. Keine Doppelverrechnung bei Zahlung, keine Doppelbindung bei Teileingängen.",
+    "rechenvertrag": "docs/step-0/rechenvertrag.md — §4 (Deckungsperiode und Bindungen: Regeln 1–9), §5.1 (geplanter Vorgang: geplant → bestätigt/abgebrochen)"
+  },
+  "startzustand": {
+    "basis": "docs/step-0/data/stammdaten.json",
+    "anpassungen": [],
+    "kontostaende": {
+      "acc-haupt": 100000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 100000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": []
+  },
+  "vorgaenge": [
+    {
+      "typ": "einnahme",
+      "buchung": {
+        "id": "bk-2026-1206",
+        "date": "2026-10-28",
+        "type": "income",
+        "account": "acc-haupt",
+        "amount": 300000,
+        "poolId": "pool-flex",
+        "fundingMonth": "2026-11",
+        "note": "Gehalt Oktober",
+        "baseRevision": 1
+      },
+      "beschreibung": "Gehalt Oktober: 3.000,00 € Eingang am 2026-10-28 auf acc-haupt, Zuweisung an pool-flex, Finanzierungsmonat 2026-11 — bindet die November-Verpflichtungen (vorgaenge 2 und 3)."
+    },
+    {
+      "typ": "geplante_verpflichtung",
+      "vorgang": {
+        "id": "pl-woh-miete-2026-11",
+        "typ": "ausgabe",
+        "amount": 90000,
+        "poolId": "pool-wohnung",
+        "categoryId": "cat-woh-miete",
+        "faellig": "2026-11-01",
+        "financingMonth": "2026-11",
+        "status": "geplant",
+        "anmerkung": "Planung, keine Buchung; Statusübergänge: geplant → bestätigt/abgebrochen."
+      },
+      "beschreibung": "Geplante Verpflichtung Miete November: 900,00 € aus pool-wohnung, fällig 2026-11-01 (Planung, noch keine Buchung)."
+    },
+    {
+      "typ": "geplante_verpflichtung",
+      "vorgang": {
+        "id": "pl-ver-2026-11",
+        "typ": "ausgabe",
+        "amount": 110000,
+        "poolId": "pool-jahreskosten",
+        "categoryId": "cat-sonstiges",
+        "faellig": "2026-11-15",
+        "financingMonth": "2026-11",
+        "status": "geplant",
+        "anmerkung": "Planung, keine Buchung; Statusübergänge: geplant → bestätigt/abgebrochen."
+      },
+      "beschreibung": "Geplante Verpflichtung Jahresversicherung: 1.100,00 € aus pool-jahreskosten, fällig 2026-11-15 (Planung, noch keine Buchung).",
+      "todo": "_todo: Kategorie der Jahresversicherung nicht vorgegeben; hier cat-sonstiges als Platzhalter — vor Schritt 3 korrigieren."
+    }
+  ],
+  "bindungen": [
+    {
+      "id": "bind-1",
+      "plannedOccurrenceId": "pl-woh-miete-2026-11",
+      "sourceIncomeBookingId": "bk-2026-1206",
+      "financingMonth": "2026-11",
+      "amount": 90000,
+      "status": "gebindet"
+    },
+    {
+      "id": "bind-2",
+      "plannedOccurrenceId": "pl-ver-2026-11",
+      "sourceIncomeBookingId": "bk-2026-1206",
+      "financingMonth": "2026-11",
+      "amount": 110000,
+      "status": "gebindet"
+    }
+  ],
+  "erwarteter_endzustand": {
+    "hinweis": "Zustand nach Bindung, vor Zahlungen.",
+    "kontostaende": {
+      "acc-haupt": 400000,
+      "acc-freizeit": 30000,
+      "acc-spar": 0,
+      "acc-wohnung": 0
+    },
+    "poolbestaende": {
+      "pool-flex": 400000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0
+    },
+    "reservierungen": [
+      {
+        "id": "bind-1",
+        "projektId": "pl-woh-miete-2026-11",
+        "poolId": "pool-flex",
+        "betrag": 90000,
+        "status": "gebindet"
+      },
+      {
+        "id": "bind-2",
+        "projektId": "pl-ver-2026-11",
+        "poolId": "pool-flex",
+        "betrag": 110000,
+        "status": "gebindet"
+      }
+    ],
+    "freie_salden": {
+      "pool-flex": 200000,
+      "pool-freizeit": 30000,
+      "pool-wohnung": 0,
+      "pool-jahreskosten": 0,
+      "pool-ruecklage": 0,
+      "pool-vorhaben-urlaub": 0,
+      "kontoliquiditaet": {
+        "acc-haupt": 400000,
+        "acc-freizeit": 30000,
+        "acc-spar": 0,
+        "acc-wohnung": 0,
+        "hinweis": "Freier Flex = 400000 − 200000 Bindungen = 200000 (zusätzlicher freier Flex-Anteil 1.000,00 €); die Kontoliquidität des Hauptkontos ist durch den Kontostand begrenzt (400000)."
+      }
+    },
+    "offene_ausgleichspositionen": []
+  },
+  "pruefungen": [
+    "Zusätzlicher freier Flex-Anteil = 300000 − 200000 = 100000; Kontozugang = 300000 (Plan: 'zusätzlicher freier Flex-Anteil 1.000 €, Kontozugang 3.000 €').",
+    "Jede Bindung gehört zu einem konkreten geplanten Vorgang und wird nur einmal erzeugt (eine Bindung pro Vorgang: bind-1 → pl-woh-miete-2026-11, bind-2 → pl-ver-2026-11); Miete 90000 + Versicherung 110000 = 200000 Bindungen aus dem Gehalt 300000.",
+    "Zweiter Teileingang (z. B. +50000 am 2026-10-30 für denselben Monat 2026-11) bindet Fixkosten nicht doppelt: Bindungen bleiben 200000, freier Flex steigt um 50000 auf 250000.",
+    "Zahlung einer gebundenen Rechnung (z. B. Miete 90000 wird am 2026-11-01 bezahlt) senkt den Poolbestand und löst dieselbe Bindung: freier Flex sinkt NICHT nochmals um 90000 (keine Doppelverrechnung: Bestand und Bindung fallen gemeinsam).",
+    "Erwartete Steuererstattung (nur geplant, keine Buchung) erhöht Bestand und freien Flex nicht.",
+    "Dezembervorschau bindet nicht automatisch Dezemberkosten: Deckungsperiode = offene Vergangenheit + laufender Monat + ausdrücklich finanzierte Zukunftsmonate; alle anderen Monate nur Vorschau.",
+    "Summe Konten = Summe Pools = 430000 (400000 + 30000 = 400000 + 30000); die Bindungen verändern keinen Bestand, sie reduzieren nur den freien Anteil."
+  ]
+}

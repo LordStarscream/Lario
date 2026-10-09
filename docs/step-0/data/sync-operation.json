@@ -1,0 +1,116 @@
+{
+  "meta": {
+    "name": "MoneyMap Sync-Operationen — Datenmodell",
+    "zweck": "Demonstriert das Datenmodell der Sync-Operation (geräteste Einheit für die Synchronisation): stabile Operations-ID, Payloadnachweis (Hash), erwartete Basisrevision, Status und Idempotenz bei Wiederholung. NUR Datenmodell — Endpoints, Cursor-Verfahren, Generationen und Quittungsprotokoll sind Schritt 9/10.",
+    "bezug": "docs/step-0/rechenvertrag.md — §5.4 (Trennung Entwurf / bestätigte Buchung / Sync-Operation; Sync-Regeln), §5.5 (Revision, Revisionskonflikt)",
+    "konventionen": {
+      "operationId": "Geräteseitig vergeben und dauerhaft (Format op-<JJMM>-<fortlaufend>-<n>).",
+      "payloadHash": "Platzhalter im Format sha256:<64-hex>; der echte Hash des fachlichen Payloads wird bei Erzeugung der Operation berechnet. Platzhalter-Bindestelle: meta.payloadHashHinweis.",
+      "zeitstempel": "Technische Zeitstempel als ISO 8601 UTC mit Z (rechenvertrag.md §2.2)."
+    },
+    "payloadHashHinweis": "Alle payloadHash-Werte in dieser Datei sind Platzhalter; der echte Hash wird bei Erzeugung der jeweiligen Operation aus dem fachlichen Payload berechnet."
+  },
+  "operations": [
+    {
+      "operationId": "op-2026-1101-001",
+      "deviceId": "dev-pixel-8",
+      "type": "createBooking",
+      "payload": {
+        "id": "bk-2026-1101",
+        "date": "2026-11-05",
+        "type": "expense",
+        "account": "acc-haupt",
+        "totalAmount": 8500,
+        "note": "Gemischter Einkauf",
+        "baseRevision": 1,
+        "splits": [
+          {
+            "id": "sp-1",
+            "amount": 6500,
+            "poolId": "pool-flex",
+            "categoryId": "cat-lebensmittel",
+            "tax": null
+          },
+          {
+            "id": "sp-2",
+            "amount": 2000,
+            "poolId": "pool-freizeit",
+            "categoryId": "cat-freizeit",
+            "tax": {
+              "relevant": false
+            }
+          }
+        ]
+      },
+      "payloadHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "payloadHashHinweis": "Platzhalter; echter Hash wird bei Erzeugung der Operation berechnet.",
+      "expectedBaseRevision": 1,
+      "createdAt": "2026-11-05T14:30:00Z",
+      "status": "queued"
+    },
+    {
+      "operationId": "op-2026-1102-002",
+      "deviceId": "dev-pixel-8",
+      "type": "updateBooking",
+      "payload": {
+        "bookingId": "bk-2026-1101",
+        "correction": {
+          "splitId": "sp-1",
+          "amount": 6000,
+          "categoryId": "cat-lebensmittel",
+          "hinweis": "Beispiel-Korrektur: Split-Betrag korrigiert; Summe der Splits bleibt 8500 (zweite Split sp-2 entsprechend 2500, hier nur der korrigierte Split gezeigt)."
+        }
+      },
+      "payloadHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "payloadHashHinweis": "Platzhalter; echter Hash wird bei Erzeugung der Operation berechnet.",
+      "expectedBaseRevision": 1,
+      "createdAt": "2026-11-05T15:00:00Z",
+      "status": "queued"
+    },
+    {
+      "operationId": "op-2026-1101-001",
+      "deviceId": "dev-pixel-8",
+      "type": "createBooking",
+      "payload": {
+        "id": "bk-2026-1101",
+        "date": "2026-11-05",
+        "type": "expense",
+        "account": "acc-haupt",
+        "totalAmount": 8500,
+        "note": "Gemischter Einkauf",
+        "baseRevision": 1,
+        "splits": [
+          {
+            "id": "sp-1",
+            "amount": 6500,
+            "poolId": "pool-flex",
+            "categoryId": "cat-lebensmittel",
+            "tax": null
+          },
+          {
+            "id": "sp-2",
+            "amount": 2000,
+            "poolId": "pool-freizeit",
+            "categoryId": "cat-freizeit",
+            "tax": {
+              "relevant": false
+            }
+          }
+        ]
+      },
+      "payloadHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "payloadHashHinweis": "Platzhalter; identisch zum Hash der Operation mit gleicher operationId (gleicher Inhalt).",
+      "expectedBaseRevision": 1,
+      "createdAt": "2026-11-05T14:45:00Z",
+      "status": "acknowledged",
+      "note": "Demonstriert Idempotenz: gleiche operationId und gleicher payloadHash wie op-2026-1101-001 (Wiederholung nach verloren gegangener Antwort); wird nicht erneut angewendet, nur quittiert."
+    }
+  ],
+  "rules": [
+    "gleiche operationId + gleicher payloadHash = idempotent, nur quittiert (wird nicht erneut angewendet)",
+    "gleiche operationId + anderer payloadHash = Fehler (sichtbar, kein Stillstand)",
+    "Quittung nur nach expliziter Bestätigung der Übernahme",
+    "Cursor erst nach lokaler atomarer Übernahme (ChangeLog-Eintrag + Buchung zusammen)",
+    "nicht quittierte Operationen bei Pull erhalten (kein Verlust nach Server-Restore)"
+  ]
+}
