@@ -110,7 +110,7 @@ Pool-, Reservierungs- und freien Salden; jede Vorgangsart hat eindeutige Wirkung
   > - Widerspruch: §5.5 verlangt expectedBaseRevision für Änderungen bestehender Entitäten, das Sync-Beispiel setzte sie aber auch bei createBooking auf 1 — beim ersten Anlegen existiert auf dem Host keine Revision zum Vergleichen.
   > - Korrektur: Neuanlage → expectedBaseRevision null, Ziel-ID muss noch nicht existieren, neue Entität erhält Revision 1; Änderung → erwartete Revision prüfen und nach Erfolg um 1 erhöhen; Wiederholung → zuerst Operations-ID auf bereits erfolgte Verarbeitung prüfen (nur quittieren, Revision unangetastet).
   > - Betroffen: rechenvertrag.md §5.4 + §5.5, data/sync-operation.json (beide create-Operationen → null + Hinweis, Regel neu formuliert)
-- [x] Task 17: Verifikation (72 maschinelle Prüfungen bestanden: create → null, update → 1, Idempotenz-Operation, Regeln, §5.4/§5.5/§3.2-Texte) + Commit `4773461`; **Push wartet auf Nutzerfreigabe**
+- [x] Task 17: Verifikation (72 maschinelle Prüfungen bestanden: create → null, update → 1, Idempotenz-Operation, Regeln, §5.4/§5.5/§3.2-Texte) + Commit `4773461`; **gepusht** auf `origin/step/0-rechenvertrag` (`51adcdf`, 9. Okt. 2026)
 
 ## Offene Punkte (für Schritt 1 / später)
 - Fall 7 `pl-ver-2026-11`: Kategorie der Jahresversicherung ist im Plan nicht vorgegeben → Platzhalter `cat-sonstiges`, im JSON als `_todo` markiert; vor Schritt 3 (Stammdaten) korrigieren
