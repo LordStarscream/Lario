@@ -105,6 +105,13 @@ Pool-, Reservierungs- und freien Salden; jede Vorgangsart hat eindeutige Wirkung
   > - `08-vorhabenabschluss.json`: `endzustand` → `erwarteter_endzustand`; `kontoliquiditaet` in `freie_salden`; Endzustand in der gemeinsamen Form der Fälle 1–7 (alle 6 Pools, `offene_ausgleichspositionen`)
 - [x] Task 15: Maschinelle Verifikation + Commit (`60f3407`) — 291 maschinelle Prüfungen bestanden (JSON-Validierung, Summe Konten = Summe Pools in allen Zuständen aller 8 Fälle, baseRevision = 1 in allen Entitäten, Splitregel, Zuordnungsmatrix, Endzustands-Form) — **gepusht** auf `origin/step/0-rechenvertrag` (`1a0f078`, 9. Okt. 2026)
 
+## Review-Runde 4 (9. Okt. 2026)
+- [x] Task 16: Sync-Neuanlage: expectedBaseRevision widerspruchsfrei — `4773461`
+  > - Widerspruch: §5.5 verlangt expectedBaseRevision für Änderungen bestehender Entitäten, das Sync-Beispiel setzte sie aber auch bei createBooking auf 1 — beim ersten Anlegen existiert auf dem Host keine Revision zum Vergleichen.
+  > - Korrektur: Neuanlage → expectedBaseRevision null, Ziel-ID muss noch nicht existieren, neue Entität erhält Revision 1; Änderung → erwartete Revision prüfen und nach Erfolg um 1 erhöhen; Wiederholung → zuerst Operations-ID auf bereits erfolgte Verarbeitung prüfen (nur quittieren, Revision unangetastet).
+  > - Betroffen: rechenvertrag.md §5.4 + §5.5, data/sync-operation.json (beide create-Operationen → null + Hinweis, Regel neu formuliert)
+- [x] Task 17: Verifikation (72 maschinelle Prüfungen bestanden: create → null, update → 1, Idempotenz-Operation, Regeln, §5.4/§5.5/§3.2-Texte) + Commit `4773461`; **Push wartet auf Nutzerfreigabe**
+
 ## Offene Punkte (für Schritt 1 / später)
 - Fall 7 `pl-ver-2026-11`: Kategorie der Jahresversicherung ist im Plan nicht vorgegeben → Platzhalter `cat-sonstiges`, im JSON als `_todo` markiert; vor Schritt 3 (Stammdaten) korrigieren
 - Fall 8: abweichender Startzustand (200000 statt 100000) ist dokumentiert; für Schritt 14 bleibt der Fall so, da die Plan-Vorgaben (2000/1500/1750) sonst nicht finanzierbar sind
