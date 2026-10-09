@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Lario.Application: Anwendungsfälle, Domain und gezielte Schnittstellen.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Lario.Domain\Lario.Domain.csproj" />
+  </ItemGroup>
+</Project>

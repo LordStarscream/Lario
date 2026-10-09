@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Lario.Application/Lario.Application.csproj" />
+    <Project Path="src/Lario.Domain/Lario.Domain.csproj" />
+    <Project Path="src/Lario.Host/Lario.Host.csproj" />
+    <Project Path="src/Lario.Infrastructure/Lario.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Lario.Domain.Tests/Lario.Domain.Tests.csproj" />
+    <Project Path="tests/Lario.Infrastructure.Tests/Lario.Infrastructure.Tests.csproj" />
+  </Folder>
+</Solution>

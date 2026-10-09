@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- .NET 10 Package-Pruning: die lokale SDK-Installation (10.0.112) enthält
+         kein PrunePackageData-Verzeichnis; ohne die Freigabe bricht der Build
+         mit NETSDK1226 ab. Wenn ein SDK mit Daten installiert wird, ist die
+         Eigenschaft harmlos und kann entfernt werden. -->
+    <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
+    <Company>Lario</Company>
+    <Product>Lario Finanzplanung</Product>
+  </PropertyGroup>
+</Project>
