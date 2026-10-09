@@ -1,4 +1,4 @@
-# MoneyMap Schritt 0 — Gemeinsame JSON-Beispieldaten (Testfixtures)
+# Lario Schritt 0 — Gemeinsame JSON-Beispieldaten (Testfixtures)
 
 Gemeinsame, maschinenlesbare JSON-Beispieldaten für **Schritt 0** des Implementierungsplans. Ab Schritt 3 werden diese Dateien als **Testfixtures** wiederverwendet: Referenzfälle (Batch C, `../referenzfaelle/`) nehmen sie als Startpunkt, die Schrittt-3- bis -14-Tests instanziieren daraus Kontostände, Salden und Sync-Zustände.
 

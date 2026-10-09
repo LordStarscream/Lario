@@ -1,6 +1,6 @@
 {
   "meta": {
-    "name": "MoneyMap Stammdaten-Snapshot",
+    "name": "Lario Stammdaten-Snapshot",
     "zweck": "Gemeinsamer Startzustand aller Referenzfälle (Batch C). Enthält Konten, Pools, das Vorhaben, Alltagskategorien, Steuerkategorien, steuerliche Voreinstellungen und die Anfangsbestände.",
     "bezug": "docs/step-0/rechenvertrag.md — §3.1 (Kernbegriffe), §3.4 (Regelanker: Hauptkonto/Flex 1.000 €, Freizeitkonto/Freizeit 300 €), §3.7 (Anfangsbestand mit Stichtag, explizite Pool-Verteilung, keine Einnahme), §5.3 (Vorhaben-Status)",
     "konventionen": {

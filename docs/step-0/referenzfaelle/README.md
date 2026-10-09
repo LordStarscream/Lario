@@ -1,4 +1,4 @@
-# MoneyMap Schritt 0 — Referenzfälle (8 manuelle Rechenfälle bis auf Cent)
+# Lario Schritt 0 — Referenzfälle (8 manuelle Rechenfälle bis auf Cent)
 
 Die 8 Referenzfälle aus **Schritt 0** des Implementierungsplans (Finanzplanung_Implementierungsplan.md, §5): „Acht Referenzfälle manuell bis auf Cent durchrechnen: Anfangsbestand, Einkommen, Split, Ausgleich, Kontotransfer, Umwidmung, Fixkostendeckung und Vorhabenabschluss. Pro Fall erwartete Konto-, Pool-, Reservierungs- und freien Salden festhalten.“
 

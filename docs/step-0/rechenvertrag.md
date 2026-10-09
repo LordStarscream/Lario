@@ -1,12 +1,12 @@
-# MoneyMap – Fachlicher Rechenvertrag (Schritt 0)
+# Lario – Fachlicher Rechenvertrag (Schritt 0)
 
 **Status:** verbindlich für die Umsetzung
 **Stand:** 8. Oktober 2026 (Entscheidungen mit dem Nutzer geklärt)
-**Bezug:** Implementierungsplan für MoneyMap (Grundsatz §1, Review-Entscheidungen §2, Präzise Regeln §3, Arbeitsweise §4, Schrittkontext §5, Steuerkategorien §9).
+**Bezug:** Implementierungsplan für Lario (Grundsatz §1, Review-Entscheidungen §2, Präzise Regeln §3, Arbeitsweise §4, Schrittkontext §5, Steuerkategorien §9).
 
 > **Hinweis:** Bei Abweichungen zwischen diesem Dokument und dem Implementierungsplan ist der Implementierungsplan zu aktualisieren — dieses Dokument ist seine Konkretisierung. Alle späteren Code-Schritte (3–18) und alle Tests orientieren sich an diesem Rechenvertrag. Die vollständigen, bis auf den Cent durchgerechneten Referenzfälle liegen in separaten JSON-Dateien (Abschnitt 6).
 
-**Geltungsbereich:** Fachliche Finanzlogik von MoneyMap — Repräsentation von Geld und Zeit, Buchungsführung (Ledger), Deckungslogik und Statusautomaten. Nicht betroffen: konkrete Technologieversionen (Schritt 1), Auth-Verfahren (Schritt 7), Sync-Protokoll (Schritt 9/10), UI-Gestaltung, Backup-Zielkonfiguration (Schritt 17), Signierung (Schritt 18).
+**Geltungsbereich:** Fachliche Finanzlogik von Lario — Repräsentation von Geld und Zeit, Buchungsführung (Ledger), Deckungslogik und Statusautomaten. Nicht betroffen: konkrete Technologieversionen (Schritt 1), Auth-Verfahren (Schritt 7), Sync-Protokoll (Schritt 9/10), UI-Gestaltung, Backup-Zielkonfiguration (Schritt 17), Signierung (Schritt 18).
 
 ---
 
@@ -26,7 +26,7 @@ Entscheidungen auf Major-Ebene mit Begründung. Konkrete Patch-Stände (global.j
 | Synchronisation | Manuell im LAN, operations-basiert (Operationen mit stabiler ID und Payloadnachweis) | Keine automatische Hintergrundsynchronisation im Grundumfang; End-to-End-Abbruchszenarien (z. B. Abbruch nach Servercommit) bleiben dadurch testbar. Protokoll-Details in Schritt 9/10. |
 | Backup | Datei-Export von Datenbank + Belegen | Einfaches, lokal verifizierbares Backup; keine laufende Kopie der ganzen SQLite-Datei als Synchronisationsverfahren. Konfiguration in Schritt 17. |
 | LLM | Kein LLM in der Laufzeit | Finanzlogik bleibt vollständig deterministisch und nachvollziehbar. |
-| Altdaten | Kein Altdatenimport, keine Portierung des alten Datenmodells, kein Kompatibilitätsbetrieb | Die frühere Python-Anwendung enthält keine Nutzdaten; MoneyMap ist Greenfield. Nur spätere Schemaänderungen der neuen Anwendung benötigen Migrationen. |
+| Altdaten | Kein Altdatenimport, keine Portierung des alten Datenmodells, kein Kompatibilitätsbetrieb | Die frühere Python-Anwendung enthält keine Nutzdaten; Lario ist Greenfield. Nur spätere Schemaänderungen der neuen Anwendung benötigen Migrationen. |
 
 ### Entscheidungen, die bewusst offen bleiben
 

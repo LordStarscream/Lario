@@ -1,6 +1,6 @@
 {
   "meta": {
-    "name": "MoneyMap Buchungen — Kern-Typen mit Postings und Splits",
+    "name": "Lario Buchungen — Kern-Typen mit Postings und Splits",
     "zweck": "Demonstriert die Struktur bestätigter Buchungen (Ledger-Journal) für die drei Kern-Typen: Ausgabe mit Splits (Plan-Kernfall 85 € gemischter Einkauf), Einnahme mit Finanzierungsmonat und reiner Kontotransfer als Ausgleich. Weitere Typen (umwidmung, storno, erstatung, korrektion, reservierung) werden in den Referenzfällen (Batch C, referenzfaelle/) instanziiert.",
     "bezug": "docs/step-0/rechenvertrag.md — §3.2 (Buchung, atomare Postings), §3.3 (Posting-Wirkungen je Typ, Splitregel: Summe der Splits = totalAmount), §3.4 (Regelanker: 85 € Einkauf → Konten 915/300 €, Pools 935/280 €), §2.2 (Fachdatum; Einnahmen optional mit Finanzierungsmonat)",
     "konventionen": {

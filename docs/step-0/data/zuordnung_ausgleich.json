@@ -1,6 +1,6 @@
 {
   "meta": {
-    "name": "MoneyMap Konto-Pool-Zuordnung und offene Ausgleichspositionen",
+    "name": "Lario Konto-Pool-Zuordnung und offene Ausgleichspositionen",
     "zweck": "Zeigt die signierte AccountPoolAllocation-Matrix und die zugehörigen offenen Ausgleichspositionen in drei Zuständen: nach Anfangsbestand (vor Ausgabe), nach der Ausgabe bk-2026-1101 (Plan-Kernfall 85 € gemischter Einkauf) und nach dem Transfer bk-2026-1103 (Ausgleich). Jede Matrix erfüllt zwingend: Zeilensumme je Account = Kontostand, Spaltensumme je Pool = Poolbestand.",
     "bezug": "docs/step-0/rechenvertrag.md — §3.4 (signierte Konto-Pool-Zuordnung, Regelanker: Start 1.000 €/300 €, nach 85 € Einkauf Konten 915/300 €, Pools 935/280 €, nach Transfer Konten 935/280 €, Zuordnung haupt/freizeit 0 €), §3.5 (offene interne Ausgleichspositionen, Teilbegleichung), §3.6 (freie Verfügbarkeit vs. physische Liquidität)",
     "konventionen": {

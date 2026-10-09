@@ -1,4 +1,4 @@
-# Aufgaben-Index — MoneyMap
+# Aufgaben-Index — Lario
 _Last updated: 8. Okt. 2026_
 
 **Aktiv:** — (Schritt 0 fertig; nächster Auftrag: Schritt 1)

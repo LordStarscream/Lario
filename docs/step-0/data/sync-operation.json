@@ -1,6 +1,6 @@
 {
   "meta": {
-    "name": "MoneyMap Sync-Operationen — Datenmodell",
+    "name": "Lario Sync-Operationen — Datenmodell",
     "zweck": "Demonstriert das Datenmodell der Sync-Operation (geräteste Einheit für die Synchronisation): stabile Operations-ID, Payloadnachweis (Hash), erwartete Basisrevision, Status und Idempotenz bei Wiederholung. NUR Datenmodell — Endpoints, Cursor-Verfahren, Generationen und Quittungsprotokoll sind Schritt 9/10.",
     "bezug": "docs/step-0/rechenvertrag.md — §5.4 (Trennung Entwurf / bestätigte Buchung / Sync-Operation; Sync-Regeln), §5.5 (Revision, Revisionskonflikt)",
     "konventionen": {
