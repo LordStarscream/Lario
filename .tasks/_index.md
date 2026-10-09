@@ -25,7 +25,7 @@ _Last updated: 8. Okt. 2026_
 
 | Schritt | Aufgabe | Kurzbeschreibung | Voraussetzungen | Status |
 |---|---|---|---|---|
-| 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario) auf `step/0-rechenvertrag`; Push wartet auf Freigabe) |
+| 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario); **gepusht** auf `origin/step/0-rechenvertrag`, wartet auf Review) |
 | 1 | — | Projektgerüst (4 .NET-Projekte, Tests, Angular-Workspace), Linux-Start, OpenAPI-Generierung | 0 | geplant |
 | 2 | — | Früher Android-/LAN-Prototyp: Capacitor-App, SQLite-Adapter, Offline-Nachweis auf echtem Gerät | 1 | geplant |
 | 3 | — | Stammdaten (Konten/Pools/Kategorien/Steuerkategorien), Anfangsbestand, erste Migration | 0–1 | geplant |

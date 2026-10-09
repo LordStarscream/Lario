@@ -85,6 +85,7 @@ Pool-, Reservierungs- und freien Salden; jede Vorgangsart hat eindeutige Wirkung
   > - `0583ce2` docs(step-0): Rechenvertrag, data/, referenzfaelle/ (15 Dateien, 2084 Zeilen)
   > - `a118a25` chore: .tasks/ + .gitignore (.pi/ und Schlüssel-Ausschlüsse)
   > - Working tree clean; **Push erst nach expliziter Nutzerfreigabe**
+  > - **Gepusht (8. Okt. 2026):** `step/0-rechenvertrag` → `origin` (PR-Link: https://github.com/LordStarscream/Lario/pull/new/step/0-rechenvertrag)
 - [x] Task 11: Rebase auf origin/main (de854f8 „Rename project documentation to Lario")
   > - Konfliktfrei (keine Datei-Überlappung); Branch jetzt auf `de854f8`
   > - Fachliche Prüfung des main-Commits: **nur Projektname MoneyMap (MMap) → Lario** (Solution, Namespaces, Projekte `Lario.*`, AGENTS.md, README, Planungsdocs) + neues Logo `assets/branding/lario-logo.png`, altes Icon nach `archive/`, README ergänzt „maßgeschneidert für den eigenen Haushalt, Vertrieb ist Option“
