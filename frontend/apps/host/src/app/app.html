@@ -1,0 +1,15 @@
+<main>
+  <h1>Lario</h1>
+  <p>Lokale Finanzplanung – Web-Host</p>
+
+  @if (api() === null) {
+    <p class="status">Host-API wird geladen …</p>
+  } @else {
+    <p class="status">
+      API: {{ api()!.health.status }} ({{ api()!.health.dataDirectory }})
+      · {{ api()!.version.name }} {{ api()!.version.version }}
+    </p>
+  }
+</main>
+
+<router-outlet />

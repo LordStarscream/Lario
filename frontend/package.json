@@ -1,0 +1,42 @@
+{
+  "name": "lario-frontend",
+  "version": "0.0.0",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve host --proxy-config proxy.conf.json",
+    "start:mobile": "ng serve mobile",
+    "build": "ng build host && ng build mobile",
+    "build:host": "ng build host",
+    "build:mobile": "ng build mobile",
+    "watch": "ng build host --watch --configuration development",
+    "test": "ng test host && ng test mobile",
+    "lint": "ng lint host && ng lint mobile",
+    "generate:client": "curl -sf http://localhost:8080/openapi/v1.json -o openapi.json && openapi --input openapi.json --output apps/host/src/generated --client fetch --useUnionTypes"
+  },
+  "private": true,
+  "packageManager": "npm@12.2.0",
+  "dependencies": {
+    "@angular/common": "^22.2.0",
+    "@angular/compiler": "^22.2.0",
+    "@angular/core": "^22.2.0",
+    "@angular/forms": "^22.2.0",
+    "@angular/platform-browser": "^22.2.0",
+    "@angular/router": "^22.2.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^22.2.2",
+    "@angular/cli": "^22.2.2",
+    "@angular/compiler-cli": "^22.2.0",
+    "@eslint/js": "^10.0.1",
+    "angular-eslint": "22.5.0",
+    "eslint": "^10.9.1",
+    "jsdom": "^30.0.0",
+    "openapi-typescript-codegen": "^0.31.0",
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "8.69.0",
+    "vitest": "^5.0.0"
+  }
+}
