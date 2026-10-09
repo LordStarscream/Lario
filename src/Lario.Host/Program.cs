@@ -14,9 +14,11 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
-// Datenablage deterministisch auflösen (Konfiguration oder XDG-Default),
-// aber noch nicht anlegen — das passiert mit der Datenbank in Schritt 3.
-var dataPaths = LarioDataPaths.Resolve(builder.Configuration["Lario:DataDirectory"]);
+// Datenablage deterministisch auflösen (Konfiguration, XDG_DATA_HOME oder
+// ~/.local/share) und beim Start anlegen (idempotent: Neustart findet die
+// bestehende Ablage wieder, es entsteht keine zweite). Die SQLite-Datei
+// selbst wird ab Schritt 3 dort abgelegt.
+var dataPaths = LarioDataPaths.Resolve(builder.Configuration["Lario:DataDirectory"]).EnsureCreated();
 
 var assembly = Assembly.GetExecutingAssembly();
 var version = assembly.GetName().Version?.ToString(3) ?? "0.0.0";
