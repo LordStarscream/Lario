@@ -92,6 +92,19 @@ Pool-, Reservierungs- und freien Salden; jede Vorgangsart hat eindeutige Wirkung
   > - **Keine Änderung an Finanzregeln, Schritten 0–18 oder Abnahmekriterien** → Referenzfälle und Rechenvertrag bleiben fachlich gültig
   > - Namensänderung in Schritt-0-Dokumenten, Beispieldaten und Task-Index nachgezogen: `43ee021`
 
+## Review-Runde 3 (9. Okt. 2026)
+- [x] Task 12: Revisionskonzept vereinheitlichen (Punkt 1) — `60f3407`
+  > - Neue Buchungen/Entitäten: einheitlicher Startwert 1 (pro Entität, keine globale Nummer)
+  > - Erwartete Basisrevision (expectedBaseRevision) gehört zu Änderungen existierender Entitäten
+  > - `07-fixkostendeckung.json`: bk-2026-1207/1208/1209 von 2/3/4 auf 1
+  > - rechenvertrag.md §3.2 + §5.5 präzisieren; Konventionen in stammdaten.json, buchung.json, sync-operation.json nachziehen
+- [x] Task 13: README-Korrektur Fall 4 (Punkt 2) — `60f3407`
+  > - `referenzfaelle/README.md`: Ausgleichsrichtung „haupt → freizeit" → „freizeit → haupt" (Fixture 04 und Regelanker §3.4)
+- [x] Task 14: Fall 8 README + Format (Punkt 3) — `60f3407`
+  > - README-Kernsatz Fall 8 auf das Reservierungsmodell bringen (Anspruch im Herkunftspool, kein Pooltransfer; pool-flex behält Bestand; Transfers erhalten Reservierung/Zuordnung)
+  > - `08-vorhabenabschluss.json`: `endzustand` → `erwarteter_endzustand`; `kontoliquiditaet` in `freie_salden`; Endzustand in der gemeinsamen Form der Fälle 1–7 (alle 6 Pools, `offene_ausgleichspositionen`)
+- [x] Task 15: Maschinelle Verifikation + Commit (`60f3407`) — 291 maschinelle Prüfungen bestanden (JSON-Validierung, Summe Konten = Summe Pools in allen Zuständen aller 8 Fälle, baseRevision = 1 in allen Entitäten, Splitregel, Zuordnungsmatrix, Endzustands-Form) — **Push wartet auf Nutzerfreigabe**
+
 ## Offene Punkte (für Schritt 1 / später)
 - Fall 7 `pl-ver-2026-11`: Kategorie der Jahresversicherung ist im Plan nicht vorgegeben → Platzhalter `cat-sonstiges`, im JSON als `_todo` markiert; vor Schritt 3 (Stammdaten) korrigieren
 - Fall 8: abweichender Startzustand (200000 statt 100000) ist dokumentiert; für Schritt 14 bleibt der Fall so, da die Plan-Vorgaben (2000/1500/1750) sonst nicht finanzierbar sind

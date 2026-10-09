@@ -1,5 +1,5 @@
 # Aufgaben-Index — Lario
-_Last updated: 8. Okt. 2026_
+_Last updated: 9. Okt. 2026_
 
 **Aktiv:** — (Schritt 0 fertig; nächster Auftrag: Schritt 1)
 
@@ -25,7 +25,7 @@ _Last updated: 8. Okt. 2026_
 
 | Schritt | Aufgabe | Kurzbeschreibung | Voraussetzungen | Status |
 |---|---|---|---|---|
-| 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario)); Review-Runde 1 (`e91f156`) und 2 (`e7bf514`: Fall 8 — Reservierung ist Anspruch im Herkunftspool, kein Pooltransfer) umgesetzt; **gepusht** auf `origin/step/0-rechenvertrag` (`c0c0274`), wartet auf Re-Review |
+| 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario)); Review-Runde 1 (`e91f156`), 2 (`e7bf514`: Fall 8 — Reservierung ist Anspruch im Herkunftspool, kein Pooltransfer) und 3 (`60f3407`: Revisionskonzept vereinheitlicht, Fall-4-Richtung, Fall-8-Format) umgesetzt; Runden 1–2 auf `origin/step/0-rechenvertrag` (`247c432`), **Runde 3 lokal, Push wartet auf Nutzerfreigabe** |
 | 1 | — | Projektgerüst (4 .NET-Projekte, Tests, Angular-Workspace), Linux-Start, OpenAPI-Generierung | 0 | geplant |
 | 2 | — | Früher Android-/LAN-Prototyp: Capacitor-App, SQLite-Adapter, Offline-Nachweis auf echtem Gerät | 1 | geplant |
 | 3 | — | Stammdaten (Konten/Pools/Kategorien/Steuerkategorien), Anfangsbestand, erste Migration | 0–1 | geplant |
