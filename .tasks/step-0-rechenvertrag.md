@@ -103,7 +103,7 @@ Pool-, Reservierungs- und freien Salden; jede Vorgangsart hat eindeutige Wirkung
 - [x] Task 14: Fall 8 README + Format (Punkt 3) — `60f3407`
   > - README-Kernsatz Fall 8 auf das Reservierungsmodell bringen (Anspruch im Herkunftspool, kein Pooltransfer; pool-flex behält Bestand; Transfers erhalten Reservierung/Zuordnung)
   > - `08-vorhabenabschluss.json`: `endzustand` → `erwarteter_endzustand`; `kontoliquiditaet` in `freie_salden`; Endzustand in der gemeinsamen Form der Fälle 1–7 (alle 6 Pools, `offene_ausgleichspositionen`)
-- [x] Task 15: Maschinelle Verifikation + Commit (`60f3407`) — 291 maschinelle Prüfungen bestanden (JSON-Validierung, Summe Konten = Summe Pools in allen Zuständen aller 8 Fälle, baseRevision = 1 in allen Entitäten, Splitregel, Zuordnungsmatrix, Endzustands-Form) — **Push wartet auf Nutzerfreigabe**
+- [x] Task 15: Maschinelle Verifikation + Commit (`60f3407`) — 291 maschinelle Prüfungen bestanden (JSON-Validierung, Summe Konten = Summe Pools in allen Zuständen aller 8 Fälle, baseRevision = 1 in allen Entitäten, Splitregel, Zuordnungsmatrix, Endzustands-Form) — **gepusht** auf `origin/step/0-rechenvertrag` (`1a0f078`, 9. Okt. 2026)
 
 ## Offene Punkte (für Schritt 1 / später)
 - Fall 7 `pl-ver-2026-11`: Kategorie der Jahresversicherung ist im Plan nicht vorgegeben → Platzhalter `cat-sonstiges`, im JSON als `_todo` markiert; vor Schritt 3 (Stammdaten) korrigieren
