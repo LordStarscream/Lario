@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 1 – Projektgerüst und Linux-Start
 
-**Status:** fertig (9. Okt. 2026) — alle Tasks + Abnahmekriterien erfüllt, Commits `ffe799f`…`030bfd8`; Push nach Nutzerfreigabe
+**Status:** fertig (9. Okt. 2026) — alle Tasks + Abnahmekriterien erfüllt, Commits `ffe799f`…`37dbeb8`, **gepusht** auf `origin/step/1-projektgeruest`
 **Branch:** `step/1-projektgeruest` (abgeleitet von `step/0-rechenvertrag` @ `29a12aa`)
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 1"
 
