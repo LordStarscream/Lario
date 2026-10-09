@@ -7,7 +7,7 @@
       "geld": "Alle Beträge als ganzzahlige EUR-Cent. Splits summieren sich exakt zum totalAmount (Prüfpflicht, rechenvertrag.md §2.1).",
       "ids": "Stabile String-IDs: bk-<JJMM>-<fortlaufend> für Buchungen, sp-<n> für Splits.",
       "datums": "Fachdatum als YYYY-MM-DD; fundingMonth als Kalendermonat YYYY-MM.",
-      "revision": "baseRevision pro Buchung (rechenvertrag.md §5.5); Startzustand: 1."
+      "revision": "baseRevision pro Buchung (rechenvertrag.md §5.5); jede neue Buchung startet mit dem einheitlichen Startwert 1 — keine globale Nummer über Buchungen hinweg. Die erwartete Basisrevision (expectedBaseRevision) gehört zu einer Änderung einer existierenden Buchung (Korrektur, Sync-Operation), nicht zu ihrer Erzeugung."
     }
   },
   "postingWirkungen": {

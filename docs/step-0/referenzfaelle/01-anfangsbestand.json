@@ -34,6 +34,7 @@
         "date": "2026-01-01",
         "accountId": "acc-haupt",
         "total": 100000,
+        "baseRevision": 1,
         "distribution": [
           {
             "poolId": "pool-flex",
@@ -51,6 +52,7 @@
         "date": "2026-01-01",
         "accountId": "acc-freizeit",
         "total": 30000,
+        "baseRevision": 1,
         "distribution": [
           {
             "poolId": "pool-freizeit",

@@ -98,7 +98,7 @@ Eine Buchung ist der kleinste unsplittbare Buchungssatz des Journals:
 - **Fachdatum:** Tatsächliches Datum (Abschnitt 2.2); Einnahmen optional zusätzlich **Finanzierungsmonat**.
 - **Typ:** Einnahme, Ausgabe, Kontotransfer, Umwidmung, Kombination (Transfer + Umwidmung), Vormerkung/Bestätigung, Reservierung, Abschluss/Abbruch, Storno, Erstattung, Kontostandskorrektur, Anfangsbestand.
 - **Notiz:** Freitext, optional.
-- **Basisrevision:** Für Revision und Konfliktprüfung (Abschnitt 5.5).
+- **Basisrevision:** Eigene Revision der Buchung (Abschnitt 5.5); eine neue Buchung beginnt mit dem einheitlichen Startwert **1**. Die **erwartete Basisrevision** (expectedBaseRevision) gehört zu einer Änderung einer existierenden Buchung (Korrektur, Storno, Sync-Operation) — nicht zu ihrer Erzeugung.
 - **Zusammengehörige Postings:** Alle Postings einer Buchung (Account-/Pool-Postings, Reservierungsposten, Steuerkennzeichnungen je Teilposten) werden **atomar** gespeichert; eine Teilübernahme ist unmöglich.
 
 Abfragen berechnen Salden aus den Grunddaten (Journaleinträgen). Es gibt keine gesondert gepflegten Saldo-Felder. Abgeleitete Salden müssen jederzeit rekonstruierbar bleiben: Jeder Saldowert in jeder Oberfläche muss sich aus den Postings exakt berechnen lassen.
@@ -224,8 +224,10 @@ Drei getrennte Ebenen, die nicht vermischt werden dürfen:
 
 ### 5.5 Revision
 
-- Jede Fachentität (Konten, Pools, Kategorien, Regeln, Vorhaben, Buchungen, Operationen) trägt eine **Basisrevision**.
-- Eine Änderung mit **abweichender Basisrevision** ist ein **Revisionskonflikt**: Fehler, sichtbar dem Nutzer, kein Last-Write-Wins.
+- Jede Fachentität (Konten, Pools, Kategorien, Regeln, Vorhaben, Buchungen, Operationen) trägt **eigene Basisrevision** — ein pro Entität geführter Zähler, keine globale Vorgangsnummer. Verschiedene Buchungen dürfen denselben Revisionswert haben (z. B. beide 1); es gibt keine fortlaufende Nummerierung über Entitäten hinweg.
+- **Neue Entitäten beginnen mit dem einheitlichen Startwert 1** (in den Testfixtures aller Stammdaten und Buchungen).
+- **Die erwartete Basisrevision (expectedBaseRevision) gehört zu einer Änderung einer existierenden Entität** (Korrektur, Storno, Sync-Operation): Die Änderung wird nur angewendet, wenn die erwartete Revision mit der aktuellen Revision der Zielentität übereinstimmt; eine erfolgreich angewendete Änderung erhöht die Revision der Entität um 1.
+- Eine Änderung mit **abweichender Basisrevision** (erwartete ≠ aktuelle) ist ein **Revisionskonflikt**: Fehler, sichtbar dem Nutzer, kein Last-Write-Wins.
 
 ---
 

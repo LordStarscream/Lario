@@ -7,7 +7,7 @@
       "geld": "Alle Geldbeträge als ganzzahlige EUR-Cent (z. B. 100000 = 1.000,00 €). Kein float.",
       "ids": "Stabile String-IDs im Format <typ>-<kurzname> (z. B. acc-haupt, pool-flex, cat-wohnung).",
       "datums": "Fachdaten als Datumswerte YYYY-MM-DD ohne Zeit.",
-      "revision": "Jede Fachentität trägt baseRevision (rechenvertrag.md §5.5); Startwert 1."
+      "revision": "Jede Fachentität trägt ihre eigene baseRevision (rechenvertrag.md §5.5) — pro Entität, keine globale Nummer; neue Entitäten starten mit dem einheitlichen Startwert 1. Die erwartete Basisrevision (expectedBaseRevision) gehört zu Änderungen existierender Entitäten (Korrektur, Sync-Operation)."
     },
     "startzustand": {
       "kontostaende": {
@@ -283,6 +283,7 @@
       "date": "2026-01-01",
       "accountId": "acc-haupt",
       "total": 100000,
+      "baseRevision": 1,
       "distribution": [
         {
           "poolId": "pool-flex",
@@ -296,6 +297,7 @@
       "date": "2026-01-01",
       "accountId": "acc-freizeit",
       "total": 30000,
+      "baseRevision": 1,
       "distribution": [
         {
           "poolId": "pool-freizeit",

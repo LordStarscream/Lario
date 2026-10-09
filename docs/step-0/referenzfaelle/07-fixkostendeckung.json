@@ -121,7 +121,7 @@
           }
         ],
         "note": "Finanzierung der November-Fixkosten: ausdrückliche Umwidmung der gebundenen Beträge in die Zahlungenpools",
-        "baseRevision": 2
+        "baseRevision": 1
       },
       "beschreibung": "Ausdrückliche Finanzierung (eindeutiger Link, Review-Punkt): die gebundenen 2.000,00 € werden per Umwidmung in die Pools übertragen, aus denen die Verpflichtungen bezahlt werden — Wohnung erhält 900,00 €, Jahreskosten 1.100,00 €. Konten bleiben unverändert. Ohne diese Umwidmung wären die Zahlungen aus den leeren Pools Wohnung/Jahreskosten nicht finanziert."
     },
@@ -134,7 +134,7 @@
         "account": "acc-haupt",
         "totalAmount": 90000,
         "note": "Miete November",
-        "baseRevision": 3,
+        "baseRevision": 1,
         "settlesBindingId": "bind-1",
         "splits": [
           {
@@ -157,7 +157,7 @@
         "account": "acc-haupt",
         "totalAmount": 110000,
         "note": "Jahresversicherung",
-        "baseRevision": 4,
+        "baseRevision": 1,
         "settlesBindingId": "bind-2",
         "splits": [
           {

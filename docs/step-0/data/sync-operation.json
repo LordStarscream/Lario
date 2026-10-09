@@ -128,6 +128,7 @@
     "gleiche operationId + anderer payloadHash = Fehler (sichtbar, kein Stillstand)",
     "Quittung nur nach expliziter Bestätigung der Übernahme",
     "Cursor erst nach lokaler atomarer Übernahme (ChangeLog-Eintrag + Buchung zusammen)",
-    "nicht quittierte Operationen bei Pull erhalten (kein Verlust nach Server-Restore)"
+    "nicht quittierte Operationen bei Pull erhalten (kein Verlust nach Server-Restore)",
+    "expectedBaseRevision bezieht sich auf die Revision der ZIELENTITÄT (rechenvertrag.md §5.5, pro Entität, keine globale Operations-Nummer): für createBooking der einheitliche Startwert 1 der neuen Buchung, für updateBooking die aktuelle Revision der Zielbuchung (hier bk-2026-1101, aktuell 1)"
   ]
 }
