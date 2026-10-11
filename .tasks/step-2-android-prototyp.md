@@ -122,6 +122,9 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
   Blocker: Gerät per USB anbinden (USB-Debugging + Autorisierung). Bis dahin:
   Build + APK + Installationsbefehl vorbereitet (README "Mobile App").
   Browser-/Emulator-Prüfung ist KEIN Ersatz für diese Abnahmen.
+  (Nach Review-Runde 1 am 11. Okt.: Debug-APK neu gebaut — enthält
+  networkSecurityConfig + CapacitorHttp + korrigierten SQLite-Lifecycle;
+  Installation auf dem Gerät ist damit der nächste Schritt zur Abnahme.)
 - Host-Start über `dotnet run` funktioniert auf dieser Maschine nicht (SDK in
   `/usr/share/dotnet` ohne ASP.NET-Runtime; Apphost-Lösung via `DOTNET_ROOT`;
   siehe README-Hinweis).
