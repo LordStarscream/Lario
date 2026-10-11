@@ -10,12 +10,18 @@ export interface HostCheckResult {
 /**
  * Verbindungstest zum Lario-Host über das Heimnetz (LAN).
  *
- * Ruft `GET {hostUrl}/api/health` auf. Im Android-WebView läuft der
- * Abruf über die Netzwerk-Stack des WebViews und nutzt den
- * System-Truststore: Bei HTTPS mit self-signed Zertifikat ist das
- * Zertifikat (oder dessen CA) im Gerätespeicher installiert, sonst
- * schlägt der Abruf mit einem Fehler fehl, der hier sichtbar gemeldet
- * wird (Zertifikatsvertrauen — Schritt 2).
+ * Ruft `GET {hostUrl}/api/health` auf. Im Android-Paket läuft der
+ * Abruf über das native HTTP-Plugin (CapacitorHttp, in
+ * capacitor.config.ts aktiviert): `fetch` wird auf den nativen
+ * Netzwerk-Stack umgeleitet, der die Regeln aus
+ * `res/xml/network_security_config.xml` anwendet — kein
+ * WebView-Mixed-Content-Problem und keine CORS-Einschränkung.
+ * Zertifikatsverifizierung bleibt aktiv; bei HTTPS mit
+ * self-signed Zertifikat muss das Zertifikat (oder dessen CA) auf
+ * dem Gerät installiert sein (User-Truststore wird als
+ * Vertrauensanker konfiguriert), sonst schlägt der Abruf mit einem
+ * Fehler fehl, der hier sichtbar gemeldet wird
+ * (Zertifikatsvertrauen — Schritt 2).
  */
 @Injectable({ providedIn: 'root' })
 export class HostService {
