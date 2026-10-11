@@ -194,7 +194,7 @@ in Schritt 18 (dort auch der eigene, nicht committete Signierschlüssel).
 
 ## Entwicklungszustand
 
-**Schritt 2 (Android-/LAN-Prototyp): implementiert, Geräte-Abnahme offen**
+**Schritt 2 (Android-/LAN-Prototyp): abgeschlossen, abgenommen** (11. Okt. 2026)
 (Details: `.tasks/step-2-android-prototyp.md`):
 
 - **LAN-Prototyp:** Host bindet explizit über `Lario__Http__*` / `Lario__Https__*`
@@ -219,12 +219,10 @@ in Schritt 18 (dort auch der eigene, nicht committete Signierschlüssel).
   **Hinweis:** Diese Tests simulieren das Native-Backend (Fake nach
   Plugin-Vertrag); der endgültige Nachweis bleibt die Geräte-Abnahme.
 
-**Noch offen (manuelle Pflichtabnahmen, Gerät erforderlich — Gerät
-verfügbar, Abnahmen mit dem neu gebauten Debug-APK ausstehend):**
-APK neu installieren, Offline-Dauertest (Speichern, App-Kill, Neustart,
-Wiederfinden), Host über LAN erreichen (HTTP und HTTPS mit
-installiertem Zertifikat), bei ausgeschaltetem Host weiter speichern.
-Browser-/Emulator-Prüfung ist kein Ersatz für diese Abnahmen.
+**Geräte-Abnahmen bestanden** (OnePlus 9, finales Debug-APK, 11. Okt. 2026):
+Offline-Dauertest (Speichern, App-Kill, Neustart, Wiederfinden), Host über
+LAN erreichen (HTTP und HTTPS mit installiertem Zertifikat), bei
+ausgeschaltetem Host weiter speichern.
 
 Nächster Schritt: 3 — Datenbank und Grund-API (EF Core 10, SQLite, Migrationen).
 Details: `.tasks/_index.md`.

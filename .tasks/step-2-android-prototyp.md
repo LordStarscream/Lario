@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 2 – Früher Android-/LAN-Prototyp
-_Status: [aktiv] (Gerätebefund OnePlus 9 behoben, Geräte-Abnahmen offen) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026_
+_Status: [erledigt] (abgenommen 11. Okt. 2026 — Geräte-Abnahmen auf OnePlus 9 bestanden) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026 · **PR #3 wartet auf Merge**_
 
 Quelle: `docs/Finanzplanung_Implementierungsplan.md` §5, Schritt 2.
 Voraussetzung Schritt 1 erfüllt (PR #2 merged, `e8e74d9`).
@@ -161,9 +161,9 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
 - [x] Live-Host-Prüfung: HTTP + HTTPS auf Loopback **und** Heimnetz-IP
       (192.168.1.226), HTTPS inkl. CA-Verifizierung (`curl --cacert`) — grün
 - [x] README: Prototyp-Startweg (Build, Sync, APK, Install, HTTPS/Zertifikat, LAN)
-- [ ] **Geräte-Abnahme:** Flugmodus: Testdatensatz speichern → App beenden/neustarten → wiederfinden
-- [ ] **Geräte-Abnahme:** Host im Heimnetz erreichen (HTTP und HTTPS mit installiertem Zertifikat)
-- [ ] **Geräte-Abnahme:** Host ausgeschaltet → weiter speichern
+- [x] **Geräte-Abnahme (bestanden 11. Okt. 2026, OnePlus 9):** Flugmodus: Testdatensatz speichern → App beenden/neustarten → wiederfinden
+- [x] **Geräte-Abnahme (bestanden 11. Okt. 2026, OnePlus 9):** Host im Heimnetz erreichen (HTTP und HTTPS mit installiertem Zertifikat)
+- [x] **Geräte-Abnahme (bestanden 11. Okt. 2026, OnePlus 9):** Host ausgeschaltet → weiter speichern
 - [x] Task-Index aktualisiert, Commits (`40a8b1f`, `4e44943`, `aa281c2`, `b5606a0`), **gepusht** auf
       `origin/step/2-android-prototyp`, **PR #3** → main (11. Okt. 2026, nach Nutzerfreigabe)
 - [x] Gerätebefund OnePlus 9 umgesetzt (Zoneless-Signale, `values`-Pflichtfeld,
@@ -172,15 +172,10 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
 
 ## Offene Punkte / Blocker
 
-- **Geräte-Abnahmen ausstehend mit dem neuen APK:** Der OnePlus 9 ist
-  verfügbar (Gerätebefund 11. Okt. durchgeführt), die drei Geräte-Abnahmen
-  müssen mit dem neu gebauten Debug-APK (21:11, enthält Zoneless-Fix +
-  `values`-Fix) durchgeführt werden: neu installieren (README "Mobile App":
-  `adb install -r app-debug.apk`), dann Flugmodus-Speicher/Neustart, Host
-  HTTP/HTTPS, Host-aus-Weiter-speichern. Browser-/Emulator-Prüfung ist KEIN
-  Ersatz für diese Abnahmen.
-  (Zuvor: Gerät war zeitweise nicht per ADB verbunden; Review-Runde 1/2-
-  Korrekturen und beide Gerätebefunde sind jetzt im APK enthalten.)
-- Host-Start über `dotnet run` funktioniert auf dieser Maschine nicht (SDK in
-  `/usr/share/dotnet` ohne ASP.NET-Runtime; Apphost-Lösung via `DOTNET_ROOT`;
-  siehe README-Hinweis).
+- **Keine fachlichen Blocker mehr.** Alle Abnahmen (automatisiert +
+  Geräte-Abnahmen) bestanden.
+- **Restpunkt Prozess:** PR #3 (`step/2-android-prototyp` → `main`) wartet
+  auf Merge — erst nach Merge beginnt Schritt 3 (Reihenfolge verbindlich).
+- **Kenntnis (kein Blocker):** Host-Start über `dotnet run` funktioniert auf
+  dieser Maschine nicht (SDK in `/usr/share/dotnet` ohne ASP.NET-Runtime;
+  Apphost-Lösung via `DOTNET_ROOT`; siehe README-Hinweis).
