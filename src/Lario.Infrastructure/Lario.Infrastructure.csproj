@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Lario.Infrastructure: EF Core/SQLite, Speicher, Migrationen und
+    Schnittstellenimplementierungen.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Lario.Application\Lario.Application.csproj" />
+  </ItemGroup>
+</Project>

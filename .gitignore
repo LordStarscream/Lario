@@ -1,11 +1,36 @@
-# pi-Arbeitsdateien (Session-Exporte, Memory) — nicht committen (AGENTS.md: Git und vertrauliche Daten)
-.pi/
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.binlog
 
-# Vorbeugung: echte Finanzdaten, DB-/Backupdateien, Schlüssel
-*.db
+# Node / Angular
+node_modules/
+frontend/.angular/
+frontend/dist/
+npm-debug.log*
+yarn-error.log*
+
+# Lario-Daten (lokale Datenhaltung, Backups, Belege — niemals committen)
+data/
 *.sqlite
-*.db-shm
-*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+*.db
 backups/
-*.p12
+belege/
+*.backup
+
+# Android (ab Schritt 2)
+frontend/apps/mobile/android/
 *.keystore
+
+# Editor
+.idea/
+*.swp
+.DS_Store
+
+# Agent-/Session-Daten (niemals committen)
+.pi/
