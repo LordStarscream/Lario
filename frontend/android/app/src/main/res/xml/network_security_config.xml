@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Prototyp-Netzwerksicherheitskonfiguration (Schritt 2).
+
+  - Basis: kein Cleartext; Vertrauensanker sind die System-CAs und die
+    vom Nutzer installierten CAs. Damit wird das lokal selbstsignierte
+    Test-Zertifikat (bzw. dessen CA) verifiziert, wenn es auf dem Gerät
+    installiert ist (README "Mobile App" / HTTPS-Hinweis).
+  - Debug-Builds (Testpfad): zusätzlich Cleartext erlaubt, damit der
+    HTTP-LAN-Testweg (http://<Host-IP>:8080) im Debug-APK funktioniert.
+    Release-Builds bleiben ohne Cleartext (nur HTTPS).
+  Die Zertifikatsprüfung wird NICHT abgeschaltet: es gibt keine
+  Wildcard-Domains und kein Umgehen der Prüfung, nur zusätzliche
+  Vertrauensanker. Ab Schritt 9/10: dedizierter Trust-Anchor
+  (pinnbares CA-Zertifikat statt user-Truststore).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <debug-overrides>
+        <base-config cleartextTrafficPermitted="true">
+            <trust-anchors>
+                <certificates src="system" />
+                <certificates src="user" />
+            </trust-anchors>
+        </base-config>
+    </debug-overrides>
+</network-security-config>
