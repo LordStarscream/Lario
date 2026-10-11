@@ -1,5 +1,83 @@
 <main>
   <h1>Lario</h1>
-  <p>Lokale Finanzplanung – mobile Ausgabenerfassung</p>
-  <p class="status">App-Gerüst (Capacitor-Anbindung folgt in Schritt 8).</p>
+  <p class="status">
+    Prototyp (Schritt 2): lokale Offline-Speicherung und LAN-Verbindung —
+    noch keine Finanzbuchung.
+  </p>
+
+  <section class="device">
+    <h2>Gerät</h2>
+    @if (deviceId) {
+      <p>
+        Geräte-ID: <code>{{ deviceId }}</code>
+      </p>
+    }
+    @if (!isNative) {
+      <p class="warning">
+        Browser-Vorschau: der native SQLite-Speicher ist nur im
+        Android-Paket verfügbar. Der Offline-Nachweis (Speichern,
+        Neustart, Wiederfinden) gilt nur für die installierte App.
+      </p>
+    }
+    @if (initError) {
+      <p class="error">Initialisierung des lokalen Speichers fehlgeschlagen: {{ initError }}</p>
+    }
+  </section>
+
+  <section class="entries">
+    <h2>Lokaler Testdatensatz</h2>
+    <label>
+      Bezeichnung
+      <input [(ngModel)]="label" (keyup.enter)="save()" placeholder="z. B. Prototyp-Eintrag" />
+    </label>
+    <label>
+      Betrag (€, optional)
+      <input
+        [(ngModel)]="amountInput"
+        (keyup.enter)="save()"
+        placeholder="z. B. 12,50"
+        inputmode="decimal"
+      />
+    </label>
+    <button (click)="save()" [disabled]="saving">{{ saving ? 'Wird gespeichert …' : 'Lokal speichern' }}</button>
+    @if (saveError) {
+      <p class="error">{{ saveError }}</p>
+    }
+    <p class="count">{{ entries.length }} Einträge (lokal auf dem Gerät, auch offline)</p>
+    <ul>
+      @for (entry of entries; track entry.id) {
+        <li>
+          <span class="entry-label">{{ entry.label }}</span>
+          @if (entry.amountCents !== null) {
+            <span class="entry-amount">{{ formatCents(entry.amountCents) }}</span>
+          }
+          <span class="entry-date">{{ entry.createdAtUtc }}</span>
+        </li>
+      } @empty {
+        <li class="empty">Noch nichts gespeichert.</li>
+      }
+    </ul>
+  </section>
+
+  <section class="host">
+    <h2>Host-Verbindung (LAN)</h2>
+    <label>
+      Host-URL
+      <input [(ngModel)]="hostUrl" (keyup.enter)="testHost()" placeholder="http://192.168.1.226:8080" />
+    </label>
+    <button (click)="testHost()" [disabled]="checking">
+      {{ checking ? 'Wird geprüft …' : 'Verbindung testen' }}
+    </button>
+    @if (hostCheck) {
+      @if (hostCheck.ok) {
+        <p class="ok">Erreichbar: {{ hostCheck.message }}</p>
+      } @else {
+        <p class="error">
+          {{ hostCheck.message }} — Bei HTTPS: Zertifikat des Hosts im
+          Geräte-Truststore installieren (Einstellungen → Sicherheit →
+          Zertifikate installieren).
+        </p>
+      }
+    }
+  </section>
 </main>
