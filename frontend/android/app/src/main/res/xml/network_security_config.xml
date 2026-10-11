@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Prototyp-Netzwerksicherheitskonfiguration (Schritt 2).
+  Netzwerksicherheitskonfiguration (Schritt 2 Prototyp) — Basis für
+  alle Builds; Release-Builds nutzen diese Datei.
 
-  - Basis: kein Cleartext; Vertrauensanker sind die System-CAs und die
-    vom Nutzer installierten CAs. Damit wird das lokal selbstsignierte
-    Test-Zertifikat (bzw. dessen CA) verifiziert, wenn es auf dem Gerät
-    installiert ist (README "Mobile App" / HTTPS-Hinweis).
-  - Debug-Builds (Testpfad): zusätzlich Cleartext erlaubt, damit der
-    HTTP-LAN-Testweg (http://<Host-IP>:8080) im Debug-APK funktioniert.
-    Release-Builds bleiben ohne Cleartext (nur HTTPS).
+  - Cleartext ist gesperrt (API 36 Default).
+  - Vertrauensanker: System-CAs und die vom Nutzer installierten CAs.
+    Damit wird das lokal selbstsignierte Test-Zertifikat (bzw. dessen
+    CA) verifiziert, wenn es auf dem Gerät installiert ist
+    (README "Mobile App" / HTTPS-Hinweis).
+
+  Hinweis (Android-Schema): <debug-overrides> erlaubt ausschließlich
+  <trust-anchors> — eine Cleartext-Umschaltung gehört dorthin nicht.
+  Der HTTP-Testweg für das Debug-APK wird daher durch die getrennte
+  Ressource src/debug/res/xml/network_security_config.xml bereitgestellt
+  (Debug-Builds ersetzen diese Datei vollständig).
+
   Die Zertifikatsprüfung wird NICHT abgeschaltet: es gibt keine
   Wildcard-Domains und kein Umgehen der Prüfung, nur zusätzliche
   Vertrauensanker. Ab Schritt 9/10: dedizierter Trust-Anchor
@@ -21,13 +27,4 @@
             <certificates src="user" />
         </trust-anchors>
     </base-config>
-
-    <debug-overrides>
-        <base-config cleartextTrafficPermitted="true">
-            <trust-anchors>
-                <certificates src="system" />
-                <certificates src="user" />
-            </trust-anchors>
-        </base-config>
-    </debug-overrides>
 </network-security-config>

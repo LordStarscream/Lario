@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Netzwerksicherheitskonfiguration — NUR für Debug-Builds (Testpfad).
+
+  Diese Datei ersetzt src/main/res/xml/network_security_config.xml in
+  Debug-Builds (Ressourcen-Override der Build-Variante). Der Grund ist
+  das Android-Schema: <debug-overrides> erlaubt ausschließlich
+  <trust-anchors>, keine Cleartext-Umschaltung. Deshalb läuft die
+  Cleartext-Freigabe über die variantenspezifische Ressource.
+
+  - Cleartext erlaubt, damit der dokumentierte HTTP-LAN-Testweg
+    (http://<Host-IP>:8080) im Debug-APK funktioniert.
+  - Vertrauensanker wie in der Basis: System-CAs + Nutzer-CAs
+    (installiertes self-signed Test-Zertifikat wird verifiziert).
+  - Release-Builds sind nicht betroffen und bleiben ohne Cleartext
+    (nur HTTPS; Zertifikatsprüfung aktiv, kein Bypass).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
