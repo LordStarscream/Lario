@@ -23,6 +23,15 @@ export interface PrototypeEntry {
  * Im Browser (ng serve, Tests) ist das Native-Plugin nicht verfügbar —
  * `isNative` ist dann false und die Methodeen werfen nicht, sondern die
  * UI zeigt eine klare Meldung.
+ *
+ * Verbindungslifecycle (Plugin-Vertrag, `CapacitorSQLite.java` 8.1.1):
+ * Das Plugin hält pro Prozess ein Verbindungsregister (`dbDict`) mit den
+ * Schlüsseln `RW_<Name>` / `RO_<Name>`. `open()` wirft ohne vorherige
+ * `createConnection()` („No available connection for database …“). Der
+ * Prototyp nutzt ausschließlich die RW-Verbindung: Es wird keine
+ * `RO_`-Verbindung angelegt, daher dürfen `run()`/`query()`/`execute()`
+ * hier nicht mit `readonly: true` aufgerufen werden (ein `run()` mit
+ * `readonly: true` wirft sogar explizit).
  */
 @Injectable({ providedIn: 'root' })
 export class SqliteService {
@@ -47,12 +56,37 @@ export class SqliteService {
   /** true nach erfolgreicher Initialisierung (DB geöffnet, Schema angelegt). */
   ready = false;
 
-  /** DB öffnen und Schema idempotent anlegen (Neustart-sicher). */
+  /**
+   * true, sobald die RW-Verbindung im (prozessweiten) Plugin-Register
+   * angelegt wurde. Das Register existiert pro App-Start neu; bei einem
+   * zweiten `init()` in derselben Session darf `createConnection()`
+   * nicht erneut aufgerufen werden (würde „already exists“ werfen).
+   */
+  private connectionCreated = false;
+
+  /**
+   * DB öffnen und Schema idempotent anlegen (Neustart-sicher).
+   * Pro App-Start: erst RW-`createConnection()`, dann `open()` —
+   * das Plugin-Register (`dbDict`) ist prozessweit und startet leer.
+   */
   async init(): Promise<void> {
     if (!this.isNative) {
       return;
     }
-    await CapacitorSQLite.open({ database: SqliteService.DbName });
+    if (this.ready) {
+      return;
+    }
+    if (!this.connectionCreated) {
+      await CapacitorSQLite.createConnection({
+        database: SqliteService.DbName,
+        readonly: false,
+      });
+      this.connectionCreated = true;
+    }
+    await CapacitorSQLite.open({
+      database: SqliteService.DbName,
+      readonly: false,
+    });
     await CapacitorSQLite.execute({
       database: SqliteService.DbName,
       statements: SqliteService.Schema,
@@ -73,6 +107,7 @@ export class SqliteService {
       statement:
         'INSERT INTO prototype_entries (id, label, amount_cents, created_at_utc) VALUES (?, ?, ?, ?)',
       values: [entry.id, entry.label, entry.amountCents, entry.createdAtUtc],
+      readonly: false,
     });
     return entry;
   }
@@ -81,7 +116,10 @@ export class SqliteService {
   async listEntries(): Promise<PrototypeEntry[]> {
     const result = await CapacitorSQLite.query({
       database: SqliteService.DbName,
-      readonly: true,
+      // readonly: false — der Prototyp legt nur die RW-Verbindung an;
+      // readonly: true würde die (nicht existierende) RO_-Connection
+      // ansprechen und damit „No available connection“ werfen.
+      readonly: false,
       statement:
         'SELECT id, label, amount_cents AS amountCents, created_at_utc AS createdAtUtc FROM prototype_entries ORDER BY created_at_utc DESC, id DESC',
     });
@@ -105,7 +143,7 @@ export class SqliteService {
   async getMeta(key: string): Promise<string | null> {
     const result = await CapacitorSQLite.query({
       database: SqliteService.DbName,
-      readonly: true,
+      readonly: false, // siehe listEntries(): nur RW-Verbindung vorhanden
       statement: 'SELECT value FROM meta WHERE key = ?',
       values: [key],
     });
@@ -119,6 +157,7 @@ export class SqliteService {
       database: SqliteService.DbName,
       statement: 'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
       values: [key, value],
+      readonly: false,
     });
   }
 }
