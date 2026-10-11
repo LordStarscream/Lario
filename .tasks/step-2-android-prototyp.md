@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 2 – Früher Android-/LAN-Prototyp
-_Status: [aktiv] (Geräte-Abnahmen offen) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026_
+_Status: [aktiv] (Review-Runde 1 umgesetzt, Geräte-Abnahmen offen) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026_
 
 Quelle: `docs/Finanzplanung_Implementierungsplan.md` §5, Schritt 2.
 Voraussetzung Schritt 1 erfüllt (PR #2 merged, `e8e74d9`).
@@ -54,6 +54,35 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
   Pfade gesetzt sind. Zertifikat wird mit `X509Certificate2.CreateFromPemFile`
   explizit geladen (Kestrels `UseHttps(certPath, keyPath)`-Overload verknüpft den
   privaten Schlüssel nicht zuverlässig).
+- **Review-Runde 1 (11. Okt. 2026, externes Review — umgesetzt):**
+  1. *SQLite-Verbindungslifecycle:* `init()` rief `open()` ohne vorherige
+     `createConnection()` auf — das Plugin (`CapacitorSQLite.java` 8.1.1)
+     hält pro Prozess ein Register (`dbDict`, Schlüssel `RW_<Name>`/
+     `RO_<Name>`), und `open()` wirft ohne registrierte Connection
+     „No available connection for database …“. Außerdem adressierte
+     `readonly: true` die nie angelegte `RO_`-Connection. → `init()` legt
+     jetzt pro App-Start die RW-Connection an (idempotent: Guard
+     `connectionCreated`, `createConnection()` würfe sonst „already
+     exists“) und öffnet sie; `run()`/`query()`/`execute()` laufen mit
+     explizitem `readonly: false` durchweg auf der RW-Connection.
+  2. *Test-Fake modelliert den Vertrag:* Der Vitest-Fake simuliert jetzt
+     das `dbDict` (createConnection/open/run/query/execute inkl.
+     Fehlermeldungen und RO/RW-Schlüsseln). Neue Tests: open ohne
+     createConnection schlägt fehl, RO-Query ohne RO-Connection schlägt
+     fehl, init() ist idempotent, Neustart-Test modelliert neuen Prozess
+     (leeres Register, Daten bleiben). → mobile 16 → 19 Tests, alle grün.
+  3. *LAN-Fetch-Pfad nativ:* `CapacitorHttp` in `capacitor.config.ts`
+     aktiviert (`enabled: true`) — `fetch` wird im WebView auf den
+     nativen HTTP-Stack umgeleitet: kein Mixed-Content-Problem
+     (HTTPS-App + HTTP-Host), keine CORS-Einschränkung. Im Browser bleibt
+     der reguläre Web-Fetch (Tests nutzen `vi.stubGlobal('fetch')`).
+  4. *Netzwerksicherheit:* `android/app/src/main/res/xml/network_security_config.xml`
+     neu (im `AndroidManifest.xml` verankert, im APK verifiziert): Basis
+     ohne Cleartext, Vertrauensanker System-CAs + **Nutzer-CAs**
+     (installiertes Test-Zertifikat wird verifiziert); `debug-overrides`
+     erlaubt Cleartext nur im Debug-APK (HTTP-Testweg). Zertifikats-
+     prüfung bleibt aktiv (kein Wildcard, kein Bypass). Doku in README
+     (Sektion „Mobile App“).
 
 ## Tasks
 

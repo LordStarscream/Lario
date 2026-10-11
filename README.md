@@ -165,6 +165,25 @@ Speicher existiert nur im Native-Paket).
 Das Debug-APK ist für Testgeräte gedacht; das Signieren für den Release erfolgt
 in Schritt 18 (dort auch der eigene, nicht committete Signierschlüssel).
 
+**LAN-Verbindung & Zertifikatsvertrauen (Android):**
+
+- Der Hostabruf (`/api/health`) läuft über **CapacitorHttp** (in
+  `frontend/capacitor.config.ts` aktiviert): `fetch` wird im WebView auf den
+  nativen Netzwerk-Stack umgeleitet — dadurch kein
+  WebView-Mixed-Content-Problem (HTTPS-App + HTTP-Host) und keine
+  CORS-Einschränkung. Im Browser (ng serve) bleibt der reguläre Web-Fetch
+  aktiv.
+- Netzwerkregeln: `frontend/android/app/src/main/res/xml/network_security_config.xml`
+  (im `AndroidManifest.xml` verankert). Basis: **kein Cleartext**,
+  Vertrauensanker = System-CAs + **Nutzer-CAs** (dadurch wird das auf dem
+  Gerät installierte self-signed Test-Zertifikat/CA verifiziert).
+  `debug-overrides`: zusätzlich Cleartext für den **HTTP-Testweg im
+  Debug-APK**; Release-Builds bleiben ohne Cleartext (nur HTTPS).
+  Die Zertifikatsprüfung wird nicht abgeschaltet (kein Wildcard, kein Bypass).
+- HTTPS-Testweg: PEM-Zertifikat auf dem Gerät in den
+  **Nutzer-Truststore** installieren (Einstellungen → Sicherheit →
+  Vertrauenswürdige Zertifikate), dann Host-URL auf `https://…:8443` setzen.
+
 ## Entwicklungszustand
 
 **Schritt 2 (Android-/LAN-Prototyp) ist abgeschlossen** (Details:
@@ -179,8 +198,12 @@ in Schritt 18 (dort auch der eigene, nicht committete Signierschlüssel).
   (committet, Build-Artefakte gitignore-d). Debug-APK baut (`gradlew assembleDebug`).
   Offline-fähig: ohne Host und ohne Internet starten/speichern; Host-URL wird
   lokal in der App-Datenbank gehalten und ist jederzeit änderbar.
-- **Tests:** Vitest im Angular-Workspace (host 2, mobile 16) — u. a. Browser-Abbruchpfad,
-  Cent-Validierung, Geräte-ID-Stabilität über Neustart, Host-Health-Checks.
+- **Tests:** Vitest im Angular-Workspace (host 2, mobile 19) — u. a. Browser-Abbruchpfad,
+  Cent-Validierung, Geräte-ID-Stabilität über Neustart, Host-Health-Checks und der
+  SQLite-Plugin-Vertrag (open ohne createConnection schlägt fehl, RO-Connection
+  nur bei expliziter Anlage; der Service nutzt durchweg die RW-Connection).
+  **Hinweis:** Diese Tests simulieren das Native-Backend (Fake nach
+  Plugin-Vertrag); der endgültige Nachweis bleibt die Geräte-Abnahme.
 
 **Noch offen (manuell, Gerät erforderlich — Gerät aktuell nicht per ADB
 verbunden):** APK-Installation auf dem echten Android-Gerät, Offline-Dauertest
