@@ -173,21 +173,29 @@ in Schritt 18 (dort auch der eigene, nicht committete Signierschlüssel).
   WebView-Mixed-Content-Problem (HTTPS-App + HTTP-Host) und keine
   CORS-Einschränkung. Im Browser (ng serve) bleibt der reguläre Web-Fetch
   aktiv.
-- Netzwerkregeln: `frontend/android/app/src/main/res/xml/network_security_config.xml`
-  (im `AndroidManifest.xml` verankert). Basis: **kein Cleartext**,
-  Vertrauensanker = System-CAs + **Nutzer-CAs** (dadurch wird das auf dem
-  Gerät installierte self-signed Test-Zertifikat/CA verifiziert).
-  `debug-overrides`: zusätzlich Cleartext für den **HTTP-Testweg im
-  Debug-APK**; Release-Builds bleiben ohne Cleartext (nur HTTPS).
-  Die Zertifikatsprüfung wird nicht abgeschaltet (kein Wildcard, kein Bypass).
+- Netzwerkregeln (im `AndroidManifest.xml` verankert), als
+  variantenspezifische Ressourcen getrennt — `<debug-overrides>` erlaubt
+  laut Android-Schema nur `<trust-anchors>`, keine Cleartext-Umschaltung:
+  - `frontend/android/app/src/main/res/xml/network_security_config.xml`
+    (Basis, **Release-Builds**): **kein Cleartext**, Vertrauensanker =
+    System-CAs + **Nutzer-CAs** (dadurch wird das auf dem Gerät
+    installierte self-signed Test-Zertifikat/CA verifiziert).
+  - `frontend/android/app/src/debug/res/xml/network_security_config.xml`
+    (**Debug-Builds** ersetzen die Basisdatei): zusätzlich Cleartext für
+    den dokumentierten **HTTP-LAN-Testweg** im Debug-APK.
+  - Verifiziert über den AGP-Resource-Merger (Debug wählt die
+    `src/debug`-Datei, Release nur `src/main`) und den Debug-APK-Inhalt
+    (`aapt2 dump xmltree`: `cleartextTrafficPermitted=true` nur im
+    Debug-APK). Zertifikatsprüfung wird nicht abgeschaltet (kein
+    Wildcard, kein Bypass).
 - HTTPS-Testweg: PEM-Zertifikat auf dem Gerät in den
   **Nutzer-Truststore** installieren (Einstellungen → Sicherheit →
   Vertrauenswürdige Zertifikate), dann Host-URL auf `https://…:8443` setzen.
 
 ## Entwicklungszustand
 
-**Schritt 2 (Android-/LAN-Prototyp) ist abgeschlossen** (Details:
-`.tasks/step-2-android-prototyp.md`):
+**Schritt 2 (Android-/LAN-Prototyp): implementiert, Geräte-Abnahme offen**
+(Details: `.tasks/step-2-android-prototyp.md`):
 
 - **LAN-Prototyp:** Host bindet explizit über `Lario__Http__*` / `Lario__Https__*`
   (Default Loopback:8080; `0.0.0.0` für Heimnetz), optionaler HTTPS-Endpunkt
@@ -205,9 +213,12 @@ in Schritt 18 (dort auch der eigene, nicht committete Signierschlüssel).
   **Hinweis:** Diese Tests simulieren das Native-Backend (Fake nach
   Plugin-Vertrag); der endgültige Nachweis bleibt die Geräte-Abnahme.
 
-**Noch offen (manuell, Gerät erforderlich — Gerät aktuell nicht per ADB
-verbunden):** APK-Installation auf dem echten Android-Gerät, Offline-Dauertest
-(Speichern, App-Kill, Neustart), LAN-/HTTPS-Verbindung vom Gerät.
+**Noch offen (manuelle Pflichtabnahmen, Gerät erforderlich — Gerät
+aktuell nicht per ADB verbunden):** APK-Installation auf dem echten
+Android-Gerät, Offline-Dauertest (Speichern, App-Kill, Neustart,
+Wiederfinden), Host über LAN erreichen (HTTP und HTTPS mit
+installiertem Zertifikat), bei ausgeschaltetem Host weiter speichern.
+Browser-/Emulator-Prüfung ist kein Ersatz für diese Abnahmen.
 
 Nächster Schritt: 3 — Datenbank und Grund-API (EF Core 10, SQLite, Migrationen).
 Details: `.tasks/_index.md`.

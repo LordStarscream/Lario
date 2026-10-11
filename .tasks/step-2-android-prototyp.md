@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 2 – Früher Android-/LAN-Prototyp
-_Status: [aktiv] (Review-Runde 1 umgesetzt, Geräte-Abnahmen offen) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026_
+_Status: [aktiv] (Review-Runde 2 umgesetzt, Geräte-Abnahmen offen) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026_
 
 Quelle: `docs/Finanzplanung_Implementierungsplan.md` §5, Schritt 2.
 Voraussetzung Schritt 1 erfüllt (PR #2 merged, `e8e74d9`).
@@ -83,6 +83,25 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
      erlaubt Cleartext nur im Debug-APK (HTTP-Testweg). Zertifikats-
      prüfung bleibt aktiv (kein Wildcard, kein Bypass). Doku in README
      (Sektion „Mobile App“).
+- **Review-Runde 2 (11. Okt. 2026, externes Review — umgesetzt):**
+  Restpunkt aus Zeilenkommentar an `network_security_config.xml`: Laut
+  Android-Schema erlaubt `<debug-overrides>` ausschließlich
+  `<trust-anchors>` — die verschachtelte `base-config` mit
+  Cleartext-Umschaltung wird dort nicht unterstützt, die wirksame Basis
+  wäre `cleartextTrafficPermitted="false"` geblieben (HTTP-Testweg im
+  Debug-APK trotzdem gesperrt). → Cleartext-Freigabe jetzt über
+  variantenspezifische Ressourcen:
+  - `main/res/xml/network_security_config.xml`: Basis ohne Cleartext,
+    Trust-Anchor System-CAs + Nutzer-CAs (Release-Builds, HTTPS-Testweg).
+  - `debug/res/xml/network_security_config.xml`: ersetzt die Basisdatei
+    in Debug-Builds (Ressourcen-Override), gültige top-level
+    `base-config` mit Cleartext=true für den HTTP-LAN-Testweg.
+  Verifiziert: AGP-Resource-Merger wählt für Debug die `src/debug`-
+  Datei, für Release nur `src/main`; Debug-APK-Inhalt per
+  `aapt2 dump xmltree` geprüft (`cleartextTrafficPermitted=true` nur
+  im Debug-APK). README: Schritt 2 als „implementiert, Geräte-Abnahme
+  offen“ gekennzeichnet (statt „abgeschlossen“); PR-Text Testanzahl
+  18/18 → 21/21 korrigiert.
 
 ## Tasks
 
