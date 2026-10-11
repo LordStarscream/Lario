@@ -1,7 +1,7 @@
 # Aufgaben-Index — Lario
 _Last updated: 11. Okt. 2026_
 
-**Nächster:** Schritt 2 ist **abgenommen (11. Okt. 2026)** — alle Abnahmen bestanden, inkl. der drei Geräte-Abnahmen auf dem OnePlus 9 mit dem finalen Debug-APK. **PR #3 wartet auf Merge** (Benutzerfreigabe erforderlich). Nach dem Merge beginnt Schritt 3 (Stammdaten, Anfangsbestand, erste Migration). Details: `.tasks/step-2-android-prototyp.md`.
+**Nächster:** Schritt 3 (Stammdaten, Anfangsbestand, erste Migration) — **nicht gestartet** (Detail-Aufgabenfile entsteht bei Start). Schritt 2 ist **abgenommen (11. Okt. 2026)** und **gemerged** (Merge-Commit `61c3a07`, PR #3).
 
 ## Legende
 
@@ -27,7 +27,7 @@ _Last updated: 11. Okt. 2026_
 |---|---|---|---|---|
 | 0 | `step-0-rechenvertrag` | Fachlicher Rechenvertrag: Regeln, Ledger-Entwurf, 8 Referenzfälle | — | **fertig** (8. Okt. 2026; Commits `0583ce2`, `a118a25`, `43ee021` (Rebase auf main `de854f8` + Name Lario)); Review-Runde 1 (`e91f156`), 2 (`e7bf514`: Fall 8 — Reservierung ist Anspruch im Herkunftspool, kein Pooltransfer) und 3 (`60f3407`: Revisionskonzept vereinheitlicht, Fall-4-Richtung, Fall-8-Format) umgesetzt; Runden 1–4 **gepusht** auf `origin/step/0-rechenvertrag` (Runde 4: `4773461` Sync-Neuanlage — expectedBaseRevision null statt 1), abgenommen vom Nutzer 9. Okt. 2026, gepusht auf `origin/step/0-rechenvertrag`; **PR #1** (9. Okt. 2026, `step/0-rechenvertrag` → `main`) **merged** (Merge-Commit `ecc696f`); `origin/main` in `step/1-projektgeruest` überführt (Merge `4d02d14`) |
 | 1 | `step-1-projektgeruest` | Projektgerüst (4 .NET-Projekte, Tests, Angular-Workspace), Linux-Start, OpenAPI-Generierung | 0 | **fertig** (9. Okt. 2026; Commits `ffe799f` Gerüst, `e3f501f` Domain/Infra/Host+Tests, `a1d5281` Angular-Workspace+Client, `030bfd8` README, `37dbeb8` Abnahme; Fresh-Checkout-Test grün; Abnahmekorrekturen 9. Okt. (BASE relativ, XDG_DATA_HOME, EnsureCreated, README — Commits `496824d`, `987a295`, `a30cae9`, `d8ddd24`, `825e8ed`); **gepusht** auf `origin/step/1-projektgeruest`; **PR #2** (9. Okt. 2026, `step/1-projektgeruest` → `main`) eröffnet) |
-| 2 | `step-2-android-prototyp` | Früher Android-/LAN-Prototyp: Capacitor-App, SQLite-Adapter, Offline-Nachweis auf echtem Gerät | 1 | **fertig** (11. Okt. 2026; Code + APK + Live-Host-Prüfung; Review-Runden 1–2 + Gerätebefund OnePlus 9 umgesetzt; **alle drei Geräte-Abnahmen bestanden** (OnePlus 9, finales Debug-APK); gepusht, **PR #3** → main, **Merge ausstehend**) |
+| 2 | `step-2-android-prototyp` | Früher Android-/LAN-Prototyp: Capacitor-App, SQLite-Adapter, Offline-Nachweis auf echtem Gerät | 1 | **fertig** (11. Okt. 2026; Code + APK + Live-Host-Prüfung; Review-Runden 1–2 + Gerätebefund OnePlus 9 umgesetzt; **alle drei Geräte-Abnahmen bestanden** (OnePlus 9, finales Debug-APK); gepusht, **PR #3** → main, **merged** (`61c3a07`)) |
 | 3 | — | Stammdaten (Konten/Pools/Kategorien/Steuerkategorien), Anfangsbestand, erste Migration | 0–1 | geplant |
 | 4 | — | Kernbuchungen: Einnahmen/Ausgaben/Splits, Postings, Steuerkennzeichnung je Teilposten | 3 | geplant |
 | 5 | — | Transfers, Umwidmung, interne Ausgleiche, signierte Konto-Pool-Zuordnung | 4 | geplant |

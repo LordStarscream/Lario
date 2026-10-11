@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 2 – Früher Android-/LAN-Prototyp
-_Status: [erledigt] (abgenommen 11. Okt. 2026 — Geräte-Abnahmen auf OnePlus 9 bestanden) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026 · **PR #3 wartet auf Merge**_
+_Status: [erledigt] (abgenommen 11. Okt. 2026 — Geräte-Abnahmen auf OnePlus 9 bestanden) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026 · **PR #3 merged** (`61c3a07`)_
 
 Quelle: `docs/Finanzplanung_Implementierungsplan.md` §5, Schritt 2.
 Voraussetzung Schritt 1 erfüllt (PR #2 merged, `e8e74d9`).
@@ -174,8 +174,9 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
 
 - **Keine fachlichen Blocker mehr.** Alle Abnahmen (automatisiert +
   Geräte-Abnahmen) bestanden.
-- **Restpunkt Prozess:** PR #3 (`step/2-android-prototyp` → `main`) wartet
-  auf Merge — erst nach Merge beginnt Schritt 3 (Reihenfolge verbindlich).
+- **Restpunkt:** kein offener Prozesspunkt mehr — PR #3 merged (`61c3a07`).
+  Nächster Schritt ist 3 (Stammdaten, Anfangsbestand, erste Migration),
+  noch nicht gestartet.
 - **Kenntnis (kein Blocker):** Host-Start über `dotnet run` funktioniert auf
   dieser Maschine nicht (SDK in `/usr/share/dotnet` ohne ASP.NET-Runtime;
   Apphost-Lösung via `DOTNET_ROOT`; siehe README-Hinweis).
