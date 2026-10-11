@@ -83,7 +83,8 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
 - [ ] **Geräte-Abnahme:** Flugmodus: Testdatensatz speichern → App beenden/neustarten → wiederfinden
 - [ ] **Geräte-Abnahme:** Host im Heimnetz erreichen (HTTP und HTTPS mit installiertem Zertifikat)
 - [ ] **Geräte-Abnahme:** Host ausgeschaltet → weiter speichern
-- [ ] Task-Index aktualisieren, Commit(s), Push (nach Freigabe), PR eröffnen
+- [x] Task-Index aktualisiert, Commits (`40a8b1f`, `4e44943`, `aa281c2`, `b5606a0`), **gepusht** auf
+      `origin/step/2-android-prototyp`, **PR #3** → main (11. Okt. 2026, nach Nutzerfreigabe)
 
 ## Offene Punkte / Blocker
 

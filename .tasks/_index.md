@@ -1,7 +1,7 @@
 # Aufgaben-Index — Lario
 _Last updated: 11. Okt. 2026_
 
-**Nächster:** Schritt 2 — **technische Umsetzung fertig** (11. Okt. 2026, Branch `step/2-android-prototyp`), **aber die drei Geräte-Abnahmen sind offen** (Android-Gerät aktuell nicht per ADB verbunden). Erst nach Geräte-Abnahme: Push/PR, dann Schritt 3. Details: `.tasks/step-2-android-prototyp.md`.
+**Nächster:** Schritt 2 — **technische Umsetzung fertig** (11. Okt. 2026, Branch `step/2-android-prototyp`, **gepusht**, **PR #3** → main), **aber die drei Geräte-Abnahmen sind offen** (Android-Gerät aktuell nicht per ADB verbunden). Erst nach Geräte-Abnahme: Merge, dann Schritt 3. Details: `.tasks/step-2-android-prototyp.md`.
 
 ## Legende
 
