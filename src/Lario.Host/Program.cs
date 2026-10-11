@@ -1,3 +1,4 @@
+using System.Net;
 using System.Reflection;
 using Lario.Infrastructure;
 
@@ -8,6 +9,41 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
     ContentRootPath = AppContext.BaseDirectory,
+});
+
+// LAN-Prototyp (Schritt 2): Die Kestrel-Bindung ist explizit und
+// konfigurierbar, damit das Verhalten unabhängig von launchSettings /
+// ASPNETCORE_URLS deterministisch ist:
+//   Lario:Http:Address  (Default 127.0.0.1; "0.0.0.0" für den Heimnetz-Zugang)
+//   Lario:Http:Port     (Default 8080)
+//   Lario:Https:Address (Default 127.0.0.1)
+//   Lario:Https:Port    (Default 8443)
+//   Lario:Https:CertificateFile / Lario:Https:CertificateKeyFile
+//     (PEM; der HTTPS-Endpunkt wird nur aktiviert, wenn beide gesetzt sind).
+// Zertifikatsvertrauen auf dem Gerät: das Zertifikat (oder dessen CA) muss
+// im Truststore des Android-Geräts installiert sein.
+var httpAddress = builder.Configuration.GetValue("Lario:Http:Address", "127.0.0.1");
+var httpPort = builder.Configuration.GetValue("Lario:Http:Port", 8080);
+var httpsAddress = builder.Configuration.GetValue("Lario:Https:Address", "127.0.0.1");
+var httpsPort = builder.Configuration.GetValue("Lario:Https:Port", 8443);
+var certificateFile = builder.Configuration["Lario:Https:CertificateFile"];
+var certificateKeyFile = builder.Configuration["Lario:Https:CertificateKeyFile"];
+var useHttps = !string.IsNullOrWhiteSpace(certificateFile)
+               && !string.IsNullOrWhiteSpace(certificateKeyFile);
+var httpsCertificate = useHttps
+    // Explizit laden, damit Zertifikat und privater Schlüssel garantiert
+    // zusammen geladen werden (HasPrivateKey=true).
+    ? System.Security.Cryptography.X509Certificates.X509Certificate2
+        .CreateFromPemFile(certificateFile!, certificateKeyFile!)
+    : null;
+
+builder.WebHost.UseKestrel(options =>
+{
+    options.Listen(IPAddress.Parse(httpAddress), httpPort);
+    if (useHttps && httpsCertificate is not null)
+    {
+        options.Listen(IPAddress.Parse(httpsAddress), httpsPort, listen => listen.UseHttps(httpsCertificate));
+    }
 });
 
 builder.Services.AddOpenApi();
