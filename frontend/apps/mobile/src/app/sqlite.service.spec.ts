@@ -15,6 +15,9 @@ import { SqliteService } from './sqlite.service';
  * - `query()` läuft auf `RO_<Name>` bei `readonly: true`, sonst auf
  *   `RW_<Name>`; fehlt die respective Connection, „No available
  *   connection for database …“.
+ * - `query()` und `run()` verlangen das Pflichtfeld `values` (auch als
+ *   leeres Array für Parameterlose Queries); fehlt es, wird der Aufruf
+ *   verworfen — wie im echten Plugin (Gerätebefund OnePlus 9).
  *
  * Die echten SQL-Statements laufen auf dem Android-Gerät; hier wird die
  * Service-Logik (Initialisierung, Einträge, Geräte-ID-Stabilität) gegen
@@ -86,12 +89,27 @@ vi.mock('@capacitor-community/sqlite', () => {
         }
         db.schemaCreated = true;
       },
+      // Echter Plugin-Vertrag (CapacitorSQLitePlugin 8.1.1): das Feld
+      // `values` muss vorhanden sein, auch bei Queries ohne Parameter.
+      requireValues(options: { values?: unknown[] }, op: 'Query' | 'Run') {
+        if (options.values === undefined) {
+          throw new Error(
+            op === 'Query'
+              ? 'Query: Must provide an Array of Strings'
+              : 'Run: Must provide an Array of values',
+          );
+        }
+        if (!Array.isArray(options.values)) {
+          throw new Error(`${op}: Must provide an Array of values`);
+        }
+      },
       async run(options: {
         database: string;
         statement: string;
         values?: unknown[];
         readonly?: boolean;
       }) {
+        this.requireValues(options, 'Run');
         // run() adressiert im Plugin immer die RW_-Connection.
         const conn = db.connections.get('RW_' + options.database);
         if (!conn) {
@@ -123,6 +141,7 @@ vi.mock('@capacitor-community/sqlite', () => {
         values?: unknown[];
         readonly?: boolean;
       }) {
+        this.requireValues(options, 'Query');
         const readonly = options.readonly ?? false;
         const conn = requireConnection(options.database, readonly);
         if (!conn.opened) {
@@ -189,8 +208,36 @@ describe('SqliteService (Prototyp, simuliertes Native-Backend)', () => {
         database: 'lario-prototype',
         readonly: true,
         statement: 'SELECT value FROM meta WHERE key = ?',
+        values: [],
       }),
     ).rejects.toThrow('No available connection for database lario-prototype');
+  });
+
+  it('modelliert den Plugin-Vertrag: query()/run() ohne values-Feld schlägt fehl', async () => {
+    const service = newService();
+    await service.init();
+    // Android verwirft Aufrufe ohne `values`, auch ohne Parameter
+    // (Gerätebefund: Abbruch des Appstarts beim Laden der Einträge).
+    await expect(
+      CapacitorSQLite.query({
+        database: 'lario-prototype',
+        statement: 'SELECT 1',
+      }),
+    ).rejects.toThrow('Query: Must provide an Array of Strings');
+    await expect(
+      CapacitorSQLite.run({
+        database: 'lario-prototype',
+        statement: 'SELECT 1',
+      }),
+    ).rejects.toThrow('Run: Must provide an Array of values');
+    // Mit explizitem leerem values-Array ist der Aufruf gültig:
+    expect(
+      await CapacitorSQLite.query({
+        database: 'lario-prototype',
+        statement: 'SELECT 1',
+        values: [],
+      }),
+    ).toEqual({ values: [] });
   });
 
   it('speichert einen Eintrag und liest ihn wieder (Roundtrip)', async () => {

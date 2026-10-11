@@ -122,6 +122,10 @@ export class SqliteService {
       readonly: false,
       statement:
         'SELECT id, label, amount_cents AS amountCents, created_at_utc AS createdAtUtc FROM prototype_entries ORDER BY created_at_utc DESC, id DESC',
+      // values ist im Plugin-Vertrag Pflichtfeld, auch ohne Parameter:
+      // Android prüft `has("values")` und verwirft den Aufruf sonst mit
+      // „Query: Must provide an Array of Strings“ (Gerätebefund).
+      values: [],
     });
     return mapRows<PrototypeEntry>(result.values ?? []);
   }
