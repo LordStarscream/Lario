@@ -7,9 +7,9 @@
 
   <section class="device">
     <h2>Gerät</h2>
-    @if (deviceId) {
+    @if (deviceId()) {
       <p>
-        Geräte-ID: <code>{{ deviceId }}</code>
+        Geräte-ID: <code>{{ deviceId() }}</code>
       </p>
     }
     @if (!isNative) {
@@ -19,8 +19,8 @@
         Neustart, Wiederfinden) gilt nur für die installierte App.
       </p>
     }
-    @if (initError) {
-      <p class="error">Initialisierung des lokalen Speichers fehlgeschlagen: {{ initError }}</p>
+    @if (initError()) {
+      <p class="error">Initialisierung des lokalen Speichers fehlgeschlagen: {{ initError() }}</p>
     }
   </section>
 
@@ -39,13 +39,13 @@
         inputmode="decimal"
       />
     </label>
-    <button (click)="save()" [disabled]="saving">{{ saving ? 'Wird gespeichert …' : 'Lokal speichern' }}</button>
-    @if (saveError) {
-      <p class="error">{{ saveError }}</p>
+    <button (click)="save()" [disabled]="saving()">{{ saving() ? 'Wird gespeichert …' : 'Lokal speichern' }}</button>
+    @if (saveError()) {
+      <p class="error">{{ saveError() }}</p>
     }
-    <p class="count">{{ entries.length }} Einträge (lokal auf dem Gerät, auch offline)</p>
+    <p class="count">{{ entries().length }} Einträge (lokal auf dem Gerät, auch offline)</p>
     <ul>
-      @for (entry of entries; track entry.id) {
+      @for (entry of entries(); track entry.id) {
         <li>
           <span class="entry-label">{{ entry.label }}</span>
           @if (entry.amountCents !== null) {
@@ -63,17 +63,22 @@
     <h2>Host-Verbindung (LAN)</h2>
     <label>
       Host-URL
-      <input [(ngModel)]="hostUrl" (keyup.enter)="testHost()" placeholder="http://192.168.1.226:8080" />
+      <input
+        [ngModel]="hostUrl()"
+        (ngModelChange)="hostUrl.set($event)"
+        (keyup.enter)="testHost()"
+        placeholder="http://192.168.1.226:8080"
+      />
     </label>
-    <button (click)="testHost()" [disabled]="checking">
-      {{ checking ? 'Wird geprüft …' : 'Verbindung testen' }}
+    <button (click)="testHost()" [disabled]="checking()">
+      {{ checking() ? 'Wird geprüft …' : 'Verbindung testen' }}
     </button>
-    @if (hostCheck) {
-      @if (hostCheck.ok) {
-        <p class="ok">Erreichbar: {{ hostCheck.message }}</p>
+    @if (hostCheck()) {
+      @if (hostCheck()!.ok) {
+        <p class="ok">Erreichbar: {{ hostCheck()!.message }}</p>
       } @else {
         <p class="error">
-          {{ hostCheck.message }} — Bei HTTPS: Zertifikat des Hosts im
+          {{ hostCheck()!.message }} — Bei HTTPS: Zertifikat des Hosts im
           Geräte-Truststore installieren (Einstellungen → Sicherheit →
           Zertifikate installieren).
         </p>
