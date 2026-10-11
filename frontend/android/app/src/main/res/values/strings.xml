@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Lario</string>
+    <string name="title_activity_main">Lario</string>
+    <string name="package_name">de.lario.app</string>
+    <string name="custom_url_scheme">de.lario.app</string>
+</resources>
