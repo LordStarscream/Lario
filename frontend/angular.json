@@ -5,7 +5,6 @@
     "packageManager": "npm"
   },
   "newProjectRoot": "apps",
-  "defaultProject": "host",
   "projects": {
     "host": {
       "projectType": "application",
