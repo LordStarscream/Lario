@@ -206,16 +206,22 @@ in Schritt 18 (dort auch der eigene, nicht committete Signierschlüssel).
   (committet, Build-Artefakte gitignore-d). Debug-APK baut (`gradlew assembleDebug`).
   Offline-fähig: ohne Host und ohne Internet starten/speichern; Host-URL wird
   lokal in der App-Datenbank gehalten und ist jederzeit änderbar.
-- **Tests:** Vitest im Angular-Workspace (host 2, mobile 19) — u. a. Browser-Abbruchpfad,
-  Cent-Validierung, Geräte-ID-Stabilität über Neustart, Host-Health-Checks und der
-  SQLite-Plugin-Vertrag (open ohne createConnection schlägt fehl, RO-Connection
-  nur bei expliziter Anlage; der Service nutzt durchweg die RW-Connection).
+  **Zoneless-Change-Detection:** Angular läuft in diesem Projekt zoneless
+  (kein zone.js); asynchrone UI-Zustände sind deshalb Signals, damit Werte
+  nach `await` (Geräte-ID, Einträge, Speichern-/Host-Ergebnisse) ohne
+  User-Event sichtbar werden (Gerätebefund OnePlus 9 behoben).
+- **Tests:** Vitest im Angular-Workspace (host 2, mobile 23) — u. a. Browser-Abbruchpfad,
+  Cent-Validierung (inkl. 13-Stellen-Grenze), Geräte-ID-Stabilität über Neustart,
+  Host-Health-Checks, der SQLite-Plugin-Vertrag (open ohne createConnection
+  schlägt fehl, RO-Connection nur bei expliziter Anlage, `values`-Pflichtfeld;
+  der Service nutzt durchweg die RW-Connection) sowie Zoneless-DOM-Tests
+  (asynchrone Zustände ohne manuelles `detectChanges()` sichtbar).
   **Hinweis:** Diese Tests simulieren das Native-Backend (Fake nach
   Plugin-Vertrag); der endgültige Nachweis bleibt die Geräte-Abnahme.
 
 **Noch offen (manuelle Pflichtabnahmen, Gerät erforderlich — Gerät
-aktuell nicht per ADB verbunden):** APK-Installation auf dem echten
-Android-Gerät, Offline-Dauertest (Speichern, App-Kill, Neustart,
+verfügbar, Abnahmen mit dem neu gebauten Debug-APK ausstehend):**
+APK neu installieren, Offline-Dauertest (Speichern, App-Kill, Neustart,
 Wiederfinden), Host über LAN erreichen (HTTP und HTTPS mit
 installiertem Zertifikat), bei ausgeschaltetem Host weiter speichern.
 Browser-/Emulator-Prüfung ist kein Ersatz für diese Abnahmen.

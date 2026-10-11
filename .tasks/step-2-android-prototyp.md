@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 2 – Früher Android-/LAN-Prototyp
-_Status: [aktiv] (Review-Runde 2 umgesetzt, Geräte-Abnahmen offen) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026_
+_Status: [aktiv] (Gerätebefund OnePlus 9 behoben, Geräte-Abnahmen offen) · Branch: `step/2-android-prototyp` (von main `e8e74d9`) · Start: 11. Okt. 2026_
 
 Quelle: `docs/Finanzplanung_Implementierungsplan.md` §5, Schritt 2.
 Voraussetzung Schritt 1 erfüllt (PR #2 merged, `e8e74d9`).
@@ -102,6 +102,38 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
   im Debug-APK). README: Schritt 2 als „implementiert, Geräte-Abnahme
   offen“ gekennzeichnet (statt „abgeschlossen“); PR-Text Testanzahl
   18/18 → 21/21 korrigiert.
+- **Gerätebefund OnePlus 9 (11. Okt. 2026, App auf echtem Gerät getestet
+  — umgesetzt, Review-Fix `6e0b908`, `e902f12`):**
+  1. *Zoneless-Change-Detection:* Nach Appstart blieben asynchrone Werte
+     (Geräte-ID, gespeicherte Einträge, Speichern-/Host-Ergebnisse) in
+     der UI unsichtbar, bis ein User-Event (z. B. Tippen in ein
+     Eingabefeld) einen CD-Pass auslöste. Angular läuft in diesem Projekt
+     zoneless (Angular 22, kein zone.js), und ohne zone.js meldet nur ein
+     Signal-Update (oder markForCheck) asynchrone Änderungen nach
+     `await`. → Alle asynchronen UI-Zustände in `App` sind jetzt Signals
+     (`deviceId`, `initError`, `entries`, `saving`, `saveError`,
+     `hostUrl`, `checking`, `hostCheck`); Template bindet über
+     Signal-Aufrufe (`hostUrl` per `ngModel`/`ngModelChange`). Neue
+     Zoneless-DOM-Tests: verzögerte Mocks, Assertions **ohne** manuelles
+     `detectChanges()` — der DOM-Update muss von Angular selbst kommen
+     (`untilVisible` wartet auf den gerenderten Zustand, weil
+     `whenStable()` im Zoneless-Testumgebung nur Angular-interne Tasks
+     trackt, nicht die rohen Mock-Timer). Mutations-Check: kaputtes
+     Signal-Write wird von den Tests erkannt (Timeout mit klarem Fehler).
+  2. *SQLite-Plugin-Vertrag:* `CapacitorSQLite` 8.1.1 prüft `has("values")`
+     und wirft `query()`/`run()`-Aufrufe ohne `values`-Feld ab — auch bei
+     parameterlosen Queries — der Appstart brach beim Laden der Einträge
+     ab. → `listEntries()` sendet explizit `values: []`; der Test-Fake
+     modelliert den Vertrag (`requireValues`), neuer Test sichert ihn ab
+     (ohne `values` fehlerhaft, mit `[]` gültig).
+  3. *Konsistenz im selben Bereich:* Beträgeingabe — Fehlermeldung
+     „max. 13 Stellen vor dem Komma“ vs. Regex `\d{1,10}` → Regex auf 13
+     Stellen (long-Cent-Systemgrenze; 10^15 Cent bleibt ein sicheres
+     TypeScript-Integer), Grenztest ergänzt; Browser-Meldung jetzt
+     „installierten Android-App“ (Test-Assertion angepasst).
+  4. *Debug-APK neu gebaut* (21:11) und verifiziert: enthält die neuen
+     Chunks (`main-PYPOQRA3.js` inkl. neuer Meldung) — Installation auf
+     dem Gerät ist der nächste Schritt zur Abnahme.
 
 ## Tasks
 
@@ -122,8 +154,9 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
 - [x] Debug-APK bauen (`gradlew assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`,
       13 MB; Assets == letztem Web-Build verifiziert, Chunk-Hash identisch)
 - [x] Frontend-Prüfungen: lint (grün), build host + mobile (grün), Tests
-      (Vitest: host 2 + mobile 16 — Browser-Abbruchpfad, Cent-Validierung,
-      Geräte-ID-Stabilität, Health-Checks)
+      (Vitest: host 2 + mobile 23 — Browser-Abbruchpfad, Cent-Validierung
+      inkl. 13-Stellen-Grenze, Geräte-ID-Stabilität, Health-Checks,
+      Zoneless-DOM-Tests, Plugin-`values`-Vertrag)
 - [x] .NET-Prüfungen: build (0 Warnungen) + Tests (32/32 grün)
 - [x] Live-Host-Prüfung: HTTP + HTTPS auf Loopback **und** Heimnetz-IP
       (192.168.1.226), HTTPS inkl. CA-Verifizierung (`curl --cacert`) — grün
@@ -133,17 +166,21 @@ Geräte-ID). **Keine** produktive Finanzberechnung im Prototyp.
 - [ ] **Geräte-Abnahme:** Host ausgeschaltet → weiter speichern
 - [x] Task-Index aktualisiert, Commits (`40a8b1f`, `4e44943`, `aa281c2`, `b5606a0`), **gepusht** auf
       `origin/step/2-android-prototyp`, **PR #3** → main (11. Okt. 2026, nach Nutzerfreigabe)
+- [x] Gerätebefund OnePlus 9 umgesetzt (Zoneless-Signale, `values`-Pflichtfeld,
+      Eingabegrenzen), Review-Fix-Commits `6e0b908`, `e902f12` gepusht, Debug-APK
+      neu gebaut und verifiziert (11. Okt. 2026)
 
 ## Offene Punkte / Blocker
 
-- **Android-Gerät ist nicht per ADB verbunden** (`adb devices` leer, kein Android-
-  Gerät in `lsusb`) → die drei Geräte-Abnahmen können nicht durchgeführt werden.
-  Blocker: Gerät per USB anbinden (USB-Debugging + Autorisierung). Bis dahin:
-  Build + APK + Installationsbefehl vorbereitet (README "Mobile App").
-  Browser-/Emulator-Prüfung ist KEIN Ersatz für diese Abnahmen.
-  (Nach Review-Runde 1 am 11. Okt.: Debug-APK neu gebaut — enthält
-  networkSecurityConfig + CapacitorHttp + korrigierten SQLite-Lifecycle;
-  Installation auf dem Gerät ist damit der nächste Schritt zur Abnahme.)
+- **Geräte-Abnahmen ausstehend mit dem neuen APK:** Der OnePlus 9 ist
+  verfügbar (Gerätebefund 11. Okt. durchgeführt), die drei Geräte-Abnahmen
+  müssen mit dem neu gebauten Debug-APK (21:11, enthält Zoneless-Fix +
+  `values`-Fix) durchgeführt werden: neu installieren (README "Mobile App":
+  `adb install -r app-debug.apk`), dann Flugmodus-Speicher/Neustart, Host
+  HTTP/HTTPS, Host-aus-Weiter-speichern. Browser-/Emulator-Prüfung ist KEIN
+  Ersatz für diese Abnahmen.
+  (Zuvor: Gerät war zeitweise nicht per ADB verbunden; Review-Runde 1/2-
+  Korrekturen und beide Gerätebefunde sind jetzt im APK enthalten.)
 - Host-Start über `dotnet run` funktioniert auf dieser Maschine nicht (SDK in
   `/usr/share/dotnet` ohne ASP.NET-Runtime; Apphost-Lösung via `DOTNET_ROOT`;
   siehe README-Hinweis).
