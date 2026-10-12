@@ -75,4 +75,9 @@ Konten, Pools, Kategorien/Unterkategorien, separate Steuerkategorien/Unterkatego
   300 Freizeit, Einnahmen 0) als Integrationstest auf echter SQLite umgesetzt; Idempotenz (gleicher
   Inhalt → Bestätigung ohne Duplikat, gleicher Id + anderer Inhalt → Konflikt) und Persistenz über
   neuen DbContext auf derselben Datei verifiziert. Keine Geräte-Abnahmen in diesem Schritt.
-  Open-Loop: Nutzerabnahme, Push und Merge (Branch `step/3-stammdaten`).
+  Commits: `36a4ed9` (Domain), `4b593d8` (Application), `ca7cf65` (Infrastructure),
+  `12115a5` (Host), `6e7746f` (Tests), `c170355` (Doku).
+  Push + **PR #4** eröffnet (12. Okt. 2026). Open-Loop: Nutzerabnahme und Merge.
+- 12. Okt. 2026: Neue Projekt-Vorgabe (Nutzer): nach Abschluss einer Implementierungsphase
+  automatisch commit + push + PR; Merge nur auf explizite Freigabe. In AGENTS.md (Git) und
+  im Aufgaben-Index verankert.
