@@ -1,7 +1,7 @@
 # Aufgaben-Index — Lario
 _Last updated: 12. Okt. 2026_
 
-**Aktiv:** Schritt 5 (Transfers, Umwidmung und interne Ausgleiche) — implementiert 12. Okt. 2026 auf Branch `step/5-transfers-ausgleiche`; Review bestanden ohne Befunde, 259/259 Tests, 0 Build-Warnungen; PR erstellt, **Abnahme durch Nutzer ausstehend**. Schritt 4 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `375b2ca`, PR #5 (zwei Review-Runden, alle Befunde behoben; 184 .NET-Tests, davon 24 echte-SQLite-Integrationstests). Schritt 3 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `b7d9eab`, PR #4 (drei Review-Runden, alle Befunde behoben; 74 .NET-Tests, davon 16 echte-SQLite-Integrationstests). Schritt 2 ist **abgenommen (11. Okt. 2026)** und **gemerged** (Merge-Commit `61c3a07`, PR #3).
+**Aktiv:** Schritt 5 (Transfers, Umwidmung und interne Ausgleiche) — implementiert 12. Okt. 2026 auf Branch `step/5-transfers-ausgleiche`; Review bestanden ohne Befunde, 259/259 Tests, 0 Build-Warnungen; **PR #6** erstellt, **Abnahme durch Nutzer ausstehend**. Schritt 4 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `375b2ca`, PR #5 (zwei Review-Runden, alle Befunde behoben; 184 .NET-Tests, davon 24 echte-SQLite-Integrationstests). Schritt 3 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `b7d9eab`, PR #4 (drei Review-Runden, alle Befunde behoben; 74 .NET-Tests, davon 16 echte-SQLite-Integrationstests). Schritt 2 ist **abgenommen (11. Okt. 2026)** und **gemerged** (Merge-Commit `61c3a07`, PR #3).
 
 ## Legende
 

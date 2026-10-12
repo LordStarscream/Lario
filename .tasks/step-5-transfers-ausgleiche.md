@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 5 – Transfers, Umwidmung und interne Ausgleiche
 
-**Status:** [erledigt, Abnahme ausstehend] (implementiert 12. Okt. 2026, Review bestanden ohne Befunde)
+**Status:** [erledigt, Abnahme ausstehend] (implementiert 12. Okt. 2026, Review bestanden ohne Befunde, **PR #6** → `main`)
 **Branch:** `step/5-transfers-ausgleiche`
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 5"
 **Verbindliche Spezifikation:** `docs/step-0/rechenvertrag.md` (§3.3 Postings, §3.4 signierte Konto-Pool-Zuordnung, §3.5 offene Ausgleichspositionen, §3.6 freie Verfügbarkeit, §5.2 Transfer/Umwidmung-Status)
