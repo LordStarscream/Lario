@@ -115,11 +115,12 @@ public class MigrationTests
         }
 
         // EF-interne Tabellen (__EFMigrationsHistory, __EFMigrationsLock) ausklammern:
-        // es müssen exakt die acht Fachtabellen existieren.
+        // es müssen exakt die zehn Fachtabellen existieren (acht aus Schritt 3,
+        // dazu ExpenseSplits und SplitTaxMarkings aus Schritt 4).
         var tables = (await db.TableNamesAsync())
             .Where(t => !t.StartsWith("__", StringComparison.Ordinal))
             .ToList();
-        Assert.Equal(8, tables.Count);
+        Assert.Equal(10, tables.Count);
     }
 }
 

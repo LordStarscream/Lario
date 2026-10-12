@@ -17,6 +17,8 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         return await db.Bookings
             .Include(b => b.AccountPostings)
             .Include(b => b.PoolPostings)
+            .Include(b => b.Splits)
+            .ThenInclude(s => s.Tax)
             .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
     }
 
@@ -25,6 +27,8 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         return await db.Bookings
             .Include(b => b.AccountPostings)
             .Include(b => b.PoolPostings)
+            .Include(b => b.Splits)
+            .ThenInclude(s => s.Tax)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
     }

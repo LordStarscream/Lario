@@ -34,6 +34,8 @@ public class LarioDbContext : DbContext
     public DbSet<Booking> Bookings => Set<Booking>();
     public DbSet<AccountPosting> AccountPostings => Set<AccountPosting>();
     public DbSet<PoolPosting> PoolPostings => Set<PoolPosting>();
+    public DbSet<ExpenseSplit> ExpenseSplits => Set<ExpenseSplit>();
+    public DbSet<TaxMarking> SplitTaxMarkings => Set<TaxMarking>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -110,6 +112,13 @@ public class LarioDbContext : DbContext
             e.Property(x => x.Date).IsRequired();
             e.Property(x => x.Note).HasMaxLength(4000);
             e.Property(x => x.BaseRevision).IsRequired();
+            // Finanzierungsmonat nur bei Einnahmen (null sonst);
+            // ISO-Monatsschlüssel "YYYY-MM".
+            e.Property(x => x.FundingMonth)
+                .HasConversion(
+                    v => v.HasValue ? v.Value.ToString() : null,
+                    v => string.IsNullOrEmpty(v) ? (YearMonth?)null : YearMonth.Parse(v))
+                .HasMaxLength(7);
         });
 
         modelBuilder.Entity<AccountPosting>(e =>
@@ -148,6 +157,68 @@ public class LarioDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.PoolId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Teilposten einer Ausgabe (Schritt 4): Primärschlüssel
+        // (Buchung, Teilposten-Id) — die Teilposten-Id ist innerhalb der
+        // Buchung eindeutig (Regel auch in der Domain), global wird die
+        // Buchungszugehörigkeit mitgeschaltet.
+        modelBuilder.Entity<ExpenseSplit>(e =>
+        {
+            e.ToTable("ExpenseSplits");
+            e.HasKey("BookingId", "Id");
+            e.Property(x => x.Id).HasMaxLength(128);
+            e.Property(x => x.Amount).HasConversion(v => v.Cents, v => new Money(v)).IsRequired();
+            e.Property(x => x.PoolId).HasMaxLength(128);
+            e.Property(x => x.CategoryId).HasMaxLength(128);
+            e.Property(x => x.Note).HasMaxLength(4000);
+            e.HasOne<Booking>()
+                .WithMany(b => b.Splits)
+                .HasForeignKey("BookingId")
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Pool>()
+                .WithMany()
+                .HasForeignKey(x => x.PoolId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Category>()
+                .WithMany()
+                .HasForeignKey(x => x.CategoryId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Steuerliche Kennzeichnung eines Teilpostens (Schritt 4): 1:1 zu
+        // einem Teilposten (optional — ein Teilposten kann unmarkiert
+        // sein). Die Kennzeichnung verändert keine Finanzsalden.
+        modelBuilder.Entity<TaxMarking>(e =>
+        {
+            e.ToTable("SplitTaxMarkings");
+            // Schatten-Properties zuerst deklarieren (Typ!), dann als
+            // Schlüssel/FK verwenden. Der Komposit-Schlüssel (SplitId,
+            // BookingId) deckt beide FK-Spalten ab und ist damit korrekt
+            // 1:1 zu ExpenseSplit (Komposit-Key (BookingId, Id)).
+            e.Property<string>("SplitId").HasMaxLength(128);
+            e.Property<string>("BookingId").HasMaxLength(128);
+            e.HasKey(new[] { "SplitId", "BookingId" });
+            e.Property(x => x.Relevant).IsRequired();
+            // Herkunft der Kennzeichnung (explizit / aus Voreinstellung
+            // materialisiert) — Teil des Original-Eingabeinhalts, für die
+            // Idempotenz der Wiederholung gebraucht (Schritt-4-Review P2b).
+            e.Property(x => x.InheritedFromPreset).IsRequired();
+            e.Property(x => x.TaxCategoryId).HasMaxLength(128);
+            e.Property(x => x.MarkedAmount)
+                .HasConversion(
+                    (Money? v) => v.HasValue ? v.Value.Cents : (long?)null,
+                    (long? v) => v.HasValue ? new Money(v.Value) : null)
+                .IsRequired(false);
+            e.Property(x => x.Note).HasMaxLength(4000);
+            e.HasOne<ExpenseSplit>()
+                .WithOne(s => s.Tax)
+                // Reihenfolge muss den Principal-Key (BookingId, Id) von
+                // ExpenseSplit positionsmäßig treffen: Spalte BookingId ->
+                // Principal-BookingId, Spalte SplitId -> Principal-Id.
+                .HasForeignKey<TaxMarking>(new[] { "BookingId", "SplitId" })
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

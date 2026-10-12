@@ -222,12 +222,20 @@ public class BookingJournalTests
                 null,
                 [new AccountPosting { AccountId = "acc-1", Amount = Money.FromCents(500) }],
                 [new PoolPosting { PoolId = "pool-1", Amount = Money.FromCents(500) }]),
-            // Simulierte spätere Ausgabe (Schritt 4): Konto −85, Pool −85.
+            // Simulierte spätere Ausgabe (Schritt 4): Konto −85, Pool −85,
+            // ein Teilposten (Splitregel: Summe = Gesamtbetrag).
             new Booking(
                 "b-2", BookingType.Expense, DateOnly.FromDateTime(new DateTime(2026, 1, 15)),
                 null,
                 [new AccountPosting { AccountId = "acc-1", Amount = Money.FromCents(-85) }],
-                [new PoolPosting { PoolId = "pool-1", Amount = Money.FromCents(-85) }]),
+                [new PoolPosting { PoolId = "pool-1", Amount = Money.FromCents(-85) }],
+                splits: [new ExpenseSplit
+                {
+                    Id = "s-1",
+                    Amount = Money.FromCents(85),
+                    PoolId = "pool-1",
+                    CategoryId = "cat-1",
+                }]),
         ]);
 
         Assert.Equal(Money.FromCents(415), journal.AccountBalance("acc-1"));

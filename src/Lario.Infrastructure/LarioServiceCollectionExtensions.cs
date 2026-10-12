@@ -1,4 +1,5 @@
 using Lario.Application;
+using Lario.Application.Journal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -26,6 +27,8 @@ public static class LarioServiceCollectionExtensions
 
         services.AddScoped<MasterDataAdmin>();
         services.AddScoped<OpeningBalanceService>();
+        services.AddScoped<IncomeService>();
+        services.AddScoped<ExpenseService>();
         services.AddScoped<BalanceQueryService>();
 
         return services;
