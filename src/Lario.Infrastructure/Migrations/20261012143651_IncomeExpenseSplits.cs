@@ -56,18 +56,18 @@ namespace Lario.Infrastructure.Migrations
                 columns: table => new
                 {
                     SplitId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
+                    BookingId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     Relevant = table.Column<bool>(type: "INTEGER", nullable: false),
                     TaxCategoryId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: true),
                     MarkedAmount = table.Column<long>(type: "INTEGER", nullable: true),
-                    Note = table.Column<string>(type: "TEXT", maxLength: 4000, nullable: true),
-                    BookingId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: true)
+                    Note = table.Column<string>(type: "TEXT", maxLength: 4000, nullable: true)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_SplitTaxMarkings", x => x.SplitId);
+                    table.PrimaryKey("PK_SplitTaxMarkings", x => new { x.SplitId, x.BookingId });
                     table.ForeignKey(
-                        name: "FK_SplitTaxMarkings_ExpenseSplits_SplitId_BookingId",
-                        columns: x => new { x.SplitId, x.BookingId },
+                        name: "FK_SplitTaxMarkings_ExpenseSplits_BookingId_SplitId",
+                        columns: x => new { x.BookingId, x.SplitId },
                         principalTable: "ExpenseSplits",
                         principalColumns: new[] { "BookingId", "Id" },
                         onDelete: ReferentialAction.Cascade);
@@ -84,9 +84,9 @@ namespace Lario.Infrastructure.Migrations
                 column: "PoolId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_SplitTaxMarkings_SplitId_BookingId",
+                name: "IX_SplitTaxMarkings_BookingId_SplitId",
                 table: "SplitTaxMarkings",
-                columns: new[] { "SplitId", "BookingId" },
+                columns: new[] { "BookingId", "SplitId" },
                 unique: true);
         }
 

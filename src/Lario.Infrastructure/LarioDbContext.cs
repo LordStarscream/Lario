@@ -193,10 +193,12 @@ public class LarioDbContext : DbContext
         {
             e.ToTable("SplitTaxMarkings");
             // Schatten-Properties zuerst deklarieren (Typ!), dann als
-            // Schlüssel/FK verwenden.
+            // Schlüssel/FK verwenden. Der Komposit-Schlüssel (SplitId,
+            // BookingId) deckt beide FK-Spalten ab und ist damit korrekt
+            // 1:1 zu ExpenseSplit (Komposit-Key (BookingId, Id)).
             e.Property<string>("SplitId").HasMaxLength(128);
             e.Property<string>("BookingId").HasMaxLength(128);
-            e.HasKey("SplitId");
+            e.HasKey(new[] { "SplitId", "BookingId" });
             e.Property(x => x.Relevant).IsRequired();
             e.Property(x => x.TaxCategoryId).HasMaxLength(128);
             e.Property(x => x.MarkedAmount)
@@ -207,7 +209,10 @@ public class LarioDbContext : DbContext
             e.Property(x => x.Note).HasMaxLength(4000);
             e.HasOne<ExpenseSplit>()
                 .WithOne(s => s.Tax)
-                .HasForeignKey<TaxMarking>("SplitId", "BookingId")
+                // Reihenfolge muss den Principal-Key (BookingId, Id) von
+                // ExpenseSplit positionsmäßig treffen: Spalte BookingId ->
+                // Principal-BookingId, Spalte SplitId -> Principal-Id.
+                .HasForeignKey<TaxMarking>(new[] { "BookingId", "SplitId" })
                 .IsRequired(false)
                 .OnDelete(DeleteBehavior.Cascade);
         });

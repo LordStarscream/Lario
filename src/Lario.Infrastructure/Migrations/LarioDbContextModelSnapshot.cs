@@ -144,9 +144,9 @@ namespace Lario.Infrastructure.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
-                    b.HasKey("SplitId");
+                    b.HasKey("SplitId", "BookingId");
 
-                    b.HasIndex("SplitId", "BookingId")
+                    b.HasIndex("BookingId", "SplitId")
                         .IsUnique();
 
                     b.ToTable("SplitTaxMarkings", (string)null);
@@ -343,7 +343,7 @@ namespace Lario.Infrastructure.Migrations
                 {
                     b.HasOne("Lario.Domain.Journal.ExpenseSplit", null)
                         .WithOne("Tax")
-                        .HasForeignKey("Lario.Domain.Journal.TaxMarking", "SplitId", "BookingId")
+                        .HasForeignKey("Lario.Domain.Journal.TaxMarking", "BookingId", "SplitId")
                         .OnDelete(DeleteBehavior.Cascade);
                 });
 

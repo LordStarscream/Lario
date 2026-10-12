@@ -485,6 +485,63 @@ public class ExpensePersistenceTests
         Assert.Equal(0, balances.AccountPoolGap.Cents);
     }
 
+    [Fact(DisplayName = "Kernfall Schritt 4: mehrere gekennzeichnete Splits derselben Buchung speichern und laden")]
+    public async Task MultipleMarkedSplits_SaveAndLoad()
+    {
+        await using var db = new TestDatabase();
+        var service = await SeedAsync(db);
+
+        // Zwei Teilposten, beide steuerlich gekennzeichnet (einer mit
+        // Teilbetrag, einer ohne). Vor der Korrektur des SplitTaxMarkings-
+        // Mappings (Komposit-PK) scheiterte genau dieser Fall mit einem
+        // Tracking-Konflikt, weil der Primärschlüssel effektiv auf der
+        // Buchung lag.
+        var spec = new ExpenseSpec
+        {
+            Id = "eink-2mark",
+            Date = new DateOnly(2026, 10, 12),
+            AccountId = "acc-haupt",
+            TotalAmount = new Money(8_500),
+            Splits =
+            [
+                new ExpenseSplitSpec
+                {
+                    Id = "sp-1",
+                    Amount = new Money(6_500),
+                    PoolId = "pool-flex",
+                    CategoryId = "cat-miete",
+                    Tax = new TaxMarking { Relevant = true, TaxCategoryId = "tax-1", MarkedAmount = new Money(1_000) },
+                },
+                new ExpenseSplitSpec
+                {
+                    Id = "sp-2",
+                    Amount = new Money(2_000),
+                    PoolId = "pool-freizeit",
+                    CategoryId = "cat-freizeit",
+                    Tax = new TaxMarking { Relevant = true, TaxCategoryId = "tax-1" },
+                },
+            ],
+        };
+
+        var result = await service.CreateAsync(spec);
+        Assert.True(result.Created);
+
+        var loaded = await db.Resolve<IBookingRepository>().FindByIdAsync("eink-2mark");
+        Assert.NotNull(loaded);
+        var marked = loaded!.Splits.Where(s => s.Tax is not null).ToList();
+        Assert.Equal(2, marked.Count);
+
+        var m1 = loaded.Splits.Single(s => s.Id == "sp-1").Tax!;
+        Assert.True(m1.Relevant);
+        Assert.Equal("tax-1", m1.TaxCategoryId);
+        Assert.Equal(1_000, m1.MarkedAmount!.Value.Cents);
+
+        var m2 = loaded.Splits.Single(s => s.Id == "sp-2").Tax!;
+        Assert.True(m2.Relevant);
+        Assert.Equal("tax-1", m2.TaxCategoryId);
+        Assert.Null(m2.MarkedAmount);
+    }
+
     [Fact(DisplayName = "Neustart: zweiter Provider findet Buchung, Splits und Kennzeichnung")]
     public async Task Restart_FindsSameBookings()
     {
