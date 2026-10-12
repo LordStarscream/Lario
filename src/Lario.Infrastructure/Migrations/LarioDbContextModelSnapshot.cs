@@ -130,6 +130,9 @@ namespace Lario.Infrastructure.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("InheritedFromPreset")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long?>("MarkedAmount")
                         .HasColumnType("INTEGER");
 

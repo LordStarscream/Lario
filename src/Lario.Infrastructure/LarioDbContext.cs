@@ -200,6 +200,10 @@ public class LarioDbContext : DbContext
             e.Property<string>("BookingId").HasMaxLength(128);
             e.HasKey(new[] { "SplitId", "BookingId" });
             e.Property(x => x.Relevant).IsRequired();
+            // Herkunft der Kennzeichnung (explizit / aus Voreinstellung
+            // materialisiert) — Teil des Original-Eingabeinhalts, für die
+            // Idempotenz der Wiederholung gebraucht (Schritt-4-Review P2b).
+            e.Property(x => x.InheritedFromPreset).IsRequired();
             e.Property(x => x.TaxCategoryId).HasMaxLength(128);
             e.Property(x => x.MarkedAmount)
                 .HasConversion(

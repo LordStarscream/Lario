@@ -46,6 +46,25 @@ public class IncomeExpenseMigrationTests
 
         Assert.Contains("FundingMonth", columns);
     }
+
+    [Fact(DisplayName = "SplitTaxMarkings trägt die neue InheritedFromPreset-Spalte (Review P2b)")]
+    public async Task Migration_AddsInheritedFromPresetColumn()
+    {
+        await using var db = new TestDatabase();
+
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={db.DatabaseFile}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(SplitTaxMarkings);";
+        await using var reader = await command.ExecuteReaderAsync();
+        var columns = new List<string>();
+        while (await reader.ReadAsync())
+        {
+            columns.Add(reader.GetString(1));
+        }
+
+        Assert.Contains("InheritedFromPreset", columns);
+    }
 }
 
 /// <summary>
@@ -134,6 +153,21 @@ public class IncomePersistenceTests
         Assert.False(second.Created);
         Assert.Equal(first.Booking.Id, second.Booking.Id);
         Assert.Single(await db.Resolve<IBookingRepository>().GetAllAsync());
+    }
+
+    [Fact(DisplayName = "Review P2c: default(YearMonth) als Finanzierungsmonat wird verworfen, nichts gespeichert")]
+    public async Task FundingMonth_DefaultYearMonth_IsRejected()
+    {
+        await using var db = new TestDatabase();
+        var service = await SeedAsync(db);
+
+        // default(YearMonth) ist 0000-00 (Konstrutor umgangen) — nicht
+        // null (das wäre die gültige Default-Regel). Der ungültige Wert
+        // muss vor der Materialisierung abgelehnt werden.
+        await Assert.ThrowsAsync<LarioDomainException>(
+            () => service.CreateAsync(Gehalt(fundingMonth: default(YearMonth))));
+
+        Assert.Empty(await db.Resolve<IBookingRepository>().GetAllAsync());
     }
 
     [Fact(DisplayName = "Gleiche Id mit anderem Inhalt ist ein Konflikt; ursprüngliche Buchung bleibt")]
@@ -396,6 +430,194 @@ public class ExpensePersistenceTests
         // (mittlerweile geänderte) Voreinstellung wird nicht neu abgeleitet.
         var repeat = await service.CreateAsync(Kauf());
         Assert.False(repeat.Created);
+        Assert.Single(await db.Resolve<IBookingRepository>().GetAllAsync());
+    }
+
+    [Fact(DisplayName = "Review P1: doppelte Split-Ids in der Wiederholung sind ein Konflikt, keine stille Idempotenz")]
+    public async Task Repeat_WithDuplicateSplitIds_IsConflict()
+    {
+        await using var db = new TestDatabase();
+        var service = await SeedAsync(db);
+
+        await service.CreateAsync(Kauf());
+
+        // Dieselbe Id und dieselbe Gesamtmenge wie das Original, aber
+        // beide Teilposten tragen die Id 'sp-1' statt [sp-1, sp-2]: die
+        // Vorgabe ist kein 1:1-Abbild des Originals. Vor der Korrektur
+        // passte jede Zeile einzeln an dieselbe gespeicherte Zeile und
+        // die Wiederholung wurde still als identisch bestätigt.
+        var duplicate = new ExpenseSpec
+        {
+            Id = "eink-2026-10",
+            Date = new DateOnly(2026, 10, 12),
+            AccountId = "acc-haupt",
+            TotalAmount = new Money(8_500),
+            Splits =
+            [
+                new ExpenseSplitSpec { Id = "sp-1", Amount = new Money(6_500), PoolId = "pool-flex", CategoryId = "cat-miete" },
+                new ExpenseSplitSpec { Id = "sp-1", Amount = new Money(2_000), PoolId = "pool-freizeit", CategoryId = "cat-freizeit" },
+            ],
+        };
+
+        await Assert.ThrowsAsync<DomainConflictException>(
+            () => service.CreateAsync(duplicate));
+
+        // Das Original bleibt unverändert (zwei Teilposten).
+        var existing = await db.Resolve<IBookingRepository>().FindByIdAsync("eink-2026-10");
+        Assert.NotNull(existing);
+        Assert.Equal(2, existing!.Splits.Count);
+        Assert.Single(await db.Resolve<IBookingRepository>().GetAllAsync());
+    }
+
+    [Fact(DisplayName = "Review P2: Umordnung der Split-Ids in der Wiederholung bleibt idempotent (1:1-Abbildung, nicht Reihenfolge)")]
+    public async Task Repeat_WithReorderedSplits_IsIdempotent()
+    {
+        await using var db = new TestDatabase();
+        var service = await SeedAsync(db);
+
+        await service.CreateAsync(Kauf());
+
+        // Dieselben zwei Teilposten in umgekehrter Reihenfolge: zulässige
+        // Wiederholung (die Zuordnung ist 1:1 nach Teilposten-Id, die
+        // Reihenfolge trägt keinen Inhalt).
+        var reordered = new ExpenseSpec
+        {
+            Id = "eink-2026-10",
+            Date = new DateOnly(2026, 10, 12),
+            AccountId = "acc-haupt",
+            TotalAmount = new Money(8_500),
+            Splits =
+            [
+                new ExpenseSplitSpec { Id = "sp-2", Amount = new Money(2_000), PoolId = "pool-freizeit", CategoryId = "cat-freizeit" },
+                new ExpenseSplitSpec { Id = "sp-1", Amount = new Money(6_500), PoolId = "pool-flex", CategoryId = "cat-miete" },
+            ],
+        };
+
+        var repeat = await service.CreateAsync(reordered);
+        Assert.False(repeat.Created);
+        Assert.Single(await db.Resolve<IBookingRepository>().GetAllAsync());
+    }
+
+    [Fact(DisplayName = "Review P2b: Snapshot aus Voreinstellung — Wiederholung mit expliziter Kennzeichnung ist ein Konflikt")]
+    public async Task Repeat_WithExplicitTax_OverPresetSnapshot_IsConflict()
+    {
+        await using var db = new TestDatabase();
+        var service = await SeedAsync(db);
+        var admin = db.Resolve<MasterDataAdmin>();
+
+        // Voreinstellung 'Miete' = steuerlich relevant, tax-1: die Anlage
+        // ohne explizite Kennzeichnung übernimmt sie als Snapshot.
+        await admin.SetTaxPresetAsync("cat-miete", true, "tax-1", inheritToChildren: false);
+        await service.CreateAsync(Kauf());
+
+        var stored = (await db.Resolve<IBookingRepository>().FindByIdAsync("eink-2026-10"))!
+            .Splits.Single(s => s.Id == "sp-1").Tax!;
+        Assert.True(stored.Relevant);
+        Assert.Equal("tax-1", stored.TaxCategoryId);
+        Assert.True(stored.InheritedFromPreset);
+
+        // Die Wiederholung trägt dieselben Kennzeichnungswerte, aber
+        // EXPLIZIT — gegenüber dem Original (keine Kennzeichnung) ist das
+        // ein Inhaltswechsel und kein Idempotenz-Treffer. Vor der
+        // Korrektur wurde die Wiederholung still bestätigt.
+        var explicitRepeat = new ExpenseSpec
+        {
+            Id = "eink-2026-10",
+            Date = new DateOnly(2026, 10, 12),
+            AccountId = "acc-haupt",
+            TotalAmount = new Money(8_500),
+            Splits =
+            [
+                new ExpenseSplitSpec
+                {
+                    Id = "sp-1",
+                    Amount = new Money(6_500),
+                    PoolId = "pool-flex",
+                    CategoryId = "cat-miete",
+                    Tax = new TaxMarking { Relevant = true, TaxCategoryId = "tax-1" },
+                },
+                new ExpenseSplitSpec { Id = "sp-2", Amount = new Money(2_000), PoolId = "pool-freizeit", CategoryId = "cat-freizeit" },
+            ],
+        };
+
+        await Assert.ThrowsAsync<DomainConflictException>(
+            () => service.CreateAsync(explicitRepeat));
+
+        // Die Wiederholung OHNE Kennzeichnung bestätigt dagegen
+        // idempotent (die Voreinstellung kann sich inzwischen geändert
+        // haben — das ist kein Konflikt, sondern derselbe Inhalt).
+        var noTaxRepeat = await service.CreateAsync(Kauf());
+        Assert.False(noTaxRepeat.Created);
+        Assert.Single(await db.Resolve<IBookingRepository>().GetAllAsync());
+    }
+
+    [Fact(DisplayName = "Review P2b: explizit gespeicherte Kennzeichnung — gleiche Wiederholung idempotent, abweichende ist Konflikt")]
+    public async Task Repeat_WithSameExplicitTax_IsIdempotent()
+    {
+        await using var db = new TestDatabase();
+        var service = await SeedAsync(db);
+
+        ExpenseSpec Make(Money markedAmount) => new()
+        {
+            Id = "eink-tax",
+            Date = new DateOnly(2026, 10, 12),
+            AccountId = "acc-haupt",
+            TotalAmount = new Money(10_000),
+            Splits =
+            [
+                new ExpenseSplitSpec
+                {
+                    Id = "sp-1",
+                    Amount = new Money(10_000),
+                    PoolId = "pool-flex",
+                    CategoryId = "cat-miete",
+                    Tax = new TaxMarking
+                    {
+                        Relevant = true,
+                        TaxCategoryId = "tax-1",
+                        MarkedAmount = markedAmount,
+                    },
+                },
+            ],
+        };
+
+        var first = await service.CreateAsync(Make(new Money(1_900)));
+        Assert.True(first.Created);
+
+        var stored = (await db.Resolve<IBookingRepository>().FindByIdAsync("eink-tax"))!
+            .Splits.Single().Tax!;
+        Assert.False(stored.InheritedFromPreset);
+
+        // Exakt dieselbe explizite Kennzeichnung → Idempotenz-Treffer.
+        var second = await service.CreateAsync(Make(new Money(1_900)));
+        Assert.False(second.Created);
+
+        // Abweichende explizite Kennzeichnung → Konflikt.
+        await Assert.ThrowsAsync<DomainConflictException>(
+            () => service.CreateAsync(Make(new Money(2_000))));
+
+        // Explizit → null ist ebenfalls ein Konflikt: null bedeutet
+        // „wirksame Voreinstellung übernehmen" (hier: keine Markierung),
+        // nicht „die gespeicherte explizite Kennzeichnung".
+        var explicitToNull = new ExpenseSpec
+        {
+            Id = "eink-tax",
+            Date = new DateOnly(2026, 10, 12),
+            AccountId = "acc-haupt",
+            TotalAmount = new Money(10_000),
+            Splits =
+            [
+                new ExpenseSplitSpec
+                {
+                    Id = "sp-1",
+                    Amount = new Money(10_000),
+                    PoolId = "pool-flex",
+                    CategoryId = "cat-miete",
+                },
+            ],
+        };
+        await Assert.ThrowsAsync<DomainConflictException>(
+            () => service.CreateAsync(explicitToNull));
         Assert.Single(await db.Resolve<IBookingRepository>().GetAllAsync());
     }
 

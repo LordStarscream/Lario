@@ -49,6 +49,21 @@ public sealed class TaxMarking
     public string? Note { get; init; }
 
     /// <summary>
+    /// True, wenn die Kennzeichnung bei der Erstellung nicht explizit
+    /// angegeben, sondern aus der wirksamen Kategorie-Voreinstellung
+    /// materialisiert wurde (Snapshot). Eine explizit übergebene
+    /// Kennzeichnung trägt false (wird bei <c>ToBooking</c>
+    /// normalisiert — ein vom Aufrufer gesetztes Flag wird nicht
+    /// übernommen).
+    ///
+    /// Die Herkunft ist Teil des Original-Eingabeinhalts und wird für
+    /// die Idempotenz gebraucht: „keine Angabe“ und „explizit angegeben"
+    /// sind verschiedene Eingaben — auch wenn das Ergebnis gleich sein
+    /// kann (Voreinstellung ≙ explizite Kennzeichnung).
+    /// </summary>
+    public bool InheritedFromPreset { get; init; }
+
+    /// <summary>
     /// Prüfungen der Kennzeichnung selbst (ohne Kontext):
     /// <c>Relevant = false</c> erlaubt weder Steuerkategorie noch
     /// Teilbetrag; ein gesetzter Teilbetrag ist nicht negativ.

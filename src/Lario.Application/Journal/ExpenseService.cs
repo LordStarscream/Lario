@@ -72,16 +72,21 @@ public sealed class ExpenseService(
 
     /// <summary>
     /// Prüft, ob die Vorgabe exakt den Inhalt der vorhandenen Buchung
-    /// hat: Fachdatum, Konto, Gesamtbetrag, Notiz und Teilposten
-    /// (multimengen-gleich nach Teilposten-Id; Betrag, Pool, Kategorie
-    /// und Notiz müssen exakt stimmen). Eine explizit übergebene
-    /// Steuerkennzeichnung ist Inhalt der Vorgabe und muss exakt
-    /// stimmen. Eine fehlende Kennzeichnung ist dagegen kein Konflikt:
-    /// eine gespeicherte Kennzeichnung wurde bei der Anlage aus der
-    /// damals wirksamen Voreinstellung materialisiert (Snapshot —
-    /// Voreinstellungen können sich zwischen Original und Wiederholung
-    /// geändert oder entfernt haben; Rechenvertrag: die Rechnung hängt
-    /// nur von den gespeicherten Eingabedaten ab).
+    /// hat: Fachdatum, Konto, Gesamtbetrag, Notiz und Teilposten als
+    /// 1:1-Abbildung nach Teilposten-Id (eindeutige Ids, Betrag, Pool,
+    /// Kategorie und Notiz müssen exakt stimmen). Die Steuerkennzeichnung
+    /// wird mit Herkunft verglichen (<see cref="TaxMatches"/>):
+    /// - gespeicherte Kennzeichnung fehlt → nur eine Wiederholung ohne
+    ///   Kennzeichnung bestätigt (beim Original gab es weder explizite
+    ///   Angabe noch wirksame Voreinstellung);
+    /// - gespeicherte Kennzeichnung aus Voreinstellung → nur eine
+    ///   Wiederholung ohne Kennzeichnung bestätigt (die Original-Eingabe
+    ///   trug keine Kennzeichnung; die Voreinstellung kann sich zwischen
+    ///   Original und Wiederholung geändert oder entfernt haben —
+    ///   Rechenvertrag: die Rechnung hängt nur von den gespeicherten
+    ///   Eingabedaten ab);
+    /// - gespeicherte explizite Kennzeichnung → die Wiederholung muss
+    ///   eine Kennzeichnung mit exakt gleichen Komponenten tragen.
     /// </summary>
     private static bool SpecMatchesBooking(ExpenseSpec spec, Booking booking)
     {
@@ -108,8 +113,18 @@ public sealed class ExpenseService(
             return false;
         }
 
+        // Die eingehenden Split-Ids müssen eindeutig sein: mit Duplikaten
+        // (z. B. [sp-1, sp-1] statt [sp-1, sp-2]) ist die Vorgabe kein
+        // 1:1-Abbild des Originals — auch wenn jede Zeile einzeln gegen
+        // dieselbe gespeicherte Zeile passen würde.
+        var seenSplitIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var split in spec.Splits)
         {
+            if (!seenSplitIds.Add(split.Id))
+            {
+                return false;
+            }
+
             if (!bookingSplits.TryGetValue(split.Id, out var stored))
             {
                 return false;
@@ -123,7 +138,7 @@ public sealed class ExpenseService(
                 return false;
             }
 
-            if (split.Tax is not null && !TaxMatches(split.Tax, stored.Tax))
+            if (!TaxMatches(split.Tax, stored.Tax))
             {
                 return false;
             }
@@ -132,14 +147,33 @@ public sealed class ExpenseService(
         return true;
     }
 
-    private static bool TaxMatches(TaxMarking expected, TaxMarking? stored)
+    /// <summary>
+    /// Vergleicht die Kennzeichnung der Wiederholung (<c>expected</c>;
+    /// null = keine explizite Angabe) mit der gespeicherten
+    /// Kennzeichnung, einschließlich deren Herkunft:
+    /// gespeicherte Kennzeichnung fehlt oder stammt aus einer
+    /// Voreinstellung → nur „keine Angabe“ bestätigt; gespeicherte
+    /// explizite Kennzeichnung → exakt gleiche Komponenten erforderlich.
+    /// </summary>
+    private static bool TaxMatches(TaxMarking? expected, TaxMarking? stored)
     {
         if (stored is null)
         {
-            return false;
+            return expected is null;
         }
 
-        return expected.Relevant == stored.Relevant
+        if (stored.InheritedFromPreset)
+        {
+            // Die Original-Eingabe trug keine Kennzeichnung (Snapshot der
+            // damals wirksamen Voreinstellung): nur eine Wiederholung ohne
+            // Kennzeichnung bestätigt — eine explizite Kennzeichnung ist
+            // ein Inhaltswechsel, auch wenn ihre Werte der gespeicherten
+            // entsprechen.
+            return expected is null;
+        }
+
+        return expected is not null
+            && expected.Relevant == stored.Relevant
             && expected.TaxCategoryId == stored.TaxCategoryId
             && expected.MarkedAmount == stored.MarkedAmount
             && expected.Note == stored.Note;

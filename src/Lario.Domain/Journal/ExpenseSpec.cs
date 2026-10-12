@@ -199,7 +199,7 @@ public sealed class ExpenseSpec
                 PoolId = s.PoolId,
                 CategoryId = s.CategoryId,
                 Note = s.Note,
-                Tax = s.Tax ?? MaterializeEffectivePreset(catalog, s.CategoryId),
+                Tax = ResolveMarking(s, catalog),
             })
             .ToList();
 
@@ -215,6 +215,31 @@ public sealed class ExpenseSpec
     }
 
     /// <summary>
+    /// Ermittelt die zu speichernde Kennzeichnung eines Teilpostens:
+    /// eine explizite Angabe bleibt in ihren Werten unverändert — die
+    /// Herkunft wird auf „explizit“ normalisiert (ein vom Aufrufer
+    /// gesetztes Herkunft-Flag wird nicht übernommen); ohne explizite
+    /// Angabe wird die wirksame Kategorie-Voreinstellung materialisiert
+    /// (Herkunft „Voreinstellung“).
+    /// </summary>
+    private static TaxMarking? ResolveMarking(ExpenseSplitSpec split, MasterDataCatalog catalog)
+    {
+        if (split.Tax is { } tax)
+        {
+            return new TaxMarking
+            {
+                Relevant = tax.Relevant,
+                TaxCategoryId = tax.TaxCategoryId,
+                MarkedAmount = tax.MarkedAmount,
+                Note = tax.Note,
+                InheritedFromPreset = false,
+            };
+        }
+
+        return MaterializeEffectivePreset(catalog, split.CategoryId);
+    }
+
+    /// <summary>
     /// Materialisiert die wirksame Steuer-Voreinstellung einer
     /// Split-Kategorie (öffentlich, weil die Idempotenzprüfung der
     /// Ausgabe dieselbe Materialisierung für Teilposten ohne explizite
@@ -223,7 +248,8 @@ public sealed class ExpenseSpec
     /// - keine wirksame Voreinstellung oder <c>taxRelevant = null</c>
     ///   („nicht festgelegt“) → null (keine Kennzeichnung);
     /// - sonst die Kennzeichnung mit der (optionalen) Steuerkategorie und
-    ///   ohne Teilbetrag (gesamter Splitbetrag markiert).
+    ///   ohne Teilbetrag (gesamter Splitbetrag markiert), markiert mit
+    ///   <c>InheritedFromPreset = true</c> (Herkunft für die Idempotenz).
     /// </summary>
     public static TaxMarking? MaterializeEffectivePreset(MasterDataCatalog catalog, string categoryId)
     {
@@ -243,6 +269,7 @@ public sealed class ExpenseSpec
             TaxCategoryId = preset.TaxRelevant.Value ? preset.TaxCategoryId : null,
             MarkedAmount = null,
             Note = null,
+            InheritedFromPreset = true,
         };
     }
 }
