@@ -1,3 +1,4 @@
+using Lario.Application.Journal;
 using Lario.Domain.Journal;
 
 namespace Lario.Application;
@@ -13,14 +14,21 @@ namespace Lario.Application;
 ///   verhindert nur neue Referenzen, nicht die Bestätigung historischer);
 ///   dieselbe Id mit anderem Inhalt ist ein Konflikt;
 /// - prüft bei tatsächlicher Neuanlage die Vorgabedaten gegen den
-///   Stammdaten-Katalog und speichert Buchung und Postings atomar.
+///   Stammdaten-Katalog und speichert Buchung und Postings atomar;
+/// - speichert zusammen mit der Buchung die internen Ausgleichseffekte
+///   (Rechenvertrag §3.5): ein Anfangsbestand auf einem Konto kann die
+///   Schuldzelle (Konto, Pool) verkleinern und so eine offene
+///   Ausgleichsposition (teilweise) begleichen — der Journalzustand ist
+///   die Wahrheit, die Positionstabelle wird in derselben Transaktion
+///   nachgeführt.
 ///
 /// Der Anfangsbestand ist keine Einnahme: kein Finanzierungsmonat, keine
 /// Zuweisung über Einnahme-Logik (Rechenvertrag §3.7).
 /// </summary>
 public sealed class OpeningBalanceService(
     IMasterDataRepository masterDataRepository,
-    IBookingRepository bookingRepository)
+    IBookingRepository bookingRepository,
+    ISettlementPositionRepository settlementPositionRepository)
 {
     /// <summary>Ergebnis einer Anlage: <see cref="Created"/> ist false bei Idempotenz-Treffer.</summary>
     public sealed record Result(bool Created, Booking Booking);
@@ -68,8 +76,17 @@ public sealed class OpeningBalanceService(
         var catalog = await masterDataRepository.LoadCatalogAsync(cancellationToken);
         spec.ValidateAgainst(catalog);
 
+        var bookings = await bookingRepository.GetAllAsync(cancellationToken);
+        var persistedPositions = await settlementPositionRepository.GetAllAsync(cancellationToken);
+
         var booking = spec.ToBooking();
-        await bookingRepository.AddAsync(booking, cancellationToken);
+
+        var changes = SettlementPositionSync.Plan(
+            bookings, booking, persistedPositions,
+            () => $"set-{Guid.NewGuid():N}");
+
+        await bookingRepository.AddAsync(
+            booking, changes.Select(c => c.Row).ToList(), cancellationToken);
         return new Result(true, booking);
     }
 

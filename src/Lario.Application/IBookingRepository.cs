@@ -21,4 +21,20 @@ public interface IBookingRepository
     /// obliegt dem Aufrufer, siehe <c>OpeningBalanceService</c>).
     /// </summary>
     Task AddAsync(Booking booking, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Fügt eine neue Buchung zusammen mit ihren internen
+    /// Ausgleichseffekten (Rechenvertrag §3.2/§3.5) in einer einzigen
+    /// Transaktion hinzu: Buchung, Postings, Teilposten und
+    /// Positionszustände werden gemeinsam committet — ein Teilkommitt ist
+    /// ausgeschlossen.
+    /// <paramref name="settlements"/> enthält die anzulegenden (Id noch
+    /// nicht gespeichert) bzw. zu aktualisierenden (Id bereits gespeichert)
+    /// Positionen, wie sie aus dem Vorher/Nachher-Vergleich des Journals
+    /// abgeleitet sind; leere Sammlung, wenn die Buchung keine Effekte hat.
+    /// </summary>
+    Task AddAsync(
+        Booking booking,
+        IReadOnlyCollection<SettlementPosition> settlements,
+        CancellationToken cancellationToken = default);
 }
