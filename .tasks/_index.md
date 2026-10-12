@@ -1,7 +1,7 @@
 # Aufgaben-Index — Lario
 _Last updated: 12. Okt. 2026_
 
-**Aktiv:** Schritt 5 (Transfers, Umwidmung und interne Ausgleiche) — gestartet 12. Okt. 2026 auf Branch `step/5-transfers-ausgleiche`. Schritt 4 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `375b2ca`, PR #5 (zwei Review-Runden, alle Befunde behoben; 184 .NET-Tests, davon 24 echte-SQLite-Integrationstests). Schritt 3 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `b7d9eab`, PR #4 (drei Review-Runden, alle Befunde behoben; 74 .NET-Tests, davon 16 echte-SQLite-Integrationstests). Schritt 2 ist **abgenommen (11. Okt. 2026)** und **gemerged** (Merge-Commit `61c3a07`, PR #3).
+**Aktiv:** Schritt 5 (Transfers, Umwidmung und interne Ausgleiche) — implementiert 12. Okt. 2026 auf Branch `step/5-transfers-ausgleiche`; Review bestanden ohne Befunde, 259/259 Tests, 0 Build-Warnungen; PR erstellt, **Abnahme durch Nutzer ausstehend**. Schritt 4 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `375b2ca`, PR #5 (zwei Review-Runden, alle Befunde behoben; 184 .NET-Tests, davon 24 echte-SQLite-Integrationstests). Schritt 3 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `b7d9eab`, PR #4 (drei Review-Runden, alle Befunde behoben; 74 .NET-Tests, davon 16 echte-SQLite-Integrationstests). Schritt 2 ist **abgenommen (11. Okt. 2026)** und **gemerged** (Merge-Commit `61c3a07`, PR #3).
 
 ## Legende
 
@@ -31,7 +31,7 @@ _Last updated: 12. Okt. 2026_
 | 2 | `step-2-android-prototyp` | Früher Android-/LAN-Prototyp: Capacitor-App, SQLite-Adapter, Offline-Nachweis auf echtem Gerät | 1 | **fertig** (11. Okt. 2026; Code + APK + Live-Host-Prüfung; Review-Runden 1–2 + Gerätebefund OnePlus 9 umgesetzt; **alle drei Geräte-Abnahmen bestanden** (OnePlus 9, finales Debug-APK); gepusht, **PR #3** → main, **merged** (`61c3a07`)) |
 | 3 | `step-3-stammdaten` | Stammdaten (Konten/Pools/Kategorien/Steuerkategorien), Anfangsbestand, erste Migration | 0–1 | **PR #4 offen (12. Okt. 2026)** — wartet auf Abnahme/Merge (Branch `step/3-stammdaten`; 58 Tests grün) |
 | 4 | `step-4-einnahmen-ausgaben` | Kernbuchungen: Einnahmen/Ausgaben/Splits, Postings, Steuerkennzeichnung je Teilposten | 3 | **abgenommen (12. Okt. 2026)** — Merge `375b2ca`, PR #5 |
-| 5 | `step-5-transfers-ausgleiche` | Transfers, Umwidmung, interne Ausgleiche, signierte Konto-Pool-Zuordnung | 4 | **in Arbeit** (12. Okt. 2026) |
+| 5 | `step-5-transfers-ausgleiche` | Transfers, Umwidmung, interne Ausgleiche, signierte Konto-Pool-Zuordnung | 4 | **implementiert, Abnahme ausstehend** (12. Okt. 2026; Review ohne Befunde, 259/259 Tests, PR; dokumentierte Abweichung: Umwidmung darf sichtbare negative Poolbestände erzeugen, §3.6) |
 | 6 | — | Korrekturen/Storno, Erstattungen, Kontostandsabgleich, Revisionskonflikte | 5 | geplant |
 | 7 | — | Produktive REST-API (Auth, DTOs, Validierung), Desktop-Ausgabeformular | 3–6 | geplant |
 | 7a | — | PDF-/Bildnachweise in der Hauptanwendung (Upload, Ablage, Zuordnung) | 7 | geplant |

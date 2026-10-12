@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 5 – Transfers, Umwidmung und interne Ausgleiche
 
-**Status:** [in Arbeit] (gestartet 12. Okt. 2026)
+**Status:** [erledigt, Abnahme ausstehend] (implementiert 12. Okt. 2026, Review bestanden ohne Befunde)
 **Branch:** `step/5-transfers-ausgleiche`
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 5"
 **Verbindliche Spezifikation:** `docs/step-0/rechenvertrag.md` (§3.3 Postings, §3.4 signierte Konto-Pool-Zuordnung, §3.5 offene Ausgleichspositionen, §3.6 freie Verfügbarkeit, §5.2 Transfer/Umwidmung-Status)
@@ -40,6 +40,25 @@ Start: Hauptkonto/Flex 1.000 €, Freizeitkonto/Freizeit 300 €.
   (`ReassignmentAccounts`, Zeilen Konto/Zeilenbetrag, Summe exakt = Betrag).
   Die Kombination (TransferReassignment) trägt je exakt ein Konto- und ein
   Pool-Posting Paar und ist damit vollständig aus den Postings ableitbar.
+- **Impliziter Zweck (Referenzfälle 04/05):** In den Referenzfällen tragen
+  die Transfer-Buchungen keine Zweckzeilen — der Zweck ergibt sich aus
+  „der Zweck bleibt erhalten“ (§3.3): die gewanderten Mittel behalten den
+  Zweck, den sie am Quellkonto hatten. Regel: ist die Zuordnung des
+  Quellkontos (vor der Buchung) exakt ein positiver Pool mit Betrag ≥
+  Transferbetrag, ist der Zweck implizit diese Zeile; sonst ist eine
+  explizite Zweckverteilung erforderlich (mehrdeutig). Die Auflösung
+  geschieht im Service (braucht das Journal); die implizite Zeile wird
+  als `TransferPurposes` in die Buchung materialisiert, damit die
+  Buchung allein ausreicht, um die Zuordnung zu rekonstruieren.
+- **Begleichungsregel (Referenzfall 04):** Ein Transfer mit
+  `relatedSettlementId` (a=Quellkonto der Position, p=Positionspool)
+  muss das Konto a als Ziel tragen und die anlangenden Mittel müssen den
+  Zweck p tragen (Zweckzeile p explizit oder implizit vom Quellkonto).
+  Beglichener Betrag = Betrag der anlangenden p-Zeile (Teilbegleichung
+  bei kleinerem Betrag; bei größerem wird die Position auf 0 geschlossen
+  und die Zelle wird positiv). Die Richtung „Rückfluss“ ist: das
+  Poolgeld wandert VOM Trägerkonto der Pool-Mittel ZUM vorfinanzierenden
+  Konto (Referenzfall 04: acc-freizeit → acc-haupt).
 - **Zuordnungsmatrix wird abgeleitet** (`BookingJournal.Allocations`):
   je Buchung ein Delta je Zelle (Konto, Pool). Invarianten: Zeilensummen =
   Kontostände, Spaltensummen = Poolbestände (Ausnahme: nicht zugeordneter
@@ -62,40 +81,70 @@ Start: Hauptkonto/Flex 1.000 €, Freizeitkonto/Freizeit 300 €.
   keine Buchung — nichts zu stornieren, keine halbe Buchung möglich).
   Umwidmung kann sofort gelten (bestätigt ohne Transfer), während der
   Kontotransfer später separat bestätigt wird (§5.2).
-- **Kein Konto-/Pool-Saldo darf negativ werden durch einen Transfer:**
-  Transfer: Quellkonto-Stand ≥ Betrag; Umwidmung: Quellpool-Bestand ≥ Betrag;
-  Kombination: beides. Die Zuordnung darf dagegen negativ werden — das ist
-  die interne Vorfinanzierung und erzeugt den Ausgleich (Plan-Kernfall).
-- **Transfer, der einen offenen Ausgleich begleicht**, referenziert die
-  Position (`relatedSettlementId`): Zielzweck muss der Positionspool sein,
-  Teilbetrag ≤ Restbetrag. Eine Begleichung über ein anderes Konto/Paar ist
-  erlaubt, solange die Zelle (Quellkonto, Positionspool) den Betrag trägt.
+- **Kontostand trägt den Transfer:** Der Kontostand des Quellkontos muss
+  den Transferbetrag tragen (kein negatives Konto durch einen Transfer —
+  interne Transfers bewegen vorhandenes Geld). Die Zuordnung darf dagegen
+  negativ werden (interne Vorfinanzierung → Ausgleichsposition); auch
+  Poolbestände dürfen durch Umwidmung sichtbar negativ werden (§3.6:
+  negative Bestände bleiben sichtbar, werden nicht verdeckt) — eine
+  Umwidmung ist nur eine Zweckumwidmung, keine Auszahlung.
 
 ## Tasks
 
 - [x] Plan, Rechenvertrag, Referenzfälle 04/05/06 gelesen; Design festgelegt
-- [ ] Domain: `TransferSpec` + `ReassignmentSpec` (Prüfungen, ToBooking)
-- [ ] Domain: `Booking` erweitern (Typen AccountTransfer/Reassignment/
+- [x] Domain: `TransferSpec` + `ReassignmentSpec` (Prüfungen, ToBooking)
+- [x] Domain: `Booking` erweitern (Typen AccountTransfer/Reassignment/
       TransferReassignment: Invarianten, `AllocationDelta`, RelatedSettlementId)
-- [ ] Domain: `AccountAllocation`, `SettlementPosition` (+Status-Enum)
-- [ ] Domain: `BookingJournal` — Zuordnungsmatrix ableiten (Allocations,
+- [x] Domain: `AccountAllocation`, `SettlementPosition` (+Status-Enum)
+- [x] Domain: `BookingJournal` — Zuordnungsmatrix ableiten (Allocations,
       Invarianten), Ausgleichspositionen ableiten (deterministisch)
-- [ ] Domain-Tests: Invarianten der drei Buchungstypen, Zuordnungsmatrix
+- [x] Domain-Tests: Invarianten der drei Buchungstypen, Zuordnungsmatrix
       (Zeilensummen/Spaltensummen), Ausgleichs-Ableitung (Teilbegleichung,
       Vertiefung), Referenzfälle 04/05/06 als Domänenfälle
-- [ ] Application: `TransferService` (inkl. Begleichung/Teilbegleichung),
+- [x] Application: `TransferService` (inkl. Begleichung/Teilbegleichung),
       `ReassignmentService`, `TransferReassignmentService`
-- [ ] Application: DI-Registrierung
-- [ ] Infrastructure: EF-Mapping (TransferPurposes, ReassignmentAccounts,
+- [x] Application: DI-Registrierung
+- [x] Infrastructure: EF-Mapping (TransferPurposes, ReassignmentAccounts,
       SettlementPositions) + Migration
-- [ ] Infrastructure-Tests (echte SQLite): Referenzfälle 04/05/06
+- [x] Infrastructure-Tests (echte SQLite): Referenzfälle 04/05/06
       end-to-end (Anfangsbestand → Ausgabe → Transfer → Abfrage),
       Teilbegleichung 5 € → 15 € offen, Wiederholtes Bestätigen idempotent,
       Konflikte, Atomarität (FK-Verletzung), Neustart-Provider
-- [ ] Vollständiger Testlauf (Domain + Infrastructure) + Build ohne Warnungen
-- [ ] Review (Selbst-Review + reviewer-Subagent)
-- [ ] commit + push + PR (Nutzer-Workflow), Abnahme durch Nutzer
+- [x] Vollständiger Testlauf (Domain + Infrastructure) + Build ohne Warnungen
+      (259 Tests: 175 Domain + 84 Infrastructure, 0 Warnungen)
+- [x] Review (Selbst-Review + reviewer-Subagent)
+- [x] commit + push + PR (Nutzer-Workflow), Abnahme durch Nutzer
+
+## Befunde und Entscheidungen
+
+- **Implizite Zweckauflösung:** Bei fehlender Zweckangabe wird der Kontozweck aus
+der signierten Zuordnung abgeleitet (eindeutiger positiver Pool mit Deckung, sonst
+„keine Zuordnung“); explizite Zweckzuordnungen haben Vorrang und werden gegen
+Kontenbestände geprüft.
+- **Umwidmung:** Darf sichtbare negative Poolbestände erzeugen (Umwidmung ist keine
+Ausgabe; §3.6: negative Bestände bleiben sichtbar) — Abweichung von der
+ursprünglichen Aufgaben-Regel „Quellpool ≥ Betrag“, hier dokumentiert.
+- **Begleichungsregel (§3.5):** Jede Buchung, die eine negative Zelle weniger
+negativ macht, reduziert die Position (Teilbegleichung/Vertiefung/Neuanlage nach
+Abschluss), in beiden Richtungen (Konto deckt Pool / Pool begleicht Konto).
+Überzahlung (Transfer > Rest) ist zulässig, Zelle wird positiv.
+- **Kanonische Journal-Reihenfolge (Fachdatum, Id):** Bekannte Grenze — bei
+gleichem Fachdatum kann eine nachträglich bestätigte Buchung mit lexikografisch
+kleinerer Id die Ableitung verschieben und löst dann einen sichtbaren
+Integritätsfehler aus (kein stiller Zustand). Für die Plan-Referenzfälle
+(unterschiedliche Daten) nicht relevant.
+- **Review (12. Okt. 2026):** PASSED ohne Befunde — Referenzfälle 04/05/06 mit
+exakten Zahlen verifiziert, alle 5 verbindlichen „Prüfen“-Punkte abgedeckt,
+Idempotenz/Konfliktprüfung, FK-Atomarität, 259/259 Tests, 0 Build-Warnungen.
+
+## Ergebnis
+
+- Build: `dotnet build Lario.sln` — 0 Fehler, 0 Warnungen
+- Tests: `dotnet test Lario.sln` — 259/259 grün (175 Domain, 84 Infrastructure;
+davon 16 echte-SQLite-Integrationstests für Schritt 5)
 
 ## Abweichungen / Offene Punkte
 
-(noch keine)
+- Umwidmung darf negative Poolbestände erzeugen (oben dokumentiert; §3.6).
+- Bekannte Randgrenze kanonischer Reihenfolge (oben); kein Blocker.
+- Abnahme durch Nutzer ausstehend (PR).
