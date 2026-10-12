@@ -128,3 +128,16 @@ Konten, Pools, Kategorien/Unterkategorien, separate Steuerkategorien/Unterkatego
   (aktives Kind ohne eigene Vorbelegung), transparente archivierte Blockier-Vorfahrin,
   Umbenennen (nur aktiv, Id/Revision/Trim), Reaktivieren (Status + Revision, Doppel-
   Reaktivierung abgelehnt). Alle grün: **73 laufende Tests** (49 Domain, 24 Infrastructure).
+- 12. Okt. 2026: Dritte Review-Runde (Stand `8c0c78c`): Vererbungsfix als korrekt
+  bestätigt; ein neuer P2 verblieb — **Reaktivierung einer Kategorie mit inaktiver
+  Steuerkategorie in der historischen Voreinstellung**: `UnarchiveCategory` machte die
+  (während der Archivierung historische) Voreinstellung ungeprüft wieder zur aktuellen
+  Referenz und bot damit die archivierte Steuerkategorie erneut als Vorbelegung an.
+  Korrektur: `UnarchiveCategory` prüft jetzt, dass die eigene Voreinstellung keine
+  inaktive Steuerkategorie referenziert (symmetrisch zur Archivierung, die durch
+  aktive Referenzen blockiert wird). Da Voreinstellungen — wie Namen — nur an aktiven
+  Kategorien änderbar sind, ist der Freischaltungsweg die Reaktivierung der
+  Steuerkategorie; das steht in der Fehlermeldung. Regressionstest mit der exakten
+  Review-Abfolge (Blockade, Kategorie bleibt archiviert, Freischaltung über
+  Steuerkategorie, historische Voreinstellung bleibt unverändert und wieder wirksam).
+  Alle grün: **74 laufende Tests** (50 Domain, 24 Infrastructure).
