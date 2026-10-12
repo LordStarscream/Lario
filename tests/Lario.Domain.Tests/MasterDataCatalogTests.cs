@@ -231,6 +231,37 @@ public class MasterDataCatalogTests
         // Bereits aktiv -> abgelehnt.
         Assert.Throws<LarioDomainException>(() => catalog.UnarchivePool("pool-1"));
     }
+
+    [Fact(DisplayName = "Reaktivieren: Kategorie mit inaktiver Steuerkategorie in der Voreinstellung wird blockiert; Reaktivierung der Steuerkategorie schaltet frei")]
+    public void UnarchiveCategory_InactivePresetReference_IsBlocked()
+    {
+        var catalog = new MasterDataCatalog([], [], [], []);
+        catalog.CreateTaxCategory("tax-1", "Elten");
+        catalog.CreateCategory("cat-1", "Wohnen");
+        catalog.SetTaxPreset("cat-1", taxRelevant: true, taxCategoryId: "tax-1", inheritToChildren: false);
+
+        // Kategorie archivieren -> die Voreinstellung wird zum historischen
+        // Verweis, die Steuerkategorie darf danach archiviert werden.
+        catalog.ArchiveCategory("cat-1");
+        catalog.ArchiveTaxCategory("tax-1");
+
+        // Reaktivierung der Kategorie würde die inaktive Steuerkategorie erneut
+        // als aktuelle Vorbelegung bereitstellen -> abgelehnt; die Kategorie
+        // bleibt archiviert (keine Teiländerung).
+        Assert.Throws<LarioDomainException>(() => catalog.UnarchiveCategory("cat-1"));
+        Assert.Equal(EntityStatus.Archived, catalog.FindCategory("cat-1")!.Status);
+
+        // Freischaltung: Steuerkategorie zuerst reaktivieren, dann die Kategorie.
+        catalog.UnarchiveTaxCategory("tax-1");
+        catalog.UnarchiveCategory("cat-1");
+        Assert.Equal(EntityStatus.Active, catalog.FindCategory("cat-1")!.Status);
+
+        // Die historische Voreinstellung bleibt unverändert erhalten und ist
+        // mit der Reaktivierung wieder die wirksame Vorbelegung.
+        var effective = catalog.ResolveEffectivePreset("cat-1");
+        Assert.NotNull(effective);
+        Assert.Equal("tax-1", effective!.TaxCategoryId);
+    }
 }
 
 /// <summary>
