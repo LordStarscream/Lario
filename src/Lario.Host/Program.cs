@@ -1,6 +1,7 @@
 using System.Net;
 using System.Reflection;
 using Lario.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 
 // Content-Root auf den App-Output legen, damit die statische Weboberfläche
 // (wwwroot aus frontend/dist/host, siehe Lario.Host.csproj) unabhängig vom
@@ -16,8 +17,8 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 // ASPNETCORE_URLS deterministisch ist:
 //   Lario:Http:Address  (Default 127.0.0.1; "0.0.0.0" für den Heimnetz-Zugang)
 //   Lario:Http:Port     (Default 8080)
-//   Lario:Https:Address (Default 127.0.0.1)
-//   Lario:Https:Port    (Default 8443)
+//   Lario:Https:Address  (Default 127.0.0.1)
+//   Lario:Https:Port     (Default 8443)
 //   Lario:Https:CertificateFile / Lario:Https:CertificateKeyFile
 //     (PEM; der HTTPS-Endpunkt wird nur aktiviert, wenn beide gesetzt sind).
 // Zertifikatsvertrauen auf dem Gerät: das Zertifikat (oder dessen CA) muss
@@ -48,13 +49,24 @@ builder.WebHost.UseKestrel(options =>
 
 builder.Services.AddOpenApi();
 
-var app = builder.Build();
-
 // Datenablage deterministisch auflösen (Konfiguration, XDG_DATA_HOME oder
 // ~/.local/share) und beim Start anlegen (idempotent: Neustart findet die
 // bestehende Ablage wieder, es entsteht keine zweite). Die SQLite-Datei
-// selbst wird ab Schritt 3 dort abgelegt.
+// selbst liegt ab Schritt 3 dort.
 var dataPaths = LarioDataPaths.Resolve(builder.Configuration["Lario:DataDirectory"]).EnsureCreated();
+
+// Datenschicht (Schritt 3): EF Core / SQLite + Repositories +
+// Anwendungsfälle. Die produktive REST-API folgt in Schritt 7.
+builder.Services.AddLarioData($"Data Source={dataPaths.DatabaseFilePath}");
+
+var app = builder.Build();
+
+// Erste Migration (und spätere) anwenden; ist ohne offene Migration ein No-op.
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<LarioDbContext>();
+    db.Database.Migrate();
+}
 
 var assembly = Assembly.GetExecutingAssembly();
 var version = assembly.GetName().Version?.ToString(3) ?? "0.0.0";

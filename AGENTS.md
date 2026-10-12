@@ -101,7 +101,7 @@ Ein Schritt mit offenen Pflichtabnahmen ist nicht vollständig abgenommen. Tests
 
 - Für Implementierung möglichst separater Branch `step/<nummer>-<kurzname>`; vorhandenen Nutzerbranch respektieren.
 - Nur auftragsbezogene Änderungen stagen. Kleine aussagekräftige Commits.
-- Push, PR und Merge nur soweit im jeweiligen Nutzerauftrag autorisiert. Keine automatische Zusammenführung mit main.
+- Nach Abschluss einer Implementierungsphase automatisch: Commits auf dem `step/…`-Branch, Push und PR-Anlage (Nutzerfreigabe 12. Okt. 2026). Merge in `main` nur auf explizite Nutzerfreigabe — keine automatische Zusammenführung.
 - Kein `reset --hard`, `clean -fd` oder Force-Push ohne ausdrücklichen Auftrag.
 - Keine echten Finanzdaten, Belege, DB-/Backupdateien, Tokens, TLS-Privatschlüssel, Android-Signierschlüssel oder pi-Sessionexporte committen. Synthetische Testdaten verwenden; erforderliche .gitignore beim Gerüstaufbau ergänzen.
 - Keine automatische Sitzungspublikation. Entwicklungsbefehle und Abhängigkeiten nachvollziehbar halten.

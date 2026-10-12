@@ -26,12 +26,12 @@ Patchstände werden bei Upgrades bewusst geändert und in Commit-Nachrichten beg
 Lario.slnx                 Solution (net10)
 src/
   Lario.Domain/            Werte, Regeln, Invarianten — keine HTTP/EF/UI-Abhängigkeit
-  Lario.Application/       Anwendungsfälle, Domain + gezielte Schnittstellen
-  Lario.Infrastructure/    Datenablage-Pfade (EF Core 10 / SQLite ab Schritt 3)
+  Lario.Application/       Anwendungsfälle, Domain + gezielte Schnittstellen (ab Schritt 3)
+  Lario.Infrastructure/    EF Core 10 / SQLite, Migrationen, Datenablage-Pfade (ab Schritt 3)
   Lario.Host/              API, Web-UI (wwwroot), /api/health, /api/version
 tests/
-  Lario.Domain.Tests/      xUnit-Tests: Money (24)
-  Lario.Infrastructure.Tests/  xUnit-Tests: LarioDataPaths (8)
+  Lario.Domain.Tests/      xUnit-Tests: Money, Stammdaten-Invarianten, Anfangsbestands-Regeln (34)
+  Lario.Infrastructure.Tests/  xUnit-Tests: Datenpfade, SQLite-Persistenz/Idempotenz (24)
 frontend/                  Angular-Workspace
   apps/host/               Web-App (Build → src/Lario.Host/wwwroot)
   apps/mobile/             Android-App (Capacitor; Browser-Vorschau via npm start:mobile)
@@ -224,5 +224,28 @@ Offline-Dauertest (Speichern, App-Kill, Neustart, Wiederfinden), Host über
 LAN erreichen (HTTP und HTTPS mit installiertem Zertifikat), bei
 ausgeschaltetem Host weiter speichern.
 
-Nächster Schritt: 3 — Datenbank und Grund-API (EF Core 10, SQLite, Migrationen).
+**Schritt 3 (Stammdaten, Anfangsbestand, erste Migration): implementiert** (12. Okt. 2026),
+Branch `step/3-stammdaten` — wartet auf Nutzerabnahme/Push/Merge
+(Details: `.tasks/step-3-stammdaten.md`):
+
+- **Stammdaten (Domain):** Konten (Typ, Zinsflagge), Pools, Kategorien/Unterkategorien,
+  separate Steuerkategorien/Unterkategorien und vererbbare Steuer-Voreinstellungen
+  (eigene explizite Voreinstellung gewinnt; sonst Vererbung vom nächsten Vorfahren mit
+  `inheritToChildren=true`). Zyklus- und Referenzprüfung, Archivierung statt Löschung
+  (Statuswechsel erhöht `baseRevision`).
+- **Journal-Kern:** `Booking` + signierte `AccountPosting`/`PoolPosting` (Cent, `long`),
+  Anfangsbestand als Buchungstyp `OpeningBalance` (Stichtag + explizite Pool-Verteilung;
+  sichtbarer nicht zugeordneter Rest; **keine Einnahme**). Alle Salden werden aus dem
+  Journal abgeleitet — keine gesondert gepflegten Saldo-Felder (Rechenvertrag §3.2/§3.7).
+- **Anwendungsfälle:** `MasterDataAdmin` (Anlage/Archivierung/Voreinstellungen),
+  `OpeningBalanceService` (idempotent: gleicher Id + gleicher Inhalt → Bestätigung ohne
+  Duplikat; gleicher Id + anderer Inhalt → sichtbarer Konflikt), `BalanceQueryService`.
+- **Datenhaltung:** EF Core 10 + SQLite, erste Migration (`Migrations/`), `Migrate()` bei
+  Hoststart. Plan-Referenzfall als Integrationstest auf echter SQLite: Hauptkonto 1.000 €,
+  700 € Flex + 300 € Freizeit → Kontosumme = zugeordnete Summe = 1.000 €, Einnahmen 0 €;
+  Teilzuordnung lässt sichtbaren Rest; Wiederholung erzeugt keine zweite Buchung.
+- **Tests:** `dotnet test Lario.slnx` → 58/58 grün (Domain 34, Infrastructure 24,
+  davon 16 echte-SQLite-Integrationstests).
+
+Nächster Schritt: 4 — Einnahmen und Ausgaben.
 Details: `.tasks/_index.md`.
