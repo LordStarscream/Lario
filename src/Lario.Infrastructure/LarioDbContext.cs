@@ -36,6 +36,9 @@ public class LarioDbContext : DbContext
     public DbSet<PoolPosting> PoolPostings => Set<PoolPosting>();
     public DbSet<ExpenseSplit> ExpenseSplits => Set<ExpenseSplit>();
     public DbSet<TaxMarking> SplitTaxMarkings => Set<TaxMarking>();
+    public DbSet<PoolAllocation> TransferPurposes => Set<PoolAllocation>();
+    public DbSet<AccountAllocation> ReassignmentAccounts => Set<AccountAllocation>();
+    public DbSet<SettlementPosition> SettlementPositions => Set<SettlementPosition>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -119,6 +122,8 @@ public class LarioDbContext : DbContext
                     v => v.HasValue ? v.Value.ToString() : null,
                     v => string.IsNullOrEmpty(v) ? (YearMonth?)null : YearMonth.Parse(v))
                 .HasMaxLength(7);
+            // Begleichungsreferenz nur bei Kontotransfers (null sonst).
+            e.Property(x => x.RelatedSettlementId).HasMaxLength(128);
         });
 
         modelBuilder.Entity<AccountPosting>(e =>
@@ -184,6 +189,81 @@ public class LarioDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.CategoryId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Zweckverteilung eines Kontotransfers (Schritt 5): eine Buchung
+        // fasst denselben Pool maximal einmal (Regel auch in der Domain).
+        modelBuilder.Entity<PoolAllocation>(e =>
+        {
+            e.ToTable("TransferPurposes");
+            e.HasKey("BookingId", "PoolId");
+            e.Property(x => x.PoolId).HasMaxLength(128);
+            e.Property(x => x.Amount).HasConversion(v => v.Cents, v => new Money(v)).IsRequired();
+            e.HasOne<Booking>()
+                .WithMany(b => b.TransferPurposes)
+                .HasForeignKey("BookingId")
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Pool>()
+                .WithMany()
+                .HasForeignKey(x => x.PoolId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Kontoverteilung einer Umwidmung (Schritt 5): eine Buchung fasst
+        // dasselbe Konto maximal einmal (Regel auch in der Domain).
+        modelBuilder.Entity<AccountAllocation>(e =>
+        {
+            e.ToTable("ReassignmentAccounts");
+            e.HasKey("BookingId", "AccountId");
+            e.Property(x => x.AccountId).HasMaxLength(128);
+            e.Property(x => x.Amount).HasConversion(v => v.Cents, v => new Money(v)).IsRequired();
+            e.HasOne<Booking>()
+                .WithMany(b => b.ReassignmentAccounts)
+                .HasForeignKey("BookingId")
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Account>()
+                .WithMany()
+                .HasForeignKey(x => x.AccountId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Interne Ausgleichspositionen (Schritt 5, Rechenvertrag §3.5):
+        // persistente Ansicht des Journals mit stabiler eigener Id. Die
+        // Episode (Konto, Pool, erstellende Buchung) ist eindeutig.
+        modelBuilder.Entity<SettlementPosition>(e =>
+        {
+            e.ToTable("SettlementPositions");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(128);
+            e.Property(x => x.SourceAccountId).HasMaxLength(128);
+            e.Property(x => x.TargetPoolId).HasMaxLength(128);
+            e.Property(x => x.CreatedByBookingId).HasMaxLength(128);
+            e.Property(x => x.SettledByBookingId).HasMaxLength(128);
+            e.Property(x => x.Amount).HasConversion(v => v.Cents, v => new Money(v)).IsRequired();
+            e.Property(x => x.RestAmount).HasConversion(v => v.Cents, v => new Money(v)).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(16).IsRequired();
+            e.Property(x => x.CreatedDate).IsRequired();
+            e.Property(x => x.Note).HasMaxLength(4000);
+            e.HasOne<Account>()
+                .WithMany()
+                .HasForeignKey(x => x.SourceAccountId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Pool>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetPoolId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Booking>()
+                .WithMany()
+                .HasForeignKey(x => x.CreatedByBookingId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Booking>()
+                .WithMany()
+                .HasForeignKey(x => x.SettledByBookingId)
+                .OnDelete(DeleteBehavior.Restrict);
+            // Eine Zelle trägt zu einem Zeitpunkt maximal eine Episode
+            // pro erstellender Buchung; die Episode ist identisch.
+            e.HasIndex(x => new { x.SourceAccountId, x.TargetPoolId, x.CreatedByBookingId })
+                .IsUnique();
         });
 
         // Steuerliche Kennzeichnung eines Teilpostens (Schritt 4): 1:1 zu

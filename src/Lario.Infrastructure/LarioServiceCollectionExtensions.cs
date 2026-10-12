@@ -24,12 +24,17 @@ public static class LarioServiceCollectionExtensions
 
         services.AddScoped<IMasterDataRepository, MasterDataRepository>();
         services.AddScoped<IBookingRepository, BookingRepository>();
+        services.AddScoped<ISettlementPositionRepository, SettlementPositionRepository>();
 
         services.AddScoped<MasterDataAdmin>();
         services.AddScoped<OpeningBalanceService>();
         services.AddScoped<IncomeService>();
         services.AddScoped<ExpenseService>();
+        services.AddScoped<TransferService>();
+        services.AddScoped<ReassignmentService>();
+        services.AddScoped<TransferReassignmentService>();
         services.AddScoped<BalanceQueryService>();
+        services.AddScoped<SettlementQueryService>();
 
         return services;
     }
