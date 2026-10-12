@@ -108,3 +108,23 @@ Konten, Pools, Kategorien/Unterkategorien, separate Steuerkategorien/Unterkatego
   archivierten Kategorie (Domain). Alle grün: **69 laufende Tests** (45 Domain, 24
   Infrastructure; 16 davon echte-SQLite-Integrationstests). Smoke-Test: Host startet in
   Development und Production, OpenAPI-Fläche = Health/Version, Frontend wird ausgeliefert.
+- 12. Okt. 2026: Zweite Review-Runde (reviewer, Stand `4ed274c`): P1, Idempotenz-
+  Reihenfolge und HTTP-Datumsbefund als korrigiert bestätigt. Ein P2 verblieb:
+  **Vererbung an aktive Unterkategorien** — eine archivierte Elternkategorie mit
+  vererbender Voreinstellung lieferte über `ResolveEffectivePreset` weiterhin die
+  (nun archivierte) Steuerkategorie als wirksame Vorbelegung für aktive Kinder.
+  Korrektur: `ResolveEffectivePreset` überspringt archivierte Vorfahrinnen (historischer
+  Verweis, keine aktive Konfiguration — Regel: archivierte Entitäten liefern keine neuen
+  Referenzen); der Pfad wird über sie fortgesetzt, die historische Voreinstellung bleibt
+  erhalten. Damit ist die Archivierungsprüfung der Steuerkategorie (aktive eigene
+  Voreinstellungen blockieren) mit der Auflösung wirksamer Voreinstellungen konsistent:
+  nach einer erlaubten Archivierung referenziert keine aktive Kategorie die Steuerkategorie
+  mehr wirksam. Zusätzlich: Doku-Befund des Reviewers (PR-Body behauptete `Unarchive`/
+  Umbenennen, die nicht existierten) — statt die Beschreibung zu kürzen, wurden die
+  Plan-Abnahme „angelegt, umbenannt, archiviert und reaktiviert“ **implementiert**:
+  `Rename{Account,Pool,Category,TaxCategory}` (nur aktiv; Id stabil; Revision +1; Name
+  archivierter Entitäten wird nicht umgeschrieben) und `Unarchive{...}` (nur archiviert;
+  Revision +1) im Katalog und in `MasterDataAdmin`. Neue Domain-Tests: Review-Abfolge
+  (aktives Kind ohne eigene Vorbelegung), transparente archivierte Blockier-Vorfahrin,
+  Umbenennen (nur aktiv, Id/Revision/Trim), Reaktivieren (Status + Revision, Doppel-
+  Reaktivierung abgelehnt). Alle grün: **73 laufende Tests** (49 Domain, 24 Infrastructure).
