@@ -334,6 +334,107 @@ public sealed class MasterDataCatalog
     }
 
     // ------------------------------------------------------------------
+    // Umbenennen / Reaktivieren
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Benennt eine Stammdaten-Entität um. Umbenannt werden kann nur,
+    /// was <b>aktiv</b> ist: Der Name einer archivierten Entität gehört
+    /// zum historischen Verweis und wird nicht durch spätere Änderungen
+    /// umgeschrieben. Die Id bleibt stabil; die Revision erhöht sich um 1.
+    /// </summary>
+    public void RenameAccount(string id, string newName)
+    {
+        var account = _accounts.GetValueOrDefault(id)
+            ?? throw new InvalidReferenceException($"Unbekanntes Konto '{id}'.");
+        RenamePreconditions(account, newName, "Konto");
+        account.Name = newName.Trim();
+        account.BaseRevision++;
+    }
+
+    public void RenamePool(string id, string newName)
+    {
+        var pool = _pools.GetValueOrDefault(id)
+            ?? throw new InvalidReferenceException($"Unbekannter Pool '{id}'.");
+        RenamePreconditions(pool, newName, "Pool");
+        pool.Name = newName.Trim();
+        pool.BaseRevision++;
+    }
+
+    public void RenameCategory(string id, string newName)
+    {
+        var category = _categories.GetValueOrDefault(id)
+            ?? throw new InvalidReferenceException($"Unbekannte Kategorie '{id}'.");
+        RenamePreconditions(category, newName, "Kategorie");
+        category.Name = newName.Trim();
+        category.BaseRevision++;
+    }
+
+    public void RenameTaxCategory(string id, string newName)
+    {
+        var taxCategory = _taxCategories.GetValueOrDefault(id)
+            ?? throw new InvalidReferenceException($"Unbekannte Steuerkategorie '{id}'.");
+        RenamePreconditions(taxCategory, newName, "Steuerkategorie");
+        taxCategory.Name = newName.Trim();
+        taxCategory.BaseRevision++;
+    }
+
+    private static void RenamePreconditions(MasterDataEntity entity, string? newName, string label)
+    {
+        RequireNonEmpty(newName, $"{label}-Name");
+        if (entity.Status != EntityStatus.Active)
+        {
+            throw new LarioDomainException(
+                $"{label} '{entity.Id}' ist archiviert; der Name historischer Daten " +
+                "wird nicht umgeschrieben.");
+        }
+    }
+
+    /// <summary>
+    /// Reaktiviert eine archivierten Stammdaten-Entität (Umkehr von
+    /// Archive). Die Revision erhöht sich um 1; die Entität ist danach
+    /// wieder für neue Daten referenzierbar.
+    /// </summary>
+    public void UnarchiveAccount(string id)
+    {
+        var account = _accounts.GetValueOrDefault(id)
+            ?? throw new InvalidReferenceException($"Unbekanntes Konto '{id}'.");
+        Unarchive(account);
+    }
+
+    public void UnarchivePool(string id)
+    {
+        var pool = _pools.GetValueOrDefault(id)
+            ?? throw new InvalidReferenceException($"Unbekannter Pool '{id}'.");
+        Unarchive(pool);
+    }
+
+    public void UnarchiveCategory(string id)
+    {
+        var category = _categories.GetValueOrDefault(id)
+            ?? throw new InvalidReferenceException($"Unbekannte Kategorie '{id}'.");
+        Unarchive(category);
+    }
+
+    public void UnarchiveTaxCategory(string id)
+    {
+        var taxCategory = _taxCategories.GetValueOrDefault(id)
+            ?? throw new InvalidReferenceException($"Unbekannte Steuerkategorie '{id}'.");
+        Unarchive(taxCategory);
+    }
+
+    private static void Unarchive(MasterDataEntity entity)
+    {
+        if (entity.Status != EntityStatus.Archived)
+        {
+            throw new LarioDomainException($"Entität '{entity.Id}' ist bereits aktiv.");
+        }
+
+        entity.Status = EntityStatus.Active;
+        entity.BaseRevision++;
+    }
+
+    // ------------------------------------------------------------------
     // Interne Prüfungen
     // ------------------------------------------------------------------
 

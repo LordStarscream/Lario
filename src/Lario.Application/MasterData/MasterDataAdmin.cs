@@ -4,10 +4,10 @@ namespace Lario.Application;
 
 /// <summary>
 /// Anwendungsfälle für die Stammdaten-Einrichtung (Schritt 3): Anlage,
-/// Archivierung und Steuer-Voreinstellungen. Jeder Aufruf lädt den
-/// Katalog, wendet die Änderung über die Domain-Regeln an und persistiert
-/// die geänderte Entität. Bei einem Fehler bleibt der vorherige Stand
-/// erhalten.
+/// Umbenennen, Archivierung, Reaktivierung und Steuer-Voreinstellungen.
+/// Jeder Aufruf lädt den Katalog, wendet die Änderung über die
+/// Domain-Regeln an und persistiert die geänderte Entität. Bei einem
+/// Fehler bleibt der vorherige Stand erhalten.
 /// </summary>
 public sealed class MasterDataAdmin(IMasterDataRepository repository)
 {
@@ -32,6 +32,26 @@ public sealed class MasterDataAdmin(IMasterDataRepository repository)
         await repository.SaveAccountAsync(catalog.FindAccount(id)!, cancellationToken);
     }
 
+    /// <summary>
+    /// Benennt ein aktives Konto um; die Id bleibt stabil. Archivierte
+    /// Konten werden nicht umbenannt (Name gehört zum historischen Verweis).
+    /// </summary>
+    public async Task RenameAccountAsync(
+        string id, string newName, CancellationToken cancellationToken = default)
+    {
+        var catalog = await repository.LoadCatalogAsync(cancellationToken);
+        catalog.RenameAccount(id, newName);
+        await repository.SaveAccountAsync(catalog.FindAccount(id)!, cancellationToken);
+    }
+
+    /// <summary>Reaktiviert ein archiviertes Konto.</summary>
+    public async Task UnarchiveAccountAsync(string id, CancellationToken cancellationToken = default)
+    {
+        var catalog = await repository.LoadCatalogAsync(cancellationToken);
+        catalog.UnarchiveAccount(id);
+        await repository.SaveAccountAsync(catalog.FindAccount(id)!, cancellationToken);
+    }
+
     // ------------------------------------------------------------------
     // Pools
     // ------------------------------------------------------------------
@@ -48,6 +68,26 @@ public sealed class MasterDataAdmin(IMasterDataRepository repository)
     {
         var catalog = await repository.LoadCatalogAsync(cancellationToken);
         catalog.ArchivePool(id);
+        await repository.SavePoolAsync(catalog.FindPool(id)!, cancellationToken);
+    }
+
+    /// <summary>
+    /// Benennt einen aktiven Pool um; die Id bleibt stabil. Archivierte
+    /// Pools werden nicht umbenannt (Name gehört zum historischen Verweis).
+    /// </summary>
+    public async Task RenamePoolAsync(
+        string id, string newName, CancellationToken cancellationToken = default)
+    {
+        var catalog = await repository.LoadCatalogAsync(cancellationToken);
+        catalog.RenamePool(id, newName);
+        await repository.SavePoolAsync(catalog.FindPool(id)!, cancellationToken);
+    }
+
+    /// <summary>Reaktiviert einen archivierten Pool.</summary>
+    public async Task UnarchivePoolAsync(string id, CancellationToken cancellationToken = default)
+    {
+        var catalog = await repository.LoadCatalogAsync(cancellationToken);
+        catalog.UnarchivePool(id);
         await repository.SavePoolAsync(catalog.FindPool(id)!, cancellationToken);
     }
 
@@ -71,6 +111,26 @@ public sealed class MasterDataAdmin(IMasterDataRepository repository)
         await repository.SaveCategoryAsync(catalog.FindCategory(id)!, cancellationToken);
     }
 
+    /// <summary>
+    /// Benennt eine aktive Kategorie um; die Id bleibt stabil. Archivierte
+    /// Kategorien werden nicht umbenannt (Name gehört zum historischen Verweis).
+    /// </summary>
+    public async Task RenameCategoryAsync(
+        string id, string newName, CancellationToken cancellationToken = default)
+    {
+        var catalog = await repository.LoadCatalogAsync(cancellationToken);
+        catalog.RenameCategory(id, newName);
+        await repository.SaveCategoryAsync(catalog.FindCategory(id)!, cancellationToken);
+    }
+
+    /// <summary>Reaktiviert eine archivierte Kategorie.</summary>
+    public async Task UnarchiveCategoryAsync(string id, CancellationToken cancellationToken = default)
+    {
+        var catalog = await repository.LoadCatalogAsync(cancellationToken);
+        catalog.UnarchiveCategory(id);
+        await repository.SaveCategoryAsync(catalog.FindCategory(id)!, cancellationToken);
+    }
+
     // ------------------------------------------------------------------
     // Steuerkategorien
     // ------------------------------------------------------------------
@@ -88,6 +148,27 @@ public sealed class MasterDataAdmin(IMasterDataRepository repository)
     {
         var catalog = await repository.LoadCatalogAsync(cancellationToken);
         catalog.ArchiveTaxCategory(id);
+        await repository.SaveTaxCategoryAsync(catalog.FindTaxCategory(id)!, cancellationToken);
+    }
+
+    /// <summary>
+    /// Benennt eine aktive Steuerkategorie um; die Id bleibt stabil.
+    /// Archivierte Steuerkategorien werden nicht umbenannt (Name gehört
+    /// zum historischen Verweis).
+    /// </summary>
+    public async Task RenameTaxCategoryAsync(
+        string id, string newName, CancellationToken cancellationToken = default)
+    {
+        var catalog = await repository.LoadCatalogAsync(cancellationToken);
+        catalog.RenameTaxCategory(id, newName);
+        await repository.SaveTaxCategoryAsync(catalog.FindTaxCategory(id)!, cancellationToken);
+    }
+
+    /// <summary>Reaktiviert eine archivierte Steuerkategorie.</summary>
+    public async Task UnarchiveTaxCategoryAsync(string id, CancellationToken cancellationToken = default)
+    {
+        var catalog = await repository.LoadCatalogAsync(cancellationToken);
+        catalog.UnarchiveTaxCategory(id);
         await repository.SaveTaxCategoryAsync(catalog.FindTaxCategory(id)!, cancellationToken);
     }
 
