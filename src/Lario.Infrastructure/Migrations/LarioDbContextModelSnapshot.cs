@@ -48,6 +48,10 @@ namespace Lario.Infrastructure.Migrations
                     b.Property<DateOnly>("Date")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("FundingMonth")
+                        .HasMaxLength(7)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Note")
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
@@ -60,6 +64,41 @@ namespace Lario.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Bookings", (string)null);
+                });
+
+            modelBuilder.Entity("Lario.Domain.Journal.ExpenseSplit", b =>
+                {
+                    b.Property<string>("BookingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CategoryId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PoolId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("BookingId", "Id");
+
+                    b.HasIndex("CategoryId");
+
+                    b.HasIndex("PoolId");
+
+                    b.ToTable("ExpenseSplits", (string)null);
                 });
 
             modelBuilder.Entity("Lario.Domain.Journal.PoolPosting", b =>
@@ -79,6 +118,38 @@ namespace Lario.Infrastructure.Migrations
                     b.HasIndex("PoolId");
 
                     b.ToTable("PoolPostings", (string)null);
+                });
+
+            modelBuilder.Entity("Lario.Domain.Journal.TaxMarking", b =>
+                {
+                    b.Property<string>("SplitId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BookingId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("MarkedAmount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Relevant")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TaxCategoryId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("SplitId");
+
+                    b.HasIndex("SplitId", "BookingId")
+                        .IsUnique();
+
+                    b.ToTable("SplitTaxMarkings", (string)null);
                 });
 
             modelBuilder.Entity("Lario.Domain.MasterData.Account", b =>
@@ -232,6 +303,27 @@ namespace Lario.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Lario.Domain.Journal.ExpenseSplit", b =>
+                {
+                    b.HasOne("Lario.Domain.Journal.Booking", null)
+                        .WithMany("Splits")
+                        .HasForeignKey("BookingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Lario.Domain.MasterData.Category", null)
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Lario.Domain.MasterData.Pool", null)
+                        .WithMany()
+                        .HasForeignKey("PoolId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Lario.Domain.Journal.PoolPosting", b =>
                 {
                     b.HasOne("Lario.Domain.Journal.Booking", null)
@@ -245,6 +337,14 @@ namespace Lario.Infrastructure.Migrations
                         .HasForeignKey("PoolId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Lario.Domain.Journal.TaxMarking", b =>
+                {
+                    b.HasOne("Lario.Domain.Journal.ExpenseSplit", null)
+                        .WithOne("Tax")
+                        .HasForeignKey("Lario.Domain.Journal.TaxMarking", "SplitId", "BookingId")
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("Lario.Domain.MasterData.TaxPreset", b =>
@@ -261,6 +361,13 @@ namespace Lario.Infrastructure.Migrations
                     b.Navigation("AccountPostings");
 
                     b.Navigation("PoolPostings");
+
+                    b.Navigation("Splits");
+                });
+
+            modelBuilder.Entity("Lario.Domain.Journal.ExpenseSplit", b =>
+                {
+                    b.Navigation("Tax");
                 });
 
             modelBuilder.Entity("Lario.Domain.MasterData.Category", b =>
