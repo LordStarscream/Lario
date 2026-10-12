@@ -4,12 +4,16 @@ namespace Lario.Application;
 
 /// <summary>
 /// Anwendungsfall „Anfangsbestand einrichten" (Schritt 3):
-/// - prüft die Vorgabedaten gegen den Stammdaten-Katalog;
-/// - erzeugt die Buchung (Konto- und Poolbewegungen) und speichert sie
-///   atomar;
-/// - ist idempotent: dieselbe Id mit gleichem Inhalt wird nicht erneut
-///   gespeichert, sondern die vorhandene Buchung zurückgegeben;
-///   dieselbe Id mit anderem Inhalt ist ein Konflikt.
+/// - verlangt eine stabile Wiederholungsidentität (Id) — ohne sie kann
+///   keine Buchung entstehen;
+/// - prüft zuerst die Idempotenz (vor der Katalog-Validierung): dieselbe
+///   Id mit gleichem Inhalt wird nicht erneut gespeichert, sondern die
+///   vorhandene Buchung unverändert zurückgegeben — auch wenn die
+///   beteiligten Konten/Pools inzwischen archiviert wurden (Archivierung
+///   verhindert nur neue Referenzen, nicht die Bestätigung historischer);
+///   dieselbe Id mit anderem Inhalt ist ein Konflikt;
+/// - prüft bei tatsächlicher Neuanlage die Vorgabedaten gegen den
+///   Stammdaten-Katalog und speichert Buchung und Postings atomar.
 ///
 /// Der Anfangsbestand ist keine Einnahme: kein Finanzierungsmonat, keine
 /// Zuweisung über Einnahme-Logik (Rechenvertrag §3.7).
@@ -25,9 +29,20 @@ public sealed class OpeningBalanceService(
         OpeningBalanceSpec spec, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(spec);
-        var catalog = await masterDataRepository.LoadCatalogAsync(cancellationToken);
-        spec.ValidateAgainst(catalog);
 
+        // Stabile Wiederholungsidentität ist verbindlich: ohne Id kann keine
+        // Buchung entstehen — Wiederholungen (z. B. nach verlorener Antwort)
+        // wären sonst nicht erkennbar und würden verdoppeln.
+        if (string.IsNullOrWhiteSpace(spec.Id))
+        {
+            throw new Lario.Domain.LarioDomainException(
+                "Anfangsbestand ohne Id: eine stabile Wiederholungsidentität ist erforderlich.");
+        }
+
+        // Idempotenz vor der Katalog-Validierung (Review, Schritt 3):
+        // eine vorhandene Buchung mit dieser Id wird unverändert bestätigt,
+        // auch wenn die beteiligten Stammdaten inzwischen archiviert wurden.
+        // Die Aktivitätsprüfung gehört ausschließlich zum Neuanlagepfad.
         var existing = await bookingRepository.FindByIdAsync(spec.Id, cancellationToken);
         if (existing is not null)
         {
@@ -48,6 +63,10 @@ public sealed class OpeningBalanceService(
 
             return new Result(false, existing);
         }
+
+        // Tatsächliche Neuanlage: die Vorgabe muss aktive Stammdaten referenzieren.
+        var catalog = await masterDataRepository.LoadCatalogAsync(cancellationToken);
+        spec.ValidateAgainst(catalog);
 
         var booking = spec.ToBooking();
         await bookingRepository.AddAsync(booking, cancellationToken);

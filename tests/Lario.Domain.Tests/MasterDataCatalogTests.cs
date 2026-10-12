@@ -105,6 +105,28 @@ public class MasterDataCatalogTests
         catalog.ArchiveTaxCategory("tax-1");
         Assert.Equal(EntityStatus.Archived, catalog.FindTaxCategory("tax-1")!.Status);
     }
+
+    [Fact(DisplayName = "Voreinstellung archivierter Kategorie ist historischer Verweis: blockiert keine Archivierung, bleibt erhalten")]
+    public void ArchiveTaxCategory_ReferencedByArchivedCategory_IsAllowedAndPresetKept()
+    {
+        var catalog = new MasterDataCatalog([], [], [], []);
+        catalog.CreateTaxCategory("tax-1", "Steuern");
+        catalog.CreateCategory("cat-1", "Kategorie");
+        catalog.SetTaxPreset("cat-1", taxRelevant: true, taxCategoryId: "tax-1", inheritToChildren: true);
+
+        // Solange die Kategorie aktiv ist, blockiert die Voreinstellung.
+        Assert.Throws<LarioDomainException>(() => catalog.ArchiveTaxCategory("tax-1"));
+
+        // Nach der Archivierung der Kategorie ist ihre Voreinstellung ein
+        // historischer Verweis: Sie wird nicht umgeschrieben und blockiert
+        // die Archivierung der Steuerkategorie nicht.
+        catalog.ArchiveCategory("cat-1");
+        catalog.ArchiveTaxCategory("tax-1");
+
+        Assert.Equal(EntityStatus.Archived, catalog.FindCategory("cat-1")!.Status);
+        Assert.Equal(EntityStatus.Archived, catalog.FindTaxCategory("tax-1")!.Status);
+        Assert.Equal("tax-1", catalog.FindCategory("cat-1")!.TaxPreset!.TaxCategoryId);
+    }
 }
 
 /// <summary>

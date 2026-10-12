@@ -318,6 +318,53 @@ public class OpeningBalancePersistenceTests
         Assert.Equal("Original", existing!.Note);
     }
 
+    [Fact(DisplayName = "Review-Szenario: Wiederholung nach Archivierung von Konto und Pool wird idempotent bestätigt")]
+    public async Task IdempotentRepeat_AfterMasterDataArchived_IsConfirmed()
+    {
+        await using var db = new TestDatabase();
+        await SeedMasterDataAsync(db);
+        var service = db.Resolve<OpeningBalanceService>();
+
+        var result = await service.CreateAsync(Spec());
+        Assert.True(result.Created);
+
+        // Stammdaten werden archiviert (z. B. Jahresabschluss der Konten).
+        var admin = db.Resolve<MasterDataAdmin>();
+        await admin.ArchiveAccountAsync("acc-haupt");
+        await admin.ArchivePoolAsync("pool-flex");
+        await admin.ArchivePoolAsync("pool-freizeit");
+
+        // Wiederholung derselben Vorgabe (z. B. nach verlorener Antwort):
+        // Die Idempotenzprüfung greift VOR der Aktivitätsprüfung — die
+        // vorhandene Buchung wird unverändert bestätigt, es entsteht keine
+        // zweite Buchung und kein Fehler wegen archivierter Referenzen.
+        var repeat = await service.CreateAsync(Spec());
+        Assert.False(repeat.Created);
+        Assert.Equal("init-2026-01-01", repeat.Booking.Id);
+        Assert.Single(await db.Resolve<IBookingRepository>().GetAllAsync());
+    }
+
+    [Fact(DisplayName = "Ohne stabile Id entsteht keine Buchung (keine stille Duplizierung)")]
+    public async Task EmptyId_IsRejected_WithoutBooking()
+    {
+        await using var db = new TestDatabase();
+        await SeedMasterDataAsync(db);
+        var service = db.Resolve<OpeningBalanceService>();
+
+        await Assert.ThrowsAsync<LarioDomainException>(
+            () => service.CreateAsync(new OpeningBalanceSpec(
+                "",
+                DateOnly.FromDateTime(new DateTime(2026, 1, 1)),
+                "acc-haupt",
+                new Money(100_000),
+                [
+                    new PoolAllocation("pool-flex", new Money(70_000)),
+                    new PoolAllocation("pool-freizeit", new Money(30_000)),
+                ])));
+
+        Assert.Empty(await db.Resolve<IBookingRepository>().GetAllAsync());
+    }
+
     [Fact(DisplayName = "Referenzfall 1 (Fixture 01-anfangsbestand.json): 100.000 Flex + 30.000 Freizeit, Summe 130.000")]
     public async Task ReferenceNumbers_ReconstructBalances()
     {

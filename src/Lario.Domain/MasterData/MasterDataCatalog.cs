@@ -278,6 +278,15 @@ public sealed class MasterDataCatalog
         Archive(category);
     }
 
+    /// <summary>
+    /// Archiviert eine Steuerkategorie. Blockiert wird sie nur durch
+    /// <b>aktive</b> Kategorien, deren explizite Voreinstellung sie
+    /// referenziert: Diese Verweise sind aktuelle Konfiguration und müssen
+    /// erst aufgelöst werden (Voreinstellung ändern oder entfernen).
+    /// Voreinstellungen <b>archivierter</b> Kategorien sind historische
+    /// Verweise: Sie bleiben unverändert erhalten (keine Löschung
+    /// historischer Daten) und blockieren die Archivierung nicht.
+    /// </summary>
     public void ArchiveTaxCategory(string id)
     {
         var taxCategory = _taxCategories.GetValueOrDefault(id)
@@ -285,11 +294,13 @@ public sealed class MasterDataCatalog
 
         foreach (var category in _categories.Values)
         {
-            if (category.TaxPreset?.TaxCategoryId == id)
+            if (category.Status == EntityStatus.Active
+                && category.TaxPreset?.TaxCategoryId == id)
             {
                 throw new LarioDomainException(
                     $"Steuerkategorie '{id}' wird von der Steuer-Voreinstellung der " +
-                    $"Kategorie '{category.Id}' referenziert und kann nicht archiviert werden.");
+                    $"aktiven Kategorie '{category.Id}' referenziert und kann nicht " +
+                    "archiviert werden. Die Voreinstellung muss geändert oder entfernt werden.");
             }
         }
 
