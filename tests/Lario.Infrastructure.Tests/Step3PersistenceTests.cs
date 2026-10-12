@@ -88,7 +88,7 @@ public sealed class TestDatabase : IAsyncDisposable
 /// </summary>
 public class MigrationTests
 {
-    [Fact(DisplayName = "Migrate legt alle acht Tabellen an")]
+    [Fact(DisplayName = "Migrate legt alle Fachtabellen an")]
     public async Task Migrate_CreatesAllTables()
     {
         await using var db = new TestDatabase();
@@ -96,8 +96,13 @@ public class MigrationTests
 
         var expected = new[]
         {
+            // Schritt 3:
             "Accounts", "Pools", "Categories", "TaxCategories",
             "TaxPresets", "Bookings", "AccountPostings", "PoolPostings",
+            // Schritt 4:
+            "ExpenseSplits", "SplitTaxMarkings",
+            // Schritt 5:
+            "TransferPurposes", "ReassignmentAccounts", "SettlementPositions",
         };
         foreach (var table in expected)
         {
@@ -115,12 +120,14 @@ public class MigrationTests
         }
 
         // EF-interne Tabellen (__EFMigrationsHistory, __EFMigrationsLock) ausklammern:
-        // es müssen exakt die zehn Fachtabellen existieren (acht aus Schritt 3,
-        // dazu ExpenseSplits und SplitTaxMarkings aus Schritt 4).
+        // es müssen exakt die dreizehn Fachtabellen existieren (acht aus
+        // Schritt 3, dazu ExpenseSplits und SplitTaxMarkings aus Schritt 4,
+        // dazu TransferPurposes, ReassignmentAccounts und SettlementPositions
+        // aus Schritt 5).
         var tables = (await db.TableNamesAsync())
             .Where(t => !t.StartsWith("__", StringComparison.Ordinal))
             .ToList();
-        Assert.Equal(10, tables.Count);
+        Assert.Equal(13, tables.Count);
     }
 }
 
