@@ -1,7 +1,7 @@
 # Aufgaben-Index — Lario
 _Last updated: 12. Okt. 2026_
 
-**Aktiv:** Schritt 4 (Einnahmen und Ausgaben) — **implementiert und getestet (12. Okt. 2026)** auf Branch `step/4-einnahmen-ausgaben` (167 .NET-Tests, davon 20 echte-SQLite-Integrationstests; Host-Smoke-Test ok), **wartet auf Review/PR**. Schritt 3 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `b7d9eab`, PR #4 (drei Review-Runden, alle Befunde behoben; 74 .NET-Tests, davon 16 echte-SQLite-Integrationstests). Schritt 2 ist **abgenommen (11. Okt. 2026)** und **gemerged** (Merge-Commit `61c3a07`, PR #3).
+**Aktiv:** Schritt 4 (Einnahmen und Ausgaben) — **implementiert und getestet (12. Okt. 2026)** auf Branch `step/4-einnahmen-ausgaben` (167 .NET-Tests, davon 20 echte-SQLite-Integrationstests; Host-Smoke-Test ok), **PR #5 offen**. Schritt 3 ist **abgenommen und gemerged (12. Okt. 2026)** — Merge-Commit `b7d9eab`, PR #4 (drei Review-Runden, alle Befunde behoben; 74 .NET-Tests, davon 16 echte-SQLite-Integrationstests). Schritt 2 ist **abgenommen (11. Okt. 2026)** und **gemerged** (Merge-Commit `61c3a07`, PR #3).
 
 ## Legende
 

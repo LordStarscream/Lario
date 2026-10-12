@@ -145,12 +145,12 @@ Kernbuchungen stimmen unabhängig von der Oberfläche.
 - [x] T7: Domain-Tests (alle Invarianten, Referenzfall 02 + 03-Struktur, Plan-Prüffälle)
 - [x] T8: SQLite-Integrationstests (Roundtrip, Idempotenz, Atomarität bei FK-Fehler, Unterdeckung sichtbar, Plan-Prüffälle 1.100 €/85 €)
 - [x] T9: Build + alle Tests grün + Smoke-Test Host (Migration angewendet)
-- [ ] T10: Commit(s), Push, PR mit Review-Tabelle
+- [x] T10: Commit(s), Push, PR mit Review-Tabelle
 
 ## Verlauf
 
 - 12. Okt. 2026: Aufgabe angelegt (Schritt 3 gemerged, `b7d9eab`).
-- 12. Okt. 2026: Implementiert und getestet. 167 .NET-Tests (123 Domain, 44
+- 12. Okt. 2026: Implementiert und getestet. PR #5 erstellt. 167 .NET-Tests (123 Domain, 44
   Infrastruktur, davon 20 Step-4-Integrationstests auf echter SQLite), Build ohne
   Warnungen. Host-Smoke-Test: frische Datenbank, Migration `IncomeExpenseSplits`
   angewendet, `/api/health` ok, neue Tabellen/Spalte verifiziert. Integrationstest
