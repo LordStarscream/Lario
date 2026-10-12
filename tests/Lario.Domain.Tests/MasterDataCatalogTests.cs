@@ -127,6 +127,110 @@ public class MasterDataCatalogTests
         Assert.Equal(EntityStatus.Archived, catalog.FindTaxCategory("tax-1")!.Status);
         Assert.Equal("tax-1", catalog.FindCategory("cat-1")!.TaxPreset!.TaxCategoryId);
     }
+
+    [Fact(DisplayName = "Review-Abfolge: aktive Unterkategorie ohne eigene Vorbelegung erhält keine archivierte Steuerkategorie von archivierter Elternkategorie")]
+    public void ResolveEffectivePreset_ArchivedInheritingAncestor_DoesNotProvideToActiveChild()
+    {
+        var catalog = new MasterDataCatalog([], [], [], []);
+        catalog.CreateTaxCategory("tax-1", "Steuern");
+        catalog.CreateCategory("cat-parent", "Eltern");
+        catalog.CreateCategory("cat-child", "Kind", "cat-parent");
+        catalog.SetTaxPreset(
+            "cat-parent", taxRelevant: true, taxCategoryId: "tax-1", inheritToChildren: true);
+
+        // Während der Elternteil aktiv ist, erbt die Unterkategorie die
+        // Voreinstellung.
+        Assert.Equal("tax-1", catalog.ResolveEffectivePreset("cat-child")!.TaxCategoryId);
+
+        catalog.ArchiveCategory("cat-parent");
+
+        // Archivierung der Steuerkategorie ist jetzt erlaubt: cat-parent ist
+        // archiviert (historischer Verweis) und cat-child hat keine eigene
+        // Voreinstellung.
+        catalog.ArchiveTaxCategory("tax-1");
+
+        // Kern der Korrektur: Die aktive Unterkategorie erhält für neue
+        // Daten nicht die archivierte Steuerkategorie als wirksame
+        // Vorbelegung (archivierte Entitäten liefern keine neuen
+        // Referenzen).
+        Assert.Null(catalog.ResolveEffectivePreset("cat-child"));
+
+        // Historische Daten bleiben erhalten: Die Voreinstellung des
+        // archivierten Elternteils ist unverändert vorhanden.
+        Assert.Equal("tax-1", catalog.FindCategory("cat-parent")!.TaxPreset!.TaxCategoryId);
+    }
+
+    [Fact(DisplayName = "Archivierte Vorfahrin mit nicht vererbender Voreinstellung blockiert die Vererbung aus höheren aktiven Ebenen nicht")]
+    public void ResolveEffectivePreset_ArchivedBlockingAncestor_IsTransparent()
+    {
+        var catalog = new MasterDataCatalog([], [], [], []);
+        catalog.CreateTaxCategory("tax-1", "Steuern");
+        catalog.CreateCategory("cat-root", "Wurzel");
+        catalog.CreateCategory("cat-mid", "Mitte", "cat-root");
+        catalog.CreateCategory("cat-leaf", "Blatt", "cat-mid");
+        catalog.SetTaxPreset(
+            "cat-root", taxRelevant: true, taxCategoryId: "tax-1", inheritToChildren: true);
+        catalog.SetTaxPreset(
+            "cat-mid", taxRelevant: false, taxCategoryId: null, inheritToChildren: false);
+
+        // Während die Mitte aktiv ist, blockiert ihre nicht vererbende
+        // Voreinstellung die Vererbung aus der Wurzel (wirksame
+        // Voreinstellung des Blatts: keine).
+        Assert.Null(catalog.ResolveEffectivePreset("cat-leaf"));
+
+        // Nach der Archivierung ist die Entscheidung ein historischer
+        // Verweis, keine aktive Blockierung: Die Vererbung aus der aktiven
+        // Wurzelseite wirkt wieder.
+        catalog.ArchiveCategory("cat-mid");
+        Assert.Equal("tax-1", catalog.ResolveEffectivePreset("cat-leaf")!.TaxCategoryId);
+    }
+
+    [Fact(DisplayName = "Umbenennen: nur aktive Entitäten (Id stabil, Revision hoch, Name getrimmt); archiviert bleibt erhalten")]
+    public void Rename_OnlyActive_HasStableIdAndBumpsRevision()
+    {
+        var catalog = new MasterDataCatalog([], [], [], []);
+        catalog.CreateAccount("acc-1", "Hauptkonto", AccountType.Bank);
+        catalog.CreatePool("pool-1", "Flex");
+        catalog.CreateCategory("cat-1", "Kategorie");
+        catalog.CreateTaxCategory("tax-1", "Steuern");
+
+        catalog.RenameAccount("acc-1", "Neues Hauptkonto ");
+        catalog.RenamePool("pool-1", "Flex 2");
+        catalog.RenameCategory("cat-1", "Neue Kategorie");
+        catalog.RenameTaxCategory("tax-1", "Steuerarten");
+
+        Assert.Equal("Neues Hauptkonto", catalog.FindAccount("acc-1")!.Name);
+        Assert.Equal("Flex 2", catalog.FindPool("pool-1")!.Name);
+        Assert.Equal("Neue Kategorie", catalog.FindCategory("cat-1")!.Name);
+        Assert.Equal("Steuerarten", catalog.FindTaxCategory("tax-1")!.Name);
+        Assert.Equal(2, catalog.FindAccount("acc-1")!.BaseRevision);
+
+        // Leerer Name wird abgelehnt.
+        Assert.Throws<LarioDomainException>(() => catalog.RenameAccount("acc-1", "  "));
+
+        // Archivierte Entitäten werden nicht umbenannt: der Name gehört
+        // zum historischen Verweis.
+        catalog.ArchivePool("pool-1");
+        Assert.Throws<LarioDomainException>(() => catalog.RenamePool("pool-1", "Anders"));
+        Assert.Equal("Flex 2", catalog.FindPool("pool-1")!.Name);
+    }
+
+    [Fact(DisplayName = "Reaktivieren: archivierte Entität wird wieder aktiv; doppeltes Reaktivieren wird abgelehnt")]
+    public void Unarchive_RestoresActiveStatus_AndBumpsRevision()
+    {
+        var catalog = new MasterDataCatalog([], [], [], []);
+        catalog.CreatePool("pool-1", "Flex");
+        catalog.ArchivePool("pool-1");
+        Assert.Equal(EntityStatus.Archived, catalog.FindPool("pool-1")!.Status);
+
+        catalog.UnarchivePool("pool-1");
+        Assert.Equal(EntityStatus.Active, catalog.FindPool("pool-1")!.Status);
+        // 1 (Anlage) + 1 (Archivierung) + 1 (Reaktivierung).
+        Assert.Equal(3, catalog.FindPool("pool-1")!.BaseRevision);
+
+        // Bereits aktiv -> abgelehnt.
+        Assert.Throws<LarioDomainException>(() => catalog.UnarchivePool("pool-1"));
+    }
 }
 
 /// <summary>
