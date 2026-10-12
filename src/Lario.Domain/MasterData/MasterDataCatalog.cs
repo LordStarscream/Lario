@@ -409,10 +409,29 @@ public sealed class MasterDataCatalog
         Unarchive(pool);
     }
 
+    /// <summary>
+    /// Reaktiviert eine Kategorie. Die eigene Steuer-Voreinstellung war während
+    /// der Archivierung ein historischer Verweis; mit der Reaktivierung wird sie
+    /// wieder zur <b>aktuellen</b> Referenz. Sie darf daher keine inaktive
+    /// Steuerkategorie referenzieren — symmetrisch zur Archivierung, die durch
+    /// aktive Referenzen blockiert wird. Da Voreinstellungen nur an aktiven
+    /// Kategorien änderbar sind, ist der Weg hier die Reaktivierung der
+    /// Steuerkategorie.
+    /// </summary>
     public void UnarchiveCategory(string id)
     {
         var category = _categories.GetValueOrDefault(id)
             ?? throw new InvalidReferenceException($"Unbekannte Kategorie '{id}'.");
+
+        if (category.TaxPreset?.TaxCategoryId is { } taxCategoryId
+            && _taxCategories.GetValueOrDefault(taxCategoryId)?.Status != EntityStatus.Active)
+        {
+            throw new LarioDomainException(
+                $"Kategorie '{category.Id}' kann nicht reaktiviert werden: Ihre " +
+                $"Steuer-Voreinstellung referenziert die nicht aktive Steuerkategorie " +
+                $"'{taxCategoryId}'. Reaktivieren Sie zuerst die Steuerkategorie.");
+        }
+
         Unarchive(category);
     }
 
