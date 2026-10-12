@@ -156,3 +156,16 @@ Kernbuchungen stimmen unabhängig von der Oberfläche.
   angewendet, `/api/health` ok, neue Tabellen/Spalte verifiziert. Integrationstest
   hat einen echten Fehler in der Idempotenz gefangen (Neu-Ableitung der
   Voreinstellung statt Snapshot-Vergleich) — behoben, s. Scope-Entscheidungen.
+- 12. Okt. 2026: **Agenten-Code-Review (reviewer) — ein Blocker gefunden und behoben.**
+  Befund: `SplitTaxMarkings`-Mapping mappte das FK positionell auf den
+  Principal-Key (BookingId, Id) von ExpenseSplit — Spalte `SplitId` enthielt die
+  BookingId, `BookingId` die Split-Id, und der PK lag effektiv auf der Buchung.
+  Folge: eine Ausgabe mit **zwei oder mehr** steuerlich gekennzeichneten Splits
+  (Kernfall von Schritt 4) scheiterte mit Tracking-Konflikt; alle bisherigen
+  Tests deckten nur je eine Kennzeichnung pro Buchung ab. Behoben: Komposit-PK
+  (SplitId, BookingId) + FK-Reihenfolge (BookingId, SplitId), Migration neu
+  erzeugt (ungemerged, keine Altdaten), Regressionstest `MultipleMarkedSplits_SaveAndLoad`
+  ergänzt. Reviewer bestätigt ansonsten: alle übrigen Punkte (Scope, Katalog-
+  validierung, Splitregel exakt in Cent, atomare Speicherung, Preset-Snapshot,
+  materieller Finanzierungsmonat, Money long-basiert, Modell/Migrationen
+  synchron) korrekt. 168 Tests grün (123 Domain, 45 Infrastruktur).
