@@ -1,0 +1,5 @@
+Legoerte wwwroot:
+Die statische Weboberfaelle wird per csproj-Link aus frontend/dist/host/browser
+genommen (LinkBase="wwwroot"). Dieses Verzeichnis muss physisch existieren,
+weil ASP.NET Core im Development-Modus den Static-Web-Assets-Provider auf
+diesem Pfad anlegt (sonst DirectoryNotFoundException).
