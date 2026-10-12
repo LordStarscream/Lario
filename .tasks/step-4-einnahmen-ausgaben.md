@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 4 – Einnahmen, Ausgaben und Splits im Kern
 
-**Status:** [abgeschlossen — wartet auf Review] (12. Okt. 2026)
+**Status:** [Review-Befunde behoben — wartet auf Abnahme] (12. Okt. 2026)
 **Branch:** `step/4-einnahmen-ausgaben`
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 4“, §9 „Steuerkategorien, relevante Zahlungen und Nachweise“
 **Verbindliche Spezifikation:** `docs/step-0/rechenvertrag.md` (§2.2/2.3 Finanzierungsmonat, §3.2–3.4 Buchungen/Postings, §3.5 Splitregel, §5.5 Revision)
@@ -89,14 +89,26 @@ Kernbuchungen stimmen unabhängig von der Oberfläche.
 - **Atomarität:** Buchung inkl. aller Account-/Pool-Postings und Splits inkl.
   Steuerkennzeichnung in einer SQLite-Transaktion; FK-Verletzung verwirft alles
   (keine halbe Buchung).
-- **Idempotenz vergleicht den Inhalt der Vorgabe, nicht das abgeleitete
+- **Idempotenz vergleicht den Original-Eingabeinhalt, nicht das abgeleitete
   Buchungsbild:** Steuerliche Voreinstellungen sind Stammdaten und können sich
-  zwischen Original und Wiederholung ändern (oder entfernen). Eine fehlende
-  Kennzeichnung in der Wiederholung ist deshalb kein Konflikt — die gespeicherte
-  Kennzeichnung ist ein Snapshot der Anlage (Rechenvertrag: die Rechnung hängt
-  nur von den gespeicherten Eingabedaten ab). Eine explizit übergebene
-  Kennzeichnung dagegen ist Inhalt der Vorgabe und muss exakt stimmen. (Durch
-  Integrationstest `Preset_MaterializedAsSnapshot_NotReDerived` abgesichert.)
+  zwischen Original und Wiederholung ändern (oder entfernen). Deshalb wird die
+  **Herkunft** der gespeicherten Kennzeichnung persistiert
+  (`TaxMarking.InheritedFromPreset`, Migration `SplitMarkingProvenance`):
+  - gespeicherte Kennzeichnung **aus Voreinstellung** (Original trug keine
+    Kennzeichnung) → nur eine Wiederholung **ohne** Kennzeichnung bestätigt;
+    eine explizite Kennzeichnung ist ein Inhaltswechsel (auch wenn ihre Werte
+    der gespeicherten entsprechen);
+  - gespeicherte **explizite** Kennzeichnung → die Wiederholung muss eine
+    Kennzeichnung mit exakt gleichen Komponenten tragen (null = Konflikt);
+  - gespeicherte Kennzeichnung fehlt → nur Wiederholung ohne Kennzeichnung.
+  - Teilposten-Vergleich ist eine **1:1-Abbildung nach eindeutiger
+    Teilposten-Id** (Reihenfolge trägt keinen Inhalt; doppelte eingehende
+    Ids sind kein gültiges 1:1-Abbild → Konflikt). (Durch Integrationstests
+    `Preset_MaterializedAsSnapshot_NotReDerived`,
+    `Repeat_WithDuplicateSplitIds_IsConflict`,
+    `Repeat_WithReorderedSplits_IsIdempotent`,
+    `Repeat_WithExplicitTax_OverPresetSnapshot_IsConflict`,
+    `Repeat_WithSameExplicitTax_IsIdempotent` abgesichert.)
 - **`BookingJournal.TotalExpense()` bewusst nicht implementiert:** kein konkreter
   Bedarf in Schritt 4 (Verbrauch zeigt sich an den negativen Poolbeständen;
   Deckungsrechnung mit Aufwands-Summen gehört zu Schritt 5/12). Vermeidung
@@ -122,8 +134,8 @@ Kernbuchungen stimmen unabhängig von der Oberfläche.
 
 ### Lario.Infrastructure
 - `LarioDbContext.cs` (Erweiterung) — `ExpenseSplits`, `SplitTaxMarkings` (1:1,
-  Schatten-FK), `Bookings.FundingMonth`
-- Migration `IncomeExpenseSplits`
+  Schatten-FK, `InheritedFromPreset`), `Bookings.FundingMonth`
+- Migration `IncomeExpenseSplits`, `SplitMarkingProvenance`
 - `BookingRepository.cs` (Erweiterung) — Splits inkl. Kennzeichnung laden/speichern
 
 ### Tests
@@ -169,3 +181,36 @@ Kernbuchungen stimmen unabhängig von der Oberfläche.
   validierung, Splitregel exakt in Cent, atomare Speicherung, Preset-Snapshot,
   materieller Finanzierungsmonat, Money long-basiert, Modell/Migrationen
   synchron) korrekt. 168 Tests grün (123 Domain, 45 Infrastruktur).
+- 12. Okt. 2026: **Zweite Review-Runde (3 Befunde) — alle behoben, mit Regressionen:**
+  - **P1 — YearMonth: ungültige Werte (direkter Konstrutor, `default(YearMonth)`)
+    konnten gespeichert werden und das Journal beim Neuladen blockieren.**
+    Behoben: `YearMonth`-Konstrutor erzwingt nun Monat 1–12 / Jahr 1–9999 für
+    jede direkte Erzeugung; neue `IsValid`-Eigenschaft (default = 0000-00 =
+    ungültig); `IncomeSpec.Validate` lehnt einen gesetzten ungültigen
+    Finanzierungsmonat ab (null bleibt die Default-Regel); der
+    `Booking`-Konstrutor (Einnahme) prüft zusätzlich den materialisierten Wert.
+    Regressionen: `Konstrutor_UngültigerMonatOderJahr_Wirft` (5 Fälle),
+    `Default_IstUngültig`, `FundingMonth_DefaultYearMonth_IsRejected`
+    (Anlage abgelehnt, nichts gespeichert, Neuladen bleibt möglich).
+  - **P2 — Wiederholung mit doppelten Split-Ids wurde fälschlich identisch
+    bestätigt** (Count + TryGetValue sichert keine eindeutige 1:1-Zuordnung).
+    Behoben: `SpecMatchesBooking` verlangt eindeutige eingehende Split-Ids und
+    vollständige 1:1-Abdeckung (doppelte Ids → sichtbarer Konflikt, Original
+    bleibt). Umordnung unterschiedlicher Split-Ids bleibt idempotent.
+    Regressionen: `Repeat_WithDuplicateSplitIds_IsConflict`,
+    `Repeat_WithReorderedSplits_IsIdempotent`.
+  - **P2 — Fehlende Steuerkennzeichnung war Wildcard für veränderten
+    Original-Payload** (null übersprang den Vergleich; aus dem Snapshot war
+    Herkunft nicht erkennbar). Behoben: Herkunft wird persistiert
+    (`TaxMarking.InheritedFromPreset`, Migration `SplitMarkingProvenance`;
+    Materialisierung aus Voreinstellung = true, explizite Angabe = false,
+    vom Aufrufer gesetzte Flags werden normalisiert); `TaxMatches` vergleicht
+    herkunftsbewusst: null→explizit über Snapshot und explizit→null sind
+    Konflikte, null→null bzw. explizit→gleich explizit sind Idempotenz-Treffer.
+    Die Snapshot-Regel bleibt (keine Neu-Ableitung aus aktuellen
+    Voreinstellungen — `Preset_MaterializedAsSnapshot_NotReDerived` besteht
+    weiter). Regressionen: `Repeat_WithExplicitTax_OverPresetSnapshot_IsConflict`,
+    `Repeat_WithSameExplicitTax_IsIdempotent` (inkl. explizit→null),
+    `Migration_AddsInheritedFromPresetColumn`.
+  184 Tests grün (133 Domain, 51 Infrastruktur, davon 24 Step-4-Integrationstests
+  auf echter SQLite), Build ohne Warnungen.
