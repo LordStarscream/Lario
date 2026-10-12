@@ -216,10 +216,18 @@ public sealed class MasterDataCatalog
     ///   Voreinstellung — aber nur, wenn deren <c>InheritToChildren</c>
     ///   gesetzt ist (Vererbung wirkt bereichsweit, auch über mehrere Ebenen
     ///   ohne eigene Voreinstellung hinweg);
-    /// - eine Kategorie mit eigener Voreinstellung blockiert die Vererbung
-    ///   aus höheren Ebenen für sich selbst und — wenn sie nicht vererbt —
-    ///   für ihre Untergruppen.
-    /// null, wenn im Pfad keine anwendbare explizite Voreinstellung liegt.
+    /// - eine (aktive) Kategorie mit eigener Voreinstellung blockiert die
+    ///   Vererbung aus höheren Ebenen für sich selbst und — wenn sie nicht
+    ///   vererbt — für ihre Untergruppen;
+    /// - <b>archivierte</b> Vorfahrinnen liefern keine Vorbelegung für
+    ///   Nachkommen: ihre Voreinstellung ist ein historischer Verweis und
+    ///   wird weder für neue Daten herangezogen noch als aktive
+    ///   Blockierungsentscheidung gewertet (Regel: archivierte Entitäten
+    ///   liefern keine neuen Referenzen). Der Pfad wird über sie hinweg
+    ///   fortgesetzt; die historische Voreinstellung bleibt unverändert
+    ///   erhalten;
+    /// - null, wenn im aktiven Pfad keine anwendbare explizite
+    ///   Voreinstellung liegt.
     /// </summary>
     public TaxPreset? ResolveEffectivePreset(string categoryId)
     {
@@ -228,6 +236,18 @@ public sealed class MasterDataCatalog
 
         while (current is not null)
         {
+            // Archivierte Vorfahrinnen sind historische Verweise, keine
+            // aktive Konfiguration: ihre Voreinstellung wird nicht für neue
+            // Daten einer (aktiven) Nachkommin herangezogen und blockiert
+            // die Vererbung aus höheren aktiven Ebenen nicht. Für die
+            // angefragte Kategorie selbst bleibt die eigene Voreinstellung
+            // als historische Abfrage auflösbar.
+            if (current.Id != categoryId && current.Status == EntityStatus.Archived)
+            {
+                current = current.ParentId is null ? null : FindCategory(current.ParentId);
+                continue;
+            }
+
             if (current.TaxPreset is not null)
             {
                 // Explizite Voreinstellung auf dieser Ebene. Für die Kategorie
@@ -237,12 +257,7 @@ public sealed class MasterDataCatalog
                     : null;
             }
 
-            if (current.ParentId is null)
-            {
-                return null;
-            }
-
-            current = FindCategory(current.ParentId);
+            current = current.ParentId is null ? null : FindCategory(current.ParentId);
         }
 
         return null;

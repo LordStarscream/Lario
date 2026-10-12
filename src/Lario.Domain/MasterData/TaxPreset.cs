@@ -13,11 +13,18 @@ namespace Lario.Domain.MasterData;
 ///   Untergruppen, die selbst keine explizite Voreinstellung haben.
 ///
 /// Vererbung: Die wirksame Voreinstellung einer Kategorie ist die Voreinstellung
-/// der nächsten Vorfahrin (einschließlich der Kategorie selbst), die eine
-/// explizite Voreinstellung trägt. Eine explizite Voreinstellung blockiert
-/// die Vererbung aus höheren Ebenen — insbesondere ersetzt ein explizites
-/// Nein (TaxRelevant = false) keine übergeordnete Vererbung und wird nie
-/// durch eine übergeordnete Vererbung ersetzt.
+/// der nächsten <b>aktiven</b> Vorfahrin (einschließlich der Kategorie selbst),
+/// die eine explizite Voreinstellung trägt. Eine explizite Voreinstellung
+/// blockiert die Vererbung aus höheren Ebenen — insbesondere ersetzt ein
+/// explizites Nein (TaxRelevant = false) keine übergeordnete Vererbung und
+/// wird nie durch eine übergeordnete Vererbung ersetzt.
+///
+/// Archivierte Vorfahrinnen liegen auf dem Vererbungspfad nicht als aktive
+/// Konfiguration: ihre Voreinstellung ist ein historischer Verweis, wird für
+/// neue Daten der (aktiven) Nachkommen nicht herangezogen und blockiert die
+/// Vererbung aus höheren aktiven Ebenen nicht (Regel: archivierte Entitäten
+/// liefern keine neuen Referenzen). Historische Voreinstellungen bleiben
+/// unverändert erhalten.
 /// </summary>
 public sealed class TaxPreset
 {
