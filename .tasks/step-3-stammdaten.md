@@ -81,3 +81,30 @@ Konten, Pools, Kategorien/Unterkategorien, separate Steuerkategorien/Unterkatego
 - 12. Okt. 2026: Neue Projekt-Vorgabe (Nutzer): nach Abschluss einer Implementierungsphase
   automatisch commit + push + PR; Merge nur auf explizite Freigabe. In AGENTS.md (Git) und
   im Aufgaben-Index verankert.
+- 12. Okt. 2026: Externes Review (reviewer, PR #4) + systematische Gegenprüfung gegen
+  Implementierungsplan, Rechenvertrag und AGENTS.md. Befunde und Auflösung:
+  - **P1 Duplizierung bei Wiederholung (zufällige Id):** In Schritt 3 war eine REST-Endpunkt-
+    Schicht eingeführt worden — jenseits des dokumentierten Scopes („Kein REST in Schritt 3,
+    produktive API in Schritt 7“), die bei fehlendem `id` eine zufällige Id erzeugte.
+    **Auflösung:** Host auf den dokumentierten Stand zurückgesetzt (nur Health/Version,
+    + DI, + `Migrate()`); die stabile Wiederholungsidentität wird nun verbindlich auf
+    Service-Ebene erzwungen (leere `Id` → `LarioDomainException` vor jedem Datenbankzugriff).
+  - **P2 `2026-13-45` → 500:** Entfällt mit der Endpoint-Entfernung (ungültiges Datum wird
+    bereits beim Parsen abgelehnt; die Domain-Schicht sieht keinen HTTP-Datentyp).
+  - **P2 Archivierung vs. Idempotenz:** `OpeningBalanceService` prüft Idempotenz jetzt
+    **vor** der Katalogvalidierung; Wiederholung nach Archivierung von Konto/Pool bestätigt
+    die vorhandene Buchung unverändert (kein Fehler, keine Duplizierung). Archivierung
+    verhindert nur neue Referenzen, nicht die Bestätigung historischer.
+  - **P2 Voreinstellung vs. Archivierung der Steuerkategorie:** Blockiert wird nur durch
+    *aktive* Kategorien; Voreinstellungen archivierter Kategorien sind historische
+    Verweise (bleiben erhalten, werden nicht umgeschrieben, blockieren nicht).
+  - **Vorhandener Befund (Schritt 1, nicht vom Review eingeführt):**
+    `ASPNETCORE_ENVIRONMENT=Development` + `dotnet run` stürzte, sobald `frontend/dist/host`
+    existierte (Static-Web-Assets erwartet `src/Lario.Host/wwwroot` als Quellen-Root).
+    Behoben: leeres `wwwroot/` mit `.gitkeep` bleibt im Quellbaum (konventionelles
+    Sdk.Web-Layout).
+  Neue Regressionstests: idempotente Wiederholung nach Archivierung (echte SQLite),
+  leere `Id` → keine Buchung, Steuerkategorie-Archivierung mit Voreinstellung einer
+  archivierten Kategorie (Domain). Alle grün: **69 laufende Tests** (45 Domain, 24
+  Infrastructure; 16 davon echte-SQLite-Integrationstests). Smoke-Test: Host startet in
+  Development und Production, OpenAPI-Fläche = Health/Version, Frontend wird ausgeliefert.
