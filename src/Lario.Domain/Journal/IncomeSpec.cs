@@ -89,6 +89,17 @@ public sealed class IncomeSpec
                 $"Einnahme '{Id}': Betrag muss positiv sein (ist {Amount.ToEuro():0.00} €).");
         }
 
+        // null = Default-Regel (Folgemonat) und damit gültig; ein gesetzter
+        // Wert muss einen gültigen Kalendermonat tragen (z. B. kein
+        // default(YearMonth) = 0000-00), bevor er materialisiert und
+        // gespeichert wird.
+        if (FundingMonth is { } fundingMonth && !fundingMonth.IsValid)
+        {
+            throw new LarioDomainException(
+                $"Einnahme '{Id}': ungültiger Finanzierungsmonat '{fundingMonth}' " +
+                "(Monat 1–12, Jahr 1–9999 erforderlich); ohne Angabe gilt die Default-Regel (Folgemonat).");
+        }
+
         var account = catalog.FindAccount(AccountId)
             ?? throw new InvalidReferenceException(
                 $"Einnahme '{Id}' referenziert unbekanntes Konto '{AccountId}'.");

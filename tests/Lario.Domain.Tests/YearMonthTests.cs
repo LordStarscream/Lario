@@ -27,6 +27,48 @@ public class YearMonthTests
         Assert.Throws<ArgumentException>(() => YearMonth.Create(year, month));
     }
 
+    [Theory]
+    [InlineData(2026, 0)]
+    [InlineData(2026, 13)]
+    [InlineData(2026, -1)]
+    [InlineData(-1, 5)]
+    [InlineData(10_000, 5)]
+    public void Konstrutor_UngültigerMonatOderJahr_Wirft(int year, int month)
+    {
+        // Regression (Schritt-4-Review P2c): der direkte Konstrutor muss
+        // dieselbe Invariante wie Create erzwingen — ein ungültiger Wert
+        // darf nicht durch direct construction entstehen.
+        Assert.Throws<ArgumentException>(() => new YearMonth(year, month));
+    }
+
+    [Fact]
+    public void Default_IstUngültig()
+    {
+        // Regression (Schritt-4-Review P2c): default(YearMonth) (0000-00)
+        // umgeht den Konstrutor und muss als ungültig erkennbar sein —
+        // Domäneneingänge (z. B. IncomeSpec.FundingMonth) prüfen IsValid
+        // vor der Speicherung.
+        var d = default(YearMonth);
+        Assert.False(d.IsValid);
+        Assert.Equal(0, d.Year);
+        Assert.Equal(0, d.Month);
+    }
+
+    [Theory]
+    [InlineData(2026, 11)]
+    [InlineData(1, 1)]
+    [InlineData(9999, 12)]
+    public void IsValid_GültigeWerte_True(int year, int month)
+    {
+        Assert.True(YearMonth.Create(year, month).IsValid);
+    }
+
+    [Fact]
+    public void Equality_DefaultIstNichtGleichMitGültigemMonat()
+    {
+        Assert.NotEqual(default(YearMonth), YearMonth.Create(2026, 11));
+    }
+
     [Fact]
     public void FromDate_NimmtKalendermonatDesDatums()
     {

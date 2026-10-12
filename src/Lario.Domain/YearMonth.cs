@@ -4,15 +4,42 @@ namespace Lario.Domain;
 /// Kalendermonat als (Jahr, Monat)-Wert (Rechenvertrag §2.2: fachliche
 /// Monatsgrenzen Europe/Berlin; Einnahmen können zusätzlich einen
 /// Finanzierungsmonat tragen). Kein UTC-Zeitpunkt, keine Tageskomponente.
+///
+/// Invariante: Monat 1–12 und Jahr 1–9999 (Jahr 0 wäre mit
+/// <see cref="DateOnly"/>/<see cref="FirstDay"/> inkompatibel). Der
+/// Konstrutor erzwingt die Invariante für jeden direkt erzeugten Wert;
+/// die einzige Ausnahme ist <c>default(YearMonth)</c> (0000-00), der den
+/// Konstrutor umgeht. Domäneneingänge (z. B. <c>IncomeSpec.FundingMonth</c>)
+/// prüfen daher <see cref="IsValid"/>, bevor ein Wert gespeichert wird.
 /// </summary>
-public readonly record struct YearMonth(int Year, int Month) : IComparable<YearMonth>
+public readonly record struct YearMonth : IComparable<YearMonth>
 {
+    /// <summary>Jahr (1–9999).</summary>
+    public int Year { get; }
+
+    /// <summary>Monat (1–12).</summary>
+    public int Month { get; }
+
     /// <summary>
     /// Erzeugt einen Kalendermonat; Monat muss 1–12 sein, das Jahr muss
-    /// plausibel sein (0–9999). Ungültige Werte sind ein Fehler, keine
-    /// stille Korrektur.
+    /// 1–9999 sein. Ungültige Werte sind ein Fehler, keine stille
+    /// Korrektur.
     /// </summary>
-    public static YearMonth Create(int year, int month)
+    public YearMonth(int year, int month)
+    {
+        Validate(year, month);
+        Year = year;
+        Month = month;
+    }
+
+    /// <summary>
+    /// True, wenn die Instanz einen gültigen Kalendermonat trägt
+    /// (Monat 1–12, Jahr 1–9999). <c>default(YearMonth)</c> (0000-00)
+    /// hat den Konstrutor umgangen und ist ungültig.
+    /// </summary>
+    public bool IsValid => Year is >= 1 and <= 9999 && Month is >= 1 and <= 12;
+
+    private static void Validate(int year, int month)
     {
         if (month < 1 || month > 12)
         {
@@ -20,17 +47,18 @@ public readonly record struct YearMonth(int Year, int Month) : IComparable<YearM
                 $"Monat {month} ist ungültig (erwartet 1–12).", nameof(month));
         }
 
-        if (year < 0 || year > 9999)
+        if (year < 1 || year > 9999)
         {
             throw new ArgumentException(
-                $"Jahr {year} ist ungültig (erwartet 0–9999).", nameof(year));
+                $"Jahr {year} ist ungültig (erwartet 1–9999).", nameof(year));
         }
-
-        return new YearMonth(year, month);
     }
 
+    /// <summary>Erzeugt einen Kalendermonat (Factory-Alias für den Konstrutor).</summary>
+    public static YearMonth Create(int year, int month) => new(year, month);
+
     /// <summary>
-    /// Erzeugt den Kalendermonat eines Fachdatums (z. B. des Buchungsdats
+    /// Erzeugt den Kalendermonat eines Fachdatums (z. B. des Buchungsdatums
     /// einer Einnahme).
     /// </summary>
     public static YearMonth FromDate(DateOnly date) => new(date.Year, date.Month);

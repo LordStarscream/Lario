@@ -170,6 +170,13 @@ public sealed class Booking
                         $"Einnahme '{Id}' ohne Finanzierungsmonat (Default wird bei Erstellung materialisiert).");
                 }
 
+                if (!FundingMonth.Value.IsValid)
+                {
+                    throw new LarioDomainException(
+                        $"Einnahme '{Id}' mit ungültigem Finanzierungsmonat '{FundingMonth}' " +
+                        "(Monat 1–12, Jahr 1–9999 erforderlich) — ein ungültiger Wert darf nicht gespeichert werden.");
+                }
+
                 if (Splits.Count > 0)
                 {
                     throw new LarioDomainException(
