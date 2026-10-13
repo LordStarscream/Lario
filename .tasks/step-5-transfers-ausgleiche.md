@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 5 – Transfers, Umwidmung und interne Ausgleiche
 
-**Status:** [erledigt, Abnahme ausstehend] (implementiert 12. Okt. 2026, vier externe Review-Runden am 13. Okt. 2026, alle Befunde behoben, **PR #6** → `main`)
+**Status:** [erledigt, Abnahme ausstehend] (implementiert 12. Okt. 2026, fünf externe Review-Runden am 13./14. Okt. 2026, alle Befunde behoben, **PR #6** → `main`)
 **Branch:** `step/5-transfers-ausgleiche`
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 5"
 **Verbindliche Spezifikation:** `docs/step-0/rechenvertrag.md` (§3.3 Postings, §3.4 signierte Konto-Pool-Zuordnung, §3.5 offene Ausgleichspositionen, §3.6 freie Verfügbarkeit, §5.2 Transfer/Umwidmung-Status)
@@ -289,18 +289,43 @@ Idempotenz/Konfliktprüfung, FK-Atomarität, 259/259 Tests, 0 Build-Warnungen.
   (Fortsetzungsbegleichung nach Split fließt in die beglichene Zeile
   ein, Zeilenid bleibt).
 
+### Fünfte externe Review-Runde (14. Okt. 2026, nach der R4-Lieferung) — P1 behoben
+
+- **P1 — Rückdatierte Einnahme, die gleichzeitig eine abgeschlossene
+  Episode UND einen offenen Zyklus verkürzt, wird abgelehnt:** Der
+  Historien-Integritätscheck („jede beglichene Episode des
+  nachher-Zustands braucht eine werteidentische Zeile") lief im
+  Fortsetzungszweig „offen→offen, alter Zyklus läuft weiter“ (der R3/R4-
+  Fortsetzungsfall) nur implizit über die offene Zeile: dort nahm die
+  offene Zeile die Werte der offenen Episode an, aber eine **beglichene
+  Episode derselben Zelle**, die durch die (rückdatierte) Buchung
+  verkürzt wurde, bekam keinen Abgleich — ihre Zeile behielt den alten
+  Wert, der Integritätscheck fand keine werteidentische Zeile und lehnte
+  die gültige Buchung ab (`LarioDomainException`: „keine passende
+  persistierte Position existiert“). **Fix:** Im Fortsetzungszweig wird
+  nach dem Update der offenen Zeile zusätzlich jede beglichene Episode
+  des nachher-Zustands gegen ihre persistierte Zeile (gepaart über die
+  stabile Identität: Begründung + Fachdatum) abgeglichen; nur wenn die
+  Zeile vom Replay abweicht, wird sie ge-updatet (Identität bleibt, Höhe
+  /Status/Begleichung folgen dem Journal). Werteidentische Zeilen bleiben
+  unverändert. Neue Tests (1, echte SQLite):
+  `BackdatedIncome_ShortensSettledAndOpenCycles_SavesIncome_UpdatesBothRows`
+  (Zyklus A 20 € beglichen + Zyklus B 20 € offen; rückdatierte Einnahme
+  10 € vor beiden → A bleibt beglichen mit 10 €, B bleibt offen mit
+  10 € Rest, beide Zeilen behalten ihre stabilen Ids; Neustart stabil).
+
 ## Ergebnis
 
 - Build: `dotnet build Lario.slnx` — 0 Fehler, 0 Warnungen
-- Tests: `dotnet test Lario.slnx` — 285/285 grün (175 Domain, 110
-  Infrastructure; davon 59 echte-SQLite-Integrationstests für Schritt 5)
+- Tests: `dotnet test Lario.slnx` — 286/286 grün (175 Domain, 111
+  Infrastructure; davon 60 echte-SQLite-Integrationstests für Schritt 5)
 
 ## Abweichungen / Offene Punkte
 
 - Umwidmung darf negative Poolbestände erzeugen (oben dokumentiert; §3.6).
 - Bekannte Randgrenze kanonischer Reihenfolge (oben); kein Blocker.
 - Abnahme durch Nutzer ausstehend (PR #6, um die Review-Fixes aller
-  vier Runden erweitert).
+  fünf Runden erweitert).
 - Hinweis: Der Commit-Text `e2320a2` (R3-Fix) beschreibt den Befund
   ungenau („Vollausgleich … wird abgelehnt"); maßgeblich sind dieser
   R3-Eintrag und `docs/step-5/step5-transfers-ausgleiche.md`

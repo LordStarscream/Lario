@@ -1,6 +1,6 @@
 # Schritt 5 — Transfers, Umwidmung und interne Ausgleiche
 
-**Branch:** `step/5-transfers-ausgleiche` · **Basis:** Schritt 4 (merged, `375b2ca`) · **Status:** implementiert (12. Okt. 2026), drei externe Review-Runden (13. Okt. 2026), alle Befunde behoben, Abnahme durch den Nutzer ausstehend · **PR:** #6
+**Branch:** `step/5-transfers-ausgleiche` · **Basis:** Schritt 4 (merged, `375b2ca`) · **Status:** implementiert (12. Okt. 2026), fünf externe Review-Runden (13./14. Okt. 2026), alle Befunde behoben, Abnahme durch den Nutzer ausstehend · **PR:** #6
 **Spezifikation:** `docs/step-0/rechenvertrag.md` (§3.3 Postings, §3.4 signierte Konto-Pool-Zuordnung, §3.5 offene Ausgleichspositionen, §3.6 freie Verfügbarkeit, §5.2 Transfer/Umwidmung-Status)
 **Referenzfälle:** `docs/step-0/referenzfaelle/04-ausgleich.json`, `05-kontotransfer.json`, `06-umwidmung.json`
 
@@ -105,6 +105,16 @@ dotnet test Lario.slnx --no-restore
   - **Fix (Ansicht)**: `SettlementQueryService` führt dieselbe Paarung aus; die **offene** Ansicht zeigt den Journalzustand (Episode: Werte *und* Begründung) mit der stabilen Zeilen-Id, die **beglichene** Ansicht zeigt die persistierte Zeile (stabile Historie — auch wenn die zusammengeführte Episode eine andere Begründung trägt). Id und Stammdaten (Konto, Pool) kommen immer von der Zeile.
   - **Neue Tests (5, echte SQLite)**: `NewCycleAfterSettledEpisode_CreatesNewRow_KeepsOldSettled` (neue Zeile mit neuem Id, alte Zeile bleibt beglichen, stabil über Neustart), `NewCycleAfterBackdatedFullSettlement_CreatesNewRow_KeepsClosedHistory`, `NewCycleAfterMergeAndSettlement_CreatesThirdRow` (dritte Zeile; Ansicht zeigt alle drei mit den Zeilen-Identitäten), `LegacyEpisodeWithoutRow_NewCycle_ViewStaysConsistent` (Legacy bleibt unsichtbar), `TamperedSettledRow_UnchangedPrefix_FailsVisibly` (manipulierte beglichene Zeile in unverändertem Präfix: sichtbarer Integritätsfehler, Buchung wird verworfen).
 
+### Runde 4 — alle Befunde behoben
+
+- **P1 — Rückdatierter Split und Vollausgleich mit neuer Begründung** — Der R3-Fortsetzungs-Zweig („offen→offen = dieselbe Episode“) überschrieb die offene Zeile *unbedingt* mit der offenen Episode nachher; bei teilweiser Begleichung (Split) oder Vollausgleich mit neuem offenen Zyklus war die offene Zeile danach falsch begründet bzw. die abgeschlossene Historie verschwand still. **Fix (Übergangsanalyse):** „offen→offen“ unterscheidet, ob der alte Zyklus im Replay fortbesteht (Fortsetzung → dieselbe Zeile, Werte folgen dem Journal) oder durch die Buchung geschlossen wurde: (a) linke Teil-Episode mit gleicher Begründung = **Split** → offene Zeile schließt mit dem linken Teil (Identität bleibt), neuer offener Zyklus = eigene Zeile (neues Id); (b) keine linke Teil-Episode = **Vollausgleich** → kontrollierter Abschluss (Begleichungsreferenz = neue Buchung), neuer offener Zyklus = eigene Zeile. Der Historien-Check paart beglichene Episoden zusätzlich zur Erstellung. Neue Tests (3, echte SQLite).
+
+### Runde 5 — P1 behoben
+
+- **P1 — Rückdatierte Einnahme, die gleichzeitig eine abgeschlossene Episode UND einen offenen Zyklus verkürzt, wird abgelehnt** — Im Fortsetzungszweig (R3/R4, „offen→offen, alter Zyklus läuft weiter“) nahm nur die offene Zeile die Werte der offenen Episode an; eine *beglichene* Episode derselben Zelle, die durch die rückdatierte Buchung verkürzt wurde, bekam keinen Abgleich — ihre Zeile behielt den alten Wert, der Historien-Integritätscheck fand keine werteidentische Zeile und lehnte die gültige Buchung ab. **Fix:** Im Fortsetzungszweig wird nach dem Update der offenen Zeile zusätzlich jede beglichene Episode des nachher-Zustands gegen ihre persistierte Zeile (gepaart über stabile Identität: Begründung + Fachdatum) abgeglichen; nur bei Abweichung Update (Identität bleibt, Höhe/Status/Begleichung folgen dem Journal). Neue Tests (1, echte SQLite): `BackdatedIncome_ShortensSettledAndOpenCycles_SavesIncome_UpdatesBothRows`.
+
+> Vollständige Befund- und Fix-Detail inkl. Testnamen: `.tasks/step-5-transfers-ausgleiche.md` (Abschnitte „Externe Review-Runde“ bis „Fünfte externe Review-Runde“).
+
 ---
 
-*Stand: 13. Okt. 2026 — drei Review-Runden abgeschlossen, alle Befunde behoben, 282/282 Tests, 0 Build-Warnungen. Abnahme durch den Nutzer ausstehend (PR #6).*
+*Stand: 14. Okt. 2026 — fünf Review-Runden abgeschlossen, alle Befunde behoben, 286/286 Tests, 0 Build-Warnungen. Abnahme durch den Nutzer ausstehend (PR #6).*
