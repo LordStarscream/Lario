@@ -53,7 +53,7 @@ public sealed class ReassignmentService(
                     $"{existing.Type} verwendet.");
             }
 
-            if (!SpecMatchesBooking(spec, existing, catalog))
+            if (!SpecMatchesBooking(spec, existing))
             {
                 throw new DomainConflictException(
                     $"Für die Umwidmung '{spec.Id}' existiert bereits eine Buchung " +
@@ -130,13 +130,16 @@ public sealed class ReassignmentService(
     ///   Herkunftsprüfung (Upgrade-Kompatibilität);
     /// - explizite Verteilung der Vorgabe: 1:1 als Multiset (Konto, Betrag);
     /// - implizite Vorgabe (keine Zeilen): die gespeicherte Verteilung wird
-    ///   akzeptiert, wenn sie zur Buchung passt (Summe = Betrag, aktive
-    ///   Konten). Die exakte implizite Ableitung ist im Wiederholungszeitpunkt
+    ///   akzeptiert, wenn sie zur Buchung passt (Summe = Betrag) — ohne
+    ///   Aktivitätsprüfung: eine identische Vorgabe wird auch nach
+    ///   Archivierung des Trägerkontos bestätigt (Idempotenz vor
+    ///   Aktivitätsprüfung; Schritt-5-Review R2). Die exakte implizite
+    ///   Ableitung ist im Wiederholungszeitpunkt
     ///   nicht rekonstruierbar, weil spätere Buchungen die Zellaufteilung
     ///   verändert haben können — die gespeicherten Zeilen sind die
     ///   materialisierte Auflösung der Erstanlage.
     /// </summary>
-    private static bool SpecMatchesBooking(ReassignmentSpec spec, Booking booking, MasterDataCatalog catalog)
+    private static bool SpecMatchesBooking(ReassignmentSpec spec, Booking booking)
     {
         if (booking.Date != spec.Date || booking.Note != spec.Note)
         {
@@ -179,16 +182,16 @@ public sealed class ReassignmentService(
         if (spec.Accounts is null)
         {
             // Implizite Wiederholung: die gespeicherte Verteilung muss zur
-            // Buchung passen (Summe, aktive Konten).
+            // Buchung passen (Summe). Keine Aktivitätsprüfung — eine
+            // identische Vorgabe wird auch nach Archivierung des
+            // Trägerkontos bestätigt (Idempotenz vor Aktivitätsprüfung).
             var storedSum = Money.Zero;
             foreach (var stored in storedAccounts)
             {
                 storedSum = storedSum.Add(stored.Amount);
             }
 
-            return storedSum == spec.Amount
-                && storedAccounts.All(a =>
-                    catalog.FindAccount(a.AccountId)?.Status == EntityStatus.Active);
+            return storedSum == spec.Amount;
         }
 
         // Explizite Verteilung: 1:1 als Multiset (Konto, Betrag).

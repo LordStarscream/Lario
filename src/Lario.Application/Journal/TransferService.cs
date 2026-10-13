@@ -58,7 +58,7 @@ public sealed class TransferService(
                     $"{existing.Type} verwendet.");
             }
 
-            if (!SpecMatchesBooking(spec, existing, catalog))
+            if (!SpecMatchesBooking(spec, existing))
             {
                 throw new DomainConflictException(
                     $"Für den Transfer '{spec.Id}' existiert bereits eine Buchung " +
@@ -126,15 +126,19 @@ public sealed class TransferService(
     /// - explizite Zuordnung der Vorgabe: 1:1 mit den gespeicherten
     ///   Zeilen (Pool, Betrag);
     /// - implizite Vorgabe (keine Zeilen): die gespeicherte Zuordnung
-    ///   wird akzeptiert, wenn sie zur Buchung passt (Summe = Betrag,
-    ///   aktive Pools). Die exakte implizite Ableitung ist im
+    ///   wird akzeptiert, wenn sie zur Buchung passt (Summe = Betrag) —
+    ///   ohne Aktivitätsprüfung: die Idempotenz greift vor der
+    ///   Aktivitätsprüfung, auch wenn die materialisierten Pools
+    ///   inzwischen archiviert sind (Schritt-5-Review R2: Aktivitäts-
+    ///   prüfungen gehören zur tatsächlichen Neuanlage). Die exakte
+    ///   implizite Ableitung ist im
     ///   Wiederholungszeitpunkt nicht rekonstruierbar, weil spätere
     ///   Buchungen die Zellaufteilung des Quellkontos verändert haben
     ///   können — die gespeicherten Zeilen sind die materialisierte
     ///   Auflösung der Erstanlage.
     /// </summary>
     private static bool SpecMatchesBooking(
-        TransferSpec spec, Booking booking, MasterDataCatalog catalog)
+        TransferSpec spec, Booking booking)
     {
         if (booking.Date != spec.Date || booking.Note != spec.Note)
         {
@@ -186,16 +190,17 @@ public sealed class TransferService(
         if (spec.Purposes is null)
         {
             // Implizite Wiederholung: die gespeicherte Zuordnung muss zur
-            // Buchung passen (Summe, aktive Pools).
+            // Buchung passen (Summe). Keine Aktivitätsprüfung — eine
+            // identische Vorgabe wird auch nach Archivierung der
+            // materialisierten Pools bestätigt (Idempotenz vor
+            // Aktivitätsprüfung).
             var storedSum = Money.Zero;
             foreach (var stored in storedPurposes)
             {
                 storedSum = storedSum.Add(stored.Amount);
             }
 
-            return storedSum == spec.Amount
-                && storedPurposes.All(p =>
-                    catalog.FindPool(p.PoolId)?.Status == EntityStatus.Active);
+            return storedSum == spec.Amount;
         }
 
         if (storedPurposes.Count != spec.Purposes.Count)
