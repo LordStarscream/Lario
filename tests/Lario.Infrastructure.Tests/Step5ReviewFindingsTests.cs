@@ -377,6 +377,272 @@ public class SettlementIdentityTests
 }
 
 /// <summary>
+/// Schritt-5-Review R3 auf echter SQLite: ein abgeschlossener Sachverhalt
+/// wird nicht durch einen späteren neuen Zyklus überschrieben. Vor dem
+/// Fix trug die jüngste beglichene Zeile die neue offene Episode (wird
+/// wieder geöffnet) — die abgeschlossene Historie war verloren. Jetzt
+/// wird für den neuen Zyklus eine eigene Zeile mit neuem Id angelegt;
+/// die beglichene Zeile bleibt unverändert (auch über einen Neustart).
+/// </summary>
+public class SettlementNewCycleTests
+{
+    [Fact(DisplayName = "Neuer Zyklus nach abgeschlossener Episode: eigene Zeile mit neuem Id, alte Zeile bleibt beglichen")]
+    public async Task NewCycleAfterSettledEpisode_CreatesNewRow_KeepsOldSettled()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+        await Step5Scenario.AddMixedPurchaseAsync(db);
+        var rowId = await OpenRowIdAsync(db);
+
+        // Einnahme +20 € schließt den Zyklus (Zufluss nach der Begründung
+        // in der kanonischen Reihenfolge) — die Zeile wird beglichen.
+        await db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
+        {
+            Id = "bk-2026-1210",
+            Date = new DateOnly(2026, 11, 10),
+            Amount = new Money(2_000),
+            AccountId = Step5Scenario.Haupt,
+            Note = "Abschluss",
+            Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(2_000))],
+        });
+
+        var settled = Assert.Single(await db.Resolve<ISettlementPositionRepository>().GetAllAsync());
+        Assert.Equal(rowId, settled.Id);
+        Assert.Equal(SettlementStatus.Beglichen, settled.Status);
+        Assert.Equal("bk-2026-1210", settled.SettledByBookingId);
+
+        // Neue Ausgabe −10 € auf derselben Zelle: neuer Zyklus — eigene
+        // Zeile mit NEUEM Id, die beglichene Zeile bleibt unverändert.
+        await ExpenseAsync(db, "bk-2026-1220", new DateOnly(2026, 11, 20), 1_000);
+
+        var open = Assert.Single(await db.Resolve<SettlementQueryService>().GetOpenAsync());
+        Assert.NotEqual(rowId, open.Id);
+        Assert.Equal("bk-2026-1220", open.CreatedByBookingId);
+        Assert.Equal(1_000, open.RestAmount.Cents);
+
+        var all = await db.Resolve<ISettlementPositionRepository>().GetAllAsync();
+        Assert.Equal(2, all.Count);
+        var oldRow = all.Single(r => r.Id == rowId);
+        Assert.Equal(SettlementStatus.Beglichen, oldRow.Status);
+        Assert.Equal("bk-2026-1202", oldRow.CreatedByBookingId);
+        Assert.Equal(2_000, oldRow.Amount.Cents);
+        Assert.Equal(0, oldRow.RestAmount.Cents);
+        Assert.Equal("bk-2026-1210", oldRow.SettledByBookingId);
+
+        // Neustart: Zustand bleibt stabil (keine Wiedereröffnung der alten
+        // Zeile bei der nächsten Abfrage/Übernahme).
+        using var services = db.NewServiceProvider();
+        using var scope = services.CreateScope();
+        var query = scope.ServiceProvider.GetRequiredService<SettlementQueryService>();
+        var views = await query.GetAllAsync();
+        Assert.Equal(2, views.Count);
+        Assert.Single(views, v => v.Status == SettlementStatus.Offen);
+        var repo = scope.ServiceProvider.GetRequiredService<ISettlementPositionRepository>();
+        var persisted = await repo.GetAllAsync();
+        var persistedOld = persisted.Single(r => r.Id == rowId);
+        Assert.Equal(SettlementStatus.Beglichen, persistedOld.Status);
+        Assert.Equal("bk-2026-1210", persistedOld.SettledByBookingId);
+    }
+
+    [Fact(DisplayName = "Neuer Zyklus nach rückdatiertem Vollausgleich: eigene Zeile, abgeschlossene Zeile bleibt erhalten")]
+    public async Task NewCycleAfterBackdatedFullSettlement_CreatesNewRow_KeepsClosedHistory()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+        await Step5Scenario.AddMixedPurchaseAsync(db);
+        var rowId = await OpenRowIdAsync(db);
+
+        // Rückdatierte Einnahme +20 €: der Zyklus ist im Replay verschwunden,
+        // die Zeile wird kontrolliert abgeschlossen (P1a).
+        await db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
+        {
+            Id = "bk-2026-1110",
+            Date = new DateOnly(2026, 11, 2),
+            Amount = new Money(2_000),
+            AccountId = Step5Scenario.Haupt,
+            Note = "Rückdatierte Vollausgleichung",
+            Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(2_000))],
+        });
+
+        var closed = Assert.Single(await db.Resolve<ISettlementPositionRepository>().GetAllAsync());
+        Assert.Equal(rowId, closed.Id);
+        Assert.Equal(SettlementStatus.Beglichen, closed.Status);
+        Assert.Equal("bk-2026-1110", closed.SettledByBookingId);
+
+        // Neue Ausgabe −10 €: neuer Zyklus — neue Zeile, die alte bleibt.
+        await ExpenseAsync(db, "bk-2026-1220", new DateOnly(2026, 11, 20), 1_000);
+
+        var all = await db.Resolve<ISettlementPositionRepository>().GetAllAsync();
+        Assert.Equal(2, all.Count);
+        var oldRow = all.Single(r => r.Id == rowId);
+        Assert.Equal(SettlementStatus.Beglichen, oldRow.Status);
+        Assert.Equal("bk-2026-1110", oldRow.SettledByBookingId);
+        var newRow = all.Single(r => r.Id != rowId);
+        Assert.Equal(SettlementStatus.Offen, newRow.Status);
+        Assert.Equal("bk-2026-1220", newRow.CreatedByBookingId);
+        Assert.Equal(1_000, newRow.RestAmount.Cents);
+
+        // Die Ansicht zeigt beide (keine Integritätsfehler).
+        var views = await db.Resolve<SettlementQueryService>().GetAllAsync();
+        Assert.Equal(2, views.Count);
+        Assert.Equal(1, views.Count(v => v.Status == SettlementStatus.Offen));
+    }
+
+    [Fact(DisplayName = "Neuer Zyklus nach Zusammenführung und Abschluss: dritte Zeile, Historie intakt")]
+    public async Task NewCycleAfterMergeAndSettlement_CreatesThirdRow()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+
+        // Zwei abgeschlossene Zyklen (je 10 €).
+        await ExpenseAsync(db, "bk-r3-a", new DateOnly(2026, 11, 1), 1_000);
+        await IncomeAsync(db, "bk-r3-ap", new DateOnly(2026, 11, 3), 1_000);
+        await ExpenseAsync(db, "bk-r3-b", new DateOnly(2026, 11, 5), 1_000);
+        await IncomeAsync(db, "bk-r3-bp", new DateOnly(2026, 11, 7), 1_000);
+        var rowA = (await db.Resolve<ISettlementPositionRepository>().GetAllAsync())
+            .Single(r => r.CreatedByBookingId == "bk-r3-a").Id;
+        var rowB = (await db.Resolve<ISettlementPositionRepository>().GetAllAsync())
+            .Single(r => r.CreatedByBookingId == "bk-r3-b").Id;
+
+        // Rückdatierte Ausgabe vereinigt beide Zyklen zu einem offenen
+        // (die jüngste Zeile wird wieder geöffnet): 30 € Schuldzuwachs,
+        // 20 € bereits abgedeckt (bk-r3-ap, bk-r3-bp) -> 10 € offen.
+        // Der Abschluss gleicht exakt die offenen 10 € aus (kein
+        // Überschuss, der die Folgeausgabe aufheben würde); die Zeile
+        // bleibt die Begründung des zweiten Zyklus.
+        await ExpenseAsync(db, "bk-r3-c", new DateOnly(2026, 11, 2), 1_000);
+        await IncomeAsync(db, "bk-r3-d", new DateOnly(2026, 11, 10), 1_000);
+
+        // Neuer Zyklus: dritte Zeile mit neuem Id.
+        await ExpenseAsync(db, "bk-r3-e", new DateOnly(2026, 11, 20), 1_000);
+
+        var all = await db.Resolve<ISettlementPositionRepository>().GetAllAsync();
+        Assert.Equal(3, all.Count);
+        Assert.Equal(SettlementStatus.Beglichen,
+            all.Single(r => r.Id == rowA).Status);
+        Assert.Equal("bk-r3-ap",
+            all.Single(r => r.Id == rowA).SettledByBookingId);
+        var mergedRow = all.Single(r => r.Id == rowB);
+        Assert.Equal(SettlementStatus.Beglichen, mergedRow.Status);
+        Assert.Equal("bk-r3-d", mergedRow.SettledByBookingId);
+        var newRow = all.Single(r => r.Id != rowA && r.Id != rowB);
+        Assert.Equal(SettlementStatus.Offen, newRow.Status);
+        Assert.Equal("bk-r3-e", newRow.CreatedByBookingId);
+
+        // Die Ansicht zeigt alle drei Positionen (keine Integritätsfehler
+        // durch die zusammengeführte Historie).
+        var views = await db.Resolve<SettlementQueryService>().GetAllAsync();
+        Assert.Equal(3, views.Count);
+        Assert.Equal(1, views.Count(v => v.Status == SettlementStatus.Offen));
+        Assert.Contains(views, v => v.CreatedByBookingId == "bk-r3-a"
+            && v.SettledByBookingId == "bk-r3-ap");
+        Assert.Contains(views, v => v.CreatedByBookingId == "bk-r3-b"
+            && v.SettledByBookingId == "bk-r3-d");
+    }
+
+    [Fact(DisplayName = "Legacy-Episode ohne Zeile neben neuem Zyklus: Ansicht bleibt intakt, Legacy bleibt unsichtbar")]
+    public async Task LegacyEpisodeWithoutRow_NewCycle_ViewStaysConsistent()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+
+        // Abgeschlossener Zyklus, dann Zeile gelöscht (Altdatenbank vor
+        // der Positionsverwaltung).
+        await ExpenseAsync(db, "bk-legacy-exp", new DateOnly(2026, 11, 1), 1_000);
+        await IncomeAsync(db, "bk-legacy-inc", new DateOnly(2026, 11, 3), 1_000);
+        using (var scope = db.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<LarioDbContext>();
+            context.SettlementPositions.RemoveRange(
+                await context.SettlementPositions.ToListAsync());
+            await context.SaveChangesAsync();
+        }
+
+        // Neuer Zyklus: eigene Zeile; die Legacy-Episode bleibt unsichtbar,
+        // die Abfrage schlägt nicht fehl.
+        await ExpenseAsync(db, "bk-legacy-exp2", new DateOnly(2026, 11, 20), 1_000);
+
+        var views = await db.Resolve<SettlementQueryService>().GetAllAsync();
+        var open = Assert.Single(views);
+        Assert.Equal("bk-legacy-exp2", open.CreatedByBookingId);
+        Assert.Equal(SettlementStatus.Offen, open.Status);
+        Assert.Single(await db.Resolve<ISettlementPositionRepository>().GetAllAsync());
+    }
+
+    [Fact(DisplayName = "Manipulierte beglichene Zeile in unverändertem Präfix: sichtbarer Fehler, Buchung wird verworfen")]
+    public async Task TamperedSettledRow_UnchangedPrefix_FailsVisibly()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+        await Step5Scenario.AddMixedPurchaseAsync(db);
+        await db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
+        {
+            Id = "bk-2026-1210",
+            Date = new DateOnly(2026, 11, 10),
+            Amount = new Money(2_000),
+            AccountId = Step5Scenario.Haupt,
+            Note = "Abschluss",
+            Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(2_000))],
+        });
+
+        // Beglichene Zeile außerhalb des Systems manipulieren (Rest != 0).
+        using (var scope = db.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<LarioDbContext>();
+            var stored = await context.SettlementPositions.SingleAsync();
+            stored.RestAmount = new Money(500);
+            await context.SaveChangesAsync();
+        }
+
+        // Neue Buchung auf derselben Zelle: der werteidentische Präfix
+        // besteht nicht mehr — die Abfrage/Speicherung schlägt sichtbar
+        // fehl, die Buchung wird nicht persistiert.
+        var before = await Step5Scenario.JournalAsync(db);
+        var exception = await Assert.ThrowsAsync<LarioDomainException>(() =>
+            ExpenseAsync(db, "bk-tamper", new DateOnly(2026, 11, 20), 1_000));
+        Assert.Contains("Integritätsfehler", exception.Message);
+
+        var after = await Step5Scenario.JournalAsync(db);
+        Assert.Equal(before.Bookings.Count, after.Bookings.Count);
+    }
+
+    private static async Task<string> OpenRowIdAsync(TestDatabase db) =>
+        (await db.Resolve<ISettlementPositionRepository>().GetAllAsync())
+            .Single(r => r.Status == SettlementStatus.Offen).Id;
+
+    private static Task ExpenseAsync(
+        TestDatabase db, string id, DateOnly date, long cents) =>
+        db.Resolve<ExpenseService>().CreateAsync(new ExpenseSpec
+        {
+            Id = id,
+            Date = date,
+            AccountId = Step5Scenario.Haupt,
+            TotalAmount = new Money(cents),
+            Splits =
+            [
+                new ExpenseSplitSpec
+                {
+                    Id = $"sp-{id}",
+                    Amount = new Money(cents),
+                    PoolId = Step5Scenario.PoolFreizeit,
+                    CategoryId = "cat-freizeit",
+                },
+            ],
+        });
+
+    private static Task IncomeAsync(
+        TestDatabase db, string id, DateOnly date, long cents) =>
+        db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
+        {
+            Id = id,
+            Date = date,
+            Amount = new Money(cents),
+            AccountId = Step5Scenario.Haupt,
+            Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(cents))],
+        });
+}
+
+/// <summary>
 /// Schritt-5-Review P2b auf echter SQLite: die Herkunft der
 /// Verteilungszeilen (explizit / implizit) ist Buchungsinhalt
 /// (<see cref="Booking.AllocationExplicit"/>) und steuert die Idempotenz —
