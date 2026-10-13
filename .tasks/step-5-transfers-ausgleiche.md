@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 5 – Transfers, Umwidmung und interne Ausgleiche
 
-**Status:** [erledigt, Abnahme ausstehend] (implementiert 12. Okt. 2026, Review bestanden ohne Befunde, **PR #6** → `main`)
+**Status:** [erledigt, Abnahme ausstehend] (implementiert 12. Okt. 2026, vier externe Review-Runden am 13. Okt. 2026, alle Befunde behoben, **PR #6** → `main`)
 **Branch:** `step/5-transfers-ausgleiche`
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 5"
 **Verbindliche Spezifikation:** `docs/step-0/rechenvertrag.md` (§3.3 Postings, §3.4 signierte Konto-Pool-Zuordnung, §3.5 offene Ausgleichspositionen, §3.6 freie Verfügbarkeit, §5.2 Transfer/Umwidmung-Status)
@@ -246,18 +246,61 @@ Idempotenz/Konfliktprüfung, FK-Atomarität, 259/259 Tests, 0 Build-Warnungen.
   `LegacyEpisodeWithoutRow_NewCycle_ViewStaysConsistent`,
   `TamperedSettledRow_UnchangedPrefix_FailsVisibly`.
 
+### Vierte externe Review-Runde (13. Okt. 2026, nach der R3-Lieferung) — alle Befunde behoben
+
+- **P1 — Rückdatierter Split und Vollausgleich mit neuer Begründung
+  wurden abgelehnt (oder würden still Historie verlieren):** Der
+  R3-Zweig „offen→offen = dieselbe Episode“ überschrieb die offene
+  Zeile **unbedingt** mit der offenen Episode nachher. Wurde die offene
+  Episode nachher aber durch eine (rückdatierte) Einnahme teilweise
+  beglichen (Split: im Replay bleibt der linke Teil als neue beglichene
+  Episode), hatte die offene Zeile die Begründung des linken Teils —
+  die beglichene Episode hatte keine werteidentische Zeile →
+  Integritätscheck → Ablehnung (`LarioDomainException`). Beim
+  Vollausgleich mit neuem offener Zyklus (P1a-Szenario plus Fortsetzung)
+  hätte der Fortsetzungs-Zweig die offene Zeile auf den **neuen** Zyklus
+  umgeschrieben: die abgeschlossene Historie wäre still aus der Ansicht
+  verschwunden. **Fix (Übergangsanalyse):** „offen→offen“ unterscheidet
+  jetzt, ob der alte Zyklus im Replay fortbesteht (kein beglichene
+  Episode nachher wurde nach Erstellung des alten Zyklus beglichen — in
+  echter Fortsetzung unmöglich): Ja → dieselbe Zeile, Werte folgen dem
+  Journal (Vertiefung, Teilzahlung, rückdatierte Umordnung). Nein → der
+  alte Zyklus wurde im Replay geschlossen: (a) linke Teil-Episode mit
+  gleicher Begründung = **Split** → die offene Zeile schließt mit den
+  Werten des linken Teils (Identität bleibt), der neue offene Zyklus
+  bekommt eine eigene Zeile (neues Id); (b) keine linke Teil-Episode =
+  **Vollausgleich** → kontrollierter Abschluss der offenen Zeile
+  (Begleichungsreferenz = die neue Buchung, P1a), neuer offener Zyklus
+  (falls vorhanden) = neue Zeile. **Fix (Historien-Check):** Beglichene
+  Episoden des nachher-Zustands werden zunächst werteidentisch zu
+  Zeilen gepaart; Episoden mit gleicher Erstellung wie eine Zeile
+  werden zusätzlich zur Erstellung gepaart (Split: ge-updatete Zeile
+  und linke Teil-Episode teilen die Erstellung, Werte haben sich
+  verändert) — bleibt eine Episode älter als alle Zeilen, bleibt sie
+  legitime unsichtbare Historie. `oldestRow` wird jetzt explizit über
+  alle effektiven Zeilen (inkl. neuer Zeilen) bestimmt, damit der
+  Legacy-Schnitt auch bei rückdatierten neuen Zeilen korrekt bleibt.
+  Neue Tests (3, echte SQLite): `BackdatedPartialSettlement_Split_SavesLeftPartSettled_AndNewOpenRow`
+  (Zwei-Zeilen-Übergang, Salden, Neustart),
+  `BackdatedFullSettlement_WithNewCycle_SetsOldCycleClosed_ByNewBooking_AndCreatesNewOpenRow`
+  (Vollausgleich + neuer Zyklus: alte Zeile mit Referenz auf die neue
+  Buchung abgeschlossen, keine zweite beglichene Zeile),
+  `BackdatedPartialSettlement_Split_ContinuingSettlement_MergesIntoSettledRow`
+  (Fortsetzungsbegleichung nach Split fließt in die beglichene Zeile
+  ein, Zeilenid bleibt).
+
 ## Ergebnis
 
 - Build: `dotnet build Lario.slnx` — 0 Fehler, 0 Warnungen
-- Tests: `dotnet test Lario.slnx` — 282/282 grün (175 Domain, 107
-  Infrastructure; davon 56 echte-SQLite-Integrationstests für Schritt 5)
+- Tests: `dotnet test Lario.slnx` — 285/285 grün (175 Domain, 110
+  Infrastructure; davon 59 echte-SQLite-Integrationstests für Schritt 5)
 
 ## Abweichungen / Offene Punkte
 
 - Umwidmung darf negative Poolbestände erzeugen (oben dokumentiert; §3.6).
 - Bekannte Randgrenze kanonischer Reihenfolge (oben); kein Blocker.
-- Abnahme durch Nutzer ausstehend (PR #6, um die Review-Fixes aller drei
-  Runden erweitert).
+- Abnahme durch Nutzer ausstehend (PR #6, um die Review-Fixes aller
+  vier Runden erweitert).
 - Hinweis: Der Commit-Text `e2320a2` (R3-Fix) beschreibt den Befund
   ungenau („Vollausgleich … wird abgelehnt"); maßgeblich sind dieser
   R3-Eintrag und `docs/step-5/step5-transfers-ausgleiche.md`
