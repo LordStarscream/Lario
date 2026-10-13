@@ -859,3 +859,178 @@ public class SettlementBackfillTests
         Assert.Single(await db.Resolve<SettlementQueryService>().GetAllAsync());
     }
 }
+
+/// <summary>
+/// Schritt-5-Review R4 auf echter SQLite: rückdatierte Zuflüsse, die
+/// bereits beglichene Ausgleichszyklen verändern, dürfen spätere
+/// Buchungen nicht ablehnen. Die Zeile bleibt begründungsgleich und
+/// übernimmt die veränderten Werte (Fall A); schließt der rückdatierte
+/// Zufluss einen offenen Zyklus, trägt die alte Zeile den abgeschlossenen
+/// linken Teil und ein folgender neuer offener Zyklus bekommt eine eigene
+/// Zeile mit neuem Id (Fall B); verschwindet der Zyklus im Replay, wird
+/// die Zeile kontrolliert abgeschlossen und ein späterer neuer Zyklus
+/// bekommt ebenfalls eine eigene Zeile (Fall C).
+/// </summary>
+public class SettlementBackdatedValueTests
+{
+    [Fact(DisplayName = "R4 Fall A: rückdatierter Zufluss vor der Begründung kürzt einen beglichenen Zyklus — Zeile behält Identität, übernimmt den neuen Wert")]
+    public async Task BackdatedIncome_BeforeSettledCycle_RowAdoptsChangedValue()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+
+        // Abgeschlossener Zyklus: Ausgabe 20 €, Einnahme 20 €.
+        await ExpenseAsync(db, "bk-r4-a1", new DateOnly(2026, 11, 1), 2_000);
+        await IncomeAsync(db, "bk-r4-a2", new DateOnly(2026, 11, 2), 2_000);
+
+        var row = (await db.Resolve<SettlementQueryService>().GetAllAsync()).Single();
+        Assert.Equal(SettlementStatus.Beglichen, row.Status);
+        Assert.Equal(2_000, row.Amount.Cents);
+        Assert.Equal("bk-r4-a1", row.CreatedByBookingId);
+        Assert.Equal("bk-r4-a2", row.SettledByBookingId);
+
+        // Einnahme 15 € DREI TAGE VOR der Begründung: der Überfluss
+        // mindert die spätere Schuld — der Zyklus schließt an derselben
+        // Einnahme, aber mit 5 € statt 20 €.
+        await IncomeAsync(db, "bk-r4-a0", new DateOnly(2026, 10, 30), 1_500);
+
+        var updated = (await db.Resolve<SettlementQueryService>().GetAllAsync()).Single();
+        Assert.Equal(row.Id, updated.Id);
+        Assert.Equal("bk-r4-a1", updated.CreatedByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 1), updated.CreatedDate);
+        Assert.Equal(500, updated.Amount.Cents);
+        Assert.Equal(0, updated.RestAmount.Cents);
+        Assert.Equal(SettlementStatus.Beglichen, updated.Status);
+        Assert.Equal("bk-r4-a2", updated.SettledByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 2), updated.SettledDate);
+
+        Assert.Empty(await db.Resolve<SettlementQueryService>().GetOpenAsync());
+    }
+
+    [Fact(DisplayName = "R4 Fall B: rückdatierter Zufluss zwischen zwei Ausgaben schließt den ersten Zyklus — alte Zeile trägt den linken Teil, neuer Zyklus bekommt eigene Zeile")]
+    public async Task BackdatedIncome_SplitsOpenCycle_OldRowCloses_NewCycleOwnRow()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+
+        // Zwei Ausgaben ohne Begleichung: ein offener Zyklus (40 €,
+        // Begründer ist die erste Ausgabe).
+        await ExpenseAsync(db, "bk-r4-b1", new DateOnly(2026, 11, 1), 2_000);
+        await ExpenseAsync(db, "bk-r4-b2", new DateOnly(2026, 11, 3), 2_000);
+        var openRowId = await OpenRowIdAsync(db);
+        var openRow = (await db.Resolve<SettlementQueryService>().GetOpenAsync()).Single();
+        Assert.Equal(4_000, openRow.Amount.Cents);
+        Assert.Equal(4_000, openRow.RestAmount.Cents);
+
+        // Einnahme 20 € am 11/2 (zwischen den Ausgaben): der erste Teil
+        // des Zyklus schließt (20 €, begründet von bk-r4-b1, beglichen
+        // von bk-r4-b0), der zweite Teil läuft weiter (20 €, begründet
+        // von bk-r4-b2).
+        await IncomeAsync(db, "bk-r4-b0", new DateOnly(2026, 11, 2), 2_000);
+
+        // Der abgeschlossene linke Teil trägt die bestehende Zeile
+        // (Identität bleibt: Id, Begründung, Fachdatum).
+        var settledRow = (await db.Resolve<ISettlementPositionRepository>().GetAllAsync())
+            .Single(r => r.Id == openRowId);
+        Assert.Equal("bk-r4-b1", settledRow.CreatedByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 1), settledRow.CreatedDate);
+        Assert.Equal(2_000, settledRow.Amount.Cents);
+        Assert.Equal(0, settledRow.RestAmount.Cents);
+        Assert.Equal(SettlementStatus.Beglichen, settledRow.Status);
+        Assert.Equal("bk-r4-b0", settledRow.SettledByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 2), settledRow.SettledDate);
+
+        // Der neue offene Zyklus hat eine eigene Zeile mit neuem Id und
+        // eigener Begründung — die abgeschlossene Zeile wird nicht
+        // überschrieben.
+        var open = (await db.Resolve<SettlementQueryService>().GetOpenAsync()).Single();
+        Assert.NotEqual(openRowId, open.Id);
+        Assert.Equal("bk-r4-b2", open.CreatedByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 3), open.CreatedDate);
+        Assert.Equal(2_000, open.Amount.Cents);
+        Assert.Equal(2_000, open.RestAmount.Cents);
+
+        // Beide Positionen sind sichtbar (keine Integritätsfehler durch
+        // den geteilten Zyklus).
+        var views = await db.Resolve<SettlementQueryService>().GetAllAsync();
+        Assert.Equal(2, views.Count);
+    }
+
+    [Fact(DisplayName = "R4 Fall C: rückdatierter Zufluss vor der Begründung lässt den Zyklus verschwinden — Zeile wird kontrolliert abgeschlossen, späterer neuer Zyklus bekommt eigene Zeile")]
+    public async Task BackdatedIncome_VanishesCycle_NewCycleOwnRow()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+
+        // Offener Zyklus: Ausgabe 20 €.
+        await ExpenseAsync(db, "bk-r4-c1", new DateOnly(2026, 11, 1), 2_000);
+        var openRowId = await OpenRowIdAsync(db);
+
+        // Einnahme 20 € ZWEI TAGE VOR der Ausgabe: der Überfluss deckt
+        // die Ausgabe vollständig ab — im Replay existiert der Zyklus
+        // nicht (Vollausgleich, verschwindender Zyklus).
+        await IncomeAsync(db, "bk-r4-c0", new DateOnly(2026, 10, 30), 2_000);
+
+        // Die offene Zeile wird kontrolliert abgeschlossen (Identität
+        // und Höhe bleiben, Begleichungsreferenz ist die neue Buchung —
+        // Schritt-5-Review P1a); sie verschwindet nicht still.
+        var closedRow = (await db.Resolve<ISettlementPositionRepository>().GetAllAsync())
+            .Single(r => r.Id == openRowId);
+        Assert.Equal("bk-r4-c1", closedRow.CreatedByBookingId);
+        Assert.Equal(2_000, closedRow.Amount.Cents);
+        Assert.Equal(0, closedRow.RestAmount.Cents);
+        Assert.Equal(SettlementStatus.Beglichen, closedRow.Status);
+        Assert.Equal("bk-r4-c0", closedRow.SettledByBookingId);
+        Assert.Equal(new DateOnly(2026, 10, 30), closedRow.SettledDate);
+        Assert.Empty(await db.Resolve<SettlementQueryService>().GetOpenAsync());
+
+        // Späterer neuer Zyklus: eigene Zeile mit neuem Id — die
+        // abgeschlossene Zeile bleibt als Historie erhalten.
+        await ExpenseAsync(db, "bk-r4-c2", new DateOnly(2026, 11, 5), 1_500);
+
+        var open = (await db.Resolve<SettlementQueryService>().GetOpenAsync()).Single();
+        Assert.NotEqual(openRowId, open.Id);
+        Assert.Equal("bk-r4-c2", open.CreatedByBookingId);
+        Assert.Equal(1_500, open.Amount.Cents);
+
+        var views = await db.Resolve<SettlementQueryService>().GetAllAsync();
+        Assert.Equal(2, views.Count);
+        Assert.Contains(views, v => v.CreatedByBookingId == "bk-r4-c1"
+            && v.SettledByBookingId == "bk-r4-c0");
+    }
+
+    private static async Task<string> OpenRowIdAsync(TestDatabase db) =>
+        (await db.Resolve<ISettlementPositionRepository>().GetAllAsync())
+            .Single(r => r.Status == SettlementStatus.Offen).Id;
+
+    private static Task ExpenseAsync(
+        TestDatabase db, string id, DateOnly date, long cents) =>
+        db.Resolve<ExpenseService>().CreateAsync(new ExpenseSpec
+        {
+            Id = id,
+            Date = date,
+            AccountId = Step5Scenario.Haupt,
+            TotalAmount = new Money(cents),
+            Splits =
+            [
+                new ExpenseSplitSpec
+                {
+                    Id = $"sp-{id}",
+                    Amount = new Money(cents),
+                    PoolId = Step5Scenario.PoolFreizeit,
+                    CategoryId = "cat-freizeit",
+                },
+            ],
+        });
+
+    private static Task IncomeAsync(
+        TestDatabase db, string id, DateOnly date, long cents) =>
+        db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
+        {
+            Id = id,
+            Date = date,
+            Amount = new Money(cents),
+            AccountId = Step5Scenario.Haupt,
+            Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(cents))],
+        });
+}

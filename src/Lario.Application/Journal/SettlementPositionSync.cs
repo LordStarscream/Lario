@@ -12,23 +12,29 @@ namespace Lario.Application.Journal;
 /// Positionstabelle ist deren persistente Ansicht mit stabilen
 /// Identitäten.
 ///
-/// Stabile Episodenidentität (Schritt-5-Review P1/R3): Eine Episode ist
-/// ein maximaler negativer Abschnitt einer Zelle (Konto, Pool). Ihre
-/// <i>Abgrenzung</i> (welche Buchung sie begründet, wo sie schließt)
-/// hängt von der kanonischen Reihenfolge im Journal (Fachdatum, dann
-/// Id) ab — eine neue gleichdatierte oder rückdatierte Buchung kann
-/// dieselbe Episode in die Vergangenheit verschieben, vertiefen, kürzen
-/// oder mehrere Episoden zu einer zusammenführen. Die <i>Reihenfolge</i>
-/// der Episoden ist dagegen stabil, und die Form des Übergangs (vorher/
-/// nachher) bestimmt eindeutig, was passiert:
-/// - Offener Zyklus vor der Buchung: er ist dieselbe Episode nachher
-///   (vertieft/gekürzt/umgeordnet — die offene Zeile trägt ihn) oder im
-///   Replay vollständig ausgeglichen (Vollausgleich — die offene Zeile
-///   wird kontrolliert abgeschlossen; existiert der Zyklus im Replay
-///   noch als jüngste beglichene Episode, folgt die Zeile deren
-///   Begleichungsreferenz, sonst wird die neue Buchung die
-///   Begleichungsreferenz). Neue Episoden entstehen in diesem Übergang
-///   nicht.
+/// Stabile Episodenidentität (Schritt-5-Review P1/R3/R4): Eine Episode
+/// ist ein maximaler negativer Abschnitt einer Zelle (Konto, Pool). Ihre
+/// <i>Abgrenzung</i> (welche Buchung sie begründet, wo sie schließt,
+/// welche Höhe sie hat) hängt von der kanonischen Reihenfolge im Journal
+/// (Fachdatum, dann Id) ab — eine neue gleichdatierte oder rückdatierte
+/// Buchung kann dieselbe Episode in die Vergangenheit verschieben,
+/// vertiefen, kürzen, ihren Wert verändern oder mehrere Episoden zu
+/// einer zusammenführen. Die <i>Reihenfolge</i> der Episoden ist dagegen
+/// stabil, und die Form des Übergangs (vorher/nachher) bestimmt eindeutig,
+/// was passiert:
+/// - Offener Zyklus vor der Buchung:
+///   - Läuft er im Replay bis zum Journalende (<i>Fortsetzung</i>), ist
+///     er dieselbe Episode nachher (vertieft/gekürzt/umgeordnet — die
+///     offene Zeile trägt ihn und nimmt dessen Werte an).
+///   - Wurde er durch die Buchung abgeschlossen, ist es ein <i>Split</i>
+///     (der linke Teil — gleiche Begründung — ist beglichen und schließt
+///     die offene Zeile; der neue offene Zyklus bekommt eine eigene
+///     Zeile mit neuem Id) oder ein <i>Vollausgleich</i> (der Zyklus
+///     verschwindet aus dem Replay — die offene Zeile wird kontrolliert
+///     abgeschlossen; existiert der Zyklus im Replay noch als jüngste
+///     beglichene Episode, folgt die Zeile deren Begleichungsreferenz,
+///     sonst wird die neue Buchung die Begleichungsreferenz; folgt ein
+///     neuer offener Zyklus, bekommt er eine eigene Zeile mit neuem Id).
 /// - Kein offener Zyklus vorher, offene Episode nachher: entweder <i>
 ///   reine Addition</i> — die vorherigen Episoden sind im nachher-
 ///   Zustand vollständig (werteidentisch) enthalten und die offene
@@ -41,7 +47,11 @@ namespace Lario.Application.Journal;
 ///   beglichene Historie erhalten). Ohne jede Zeile (Historie vor der
 ///   Positionsverwaltung) wird ebenfalls eine neue angelegt.
 /// - Weder offen vorher noch offen nachher: die beglichene Historie
-///   bleibt unverändert.
+///   bleibt, was sie ist — eine beglichene Episode, die eine Zeile
+///   begründungsgleich trägt (gleiche erstellende Buchung), übernimmt
+///   ihre veränderten Werte (z. B. rückdatierter Zufluss vor der
+///   Begründung kürzt die Episode — Schritt-5-Review R4); andernfalls
+///   bleibt die werteidentische Zeile unverändert.
 ///
 /// Damit behalten persistierte Zeilen ihre Identität
 /// (Id, CreatedByBookingId, CreatedDate, Notiz) — sie werden nicht durch
@@ -128,21 +138,35 @@ internal static class SettlementPositionSync
             var beforeOpen = before.Count > 0 && before[^1].Status == SettlementStatus.Offen;
             var afterOpen = after.Count > 0 && after[^1].Status == SettlementStatus.Offen;
 
-            // Die geplante Änderung der Zeile, die die offene Episode
-            // trägt bzw. neu anlegt — für den Historien-Check unten wird
-            // sie bereits wirksam (effective) angerechnet.
-            var openRowChange = (PlannedChange?)null;
-            SettlementPosition? affectedRow = null;
 
-            if (afterOpen)
+            if (afterOpen && beforeOpen)
             {
                 var openEpisode = after[^1];
+                var openBeforeEpisode = before[^1];
 
-                if (beforeOpen)
+                // Läuft der alte offene Zyklus im Replay bis zum
+                // Journalende? Er ist fortgesetzt, wenn keine beglichene
+                // Episode des nachher-Zustands innerhalb seines Abschnitts
+                // schließt (ihrer Begleichungspunkt liegt nach der
+                // Begründung des alten Zyklus). Schließt dagegen eine
+                // beglichene Episode innerhalb des alten Abschnitts, ist
+                // der alte Zyklus durch die Buchung abgeschlossen —
+                // entweder <i>Split</i> (der linke Teil schließt, ein
+                // neuer offener Zyklus folgt) oder <i>Vollausgleich</i>
+                // (der Zyklus verschwindet aus dem Replay; ein neuer
+                // offener Zyklus kann folgen) — Schritt-5-Review R4.
+                var oldCycleContinues = !after.Any(e =>
+                    e.Status == SettlementStatus.Beglichen
+                    && CompareIdentity(
+                        e.SettledDate!.Value, e.SettledByBookingId!,
+                        openBeforeEpisode.CreatedDate, openBeforeEpisode.CreatedByBookingId) > 0);
+
+                if (oldCycleContinues)
                 {
-                    // Der offene Zyklus existiert vor der Buchung (die
-                    // Buchung vertieft, verkürzt oder ordnet ihn um):
-                    // dieselbe Episode — die offene Zeile trägt sie.
+                    // Fortsetzung: dieselbe Episode — die offene Zeile
+                    // trägt sie und nimmt deren Werte an (Vertiefung,
+                    // Teilzahlung, gleichdatierte oder rückdatierte
+                    // Umordnung).
                     if (openRow is null)
                     {
                         if (rows.Count > 0)
@@ -157,52 +181,102 @@ internal static class SettlementPositionSync
                         // Keine Zeile (Datenbank ohne Positionsverwaltung,
                         // z. B. Backfill nicht gelaufen): die Zeile wird
                         // jetzt angelegt.
-                        openRowChange = new PlannedChange(CreateRow(openEpisode, newIdFactory), true);
-                        changes.Add(openRowChange);
+                        changes.Add(new PlannedChange(CreateRow(openEpisode, newIdFactory), true));
                     }
                     else
                     {
-                        affectedRow = openRow;
-                        openRowChange = UpdateIfDrifted(changes, openRow, openEpisode);
+                        UpdateIfDrifted(changes, openRow, openEpisode);
                     }
                 }
                 else
                 {
-                    // Offene Episode nachher, ohne offenen Zyklus vorher:
-                    // reiner Zusatz — die vorherigen Episoden sind im
-                    // nachher-Zustand vollständig (werteidentisch) enthalten
-                    // und die offene Episode ist angehängt (neuer Zyklus,
-                    // eigene Zeile) — oder die Buchung hat den jüngsten
-                    // beglichenen Zyklus verlängert oder mehrere beglichene
-                    // Zyklen zusammengeführt (die jüngste Zeile trägt die
-                    // offene Episode und wird bei Bedarf wieder geöffnet).
-                    // Ohne jede Zeile (Historie vor der Positionsverwaltung)
-                    // wird ebenfalls eine neue Zeile angelegt.
-                    if (openRow is not null)
+                    // Der alte offene Zyklus wurde durch die Buchung
+                    // abgeschlossen. Offene Zeile muss vorhanden sein
+                    // (außer: keine Zeile — Historie ohne
+                    // Positionsverwaltung).
+                    if (openRow is null && rows.Count > 0)
                     {
-                        // Offene Zeile ohne offene Episode: die persistierte
-                        // Ansicht ist inkonsistent (sichtbarer Fehler).
                         throw new LarioDomainException(
                             $"Integritätsfehler: die Zelle (Konto '{cell.Item1}', Pool '{cell.Item2}') " +
-                            "trägt eine offene Ausgleichsposition, aber das Journal enthält " +
-                            "keinen offenen Ausgleichszyklus — die persistierte Ansicht ist " +
-                            "inkonsistent. Prüfen Sie die Datenbank oder starten Sie eine " +
-                            "Datenbankabstimmung.");
+                            "hat im Journal einen abgeschlossenen Ausgleichszyklus, aber " +
+                            "keine offene Ausgleichsposition. Prüfen Sie die Datenbank oder " +
+                            "starten Sie eine Datenbankabstimmung.");
                     }
 
-                    var pureAddition = after.Count == before.Count + 1
-                        && after.Take(before.Count).SequenceEqual(before);
+                    // Split-Test: der linke Teil des alten Zyklus (gleiche
+                    // Begründung) existiert im Replay als beglichene
+                    // Episode — dann ist es ein Split; sonst hat der Zyklus
+                    // im Replay vollständig verschwindend aufgewogen
+                    // (Vollausgleich, ggf. rückdatiert).
+                    var leftPart = after.FirstOrDefault(e =>
+                        e.Status == SettlementStatus.Beglichen
+                        && e.CreatedByBookingId == openBeforeEpisode.CreatedByBookingId
+                        && e.CreatedDate == openBeforeEpisode.CreatedDate);
 
-                    if (pureAddition || rows.Count == 0)
+                    if (openRow is not null)
                     {
-                        openRowChange = new PlannedChange(CreateRow(openEpisode, newIdFactory), true);
-                        changes.Add(openRowChange);
+                        if (leftPart is not null)
+                        {
+                            // Split: die offene Zeile schließt mit den
+                            // Werten des linken Teils (Identität bleibt),
+                            // der neue offene Zyklus bekommt unten eine
+                            // eigene Zeile.
+                            changes.Add(new PlannedChange(
+                                ApplyEpisodeValues(openRow, leftPart), false));
+                        }
+                        else
+                        {
+                            // Vollausgleich: der Zyklus verschwindet aus
+                            // dem Replay — kontrollierter Abschluss, die
+                            // neue Buchung ist die Begleichungsreferenz
+                            // (Schritt-5-Review P1a).
+                            changes.Add(new PlannedChange(CloseRow(openRow, newBooking), false));
+                        }
                     }
-                    else
-                    {
-                        affectedRow = rows[^1];
-                        openRowChange = UpdateIfDrifted(changes, rows[^1], openEpisode);
-                    }
+
+                    // Neuer offener Zyklus (Split oder Vollausgleich +
+                    // neuer Zyklus): eigene Zeile mit neuem Id — ein
+                    // abgeschlossener Sachverhalt wird nicht durch ihn
+                    // überschrieben (Schritt-5-Review R3/R4).
+                    changes.Add(new PlannedChange(CreateRow(openEpisode, newIdFactory), true));
+                }
+            }
+            else if (afterOpen)
+            {
+                var openEpisode = after[^1];
+
+                // Offene Episode nachher, ohne offenen Zyklus vorher:
+                // reiner Zusatz — die vorherigen Episoden sind im
+                // nachher-Zustand vollständig (werteidentisch) enthalten
+                // und die offene Episode ist angehängt (neuer Zyklus,
+                // eigene Zeile) — oder die Buchung hat den jüngsten
+                // beglichenen Zyklus verlängert oder mehrere beglichene
+                // Zyklen zusammengeführt (die jüngste Zeile trägt die
+                // offene Episode und wird bei Bedarf wieder geöffnet).
+                // Ohne jede Zeile (Historie vor der Positionsverwaltung)
+                // wird ebenfalls eine neue Zeile angelegt.
+                if (openRow is not null)
+                {
+                    // Offene Zeile ohne offene Episode: die persistierte
+                    // Ansicht ist inkonsistent (sichtbarer Fehler).
+                    throw new LarioDomainException(
+                        $"Integritätsfehler: die Zelle (Konto '{cell.Item1}', Pool '{cell.Item2}') " +
+                        "trägt eine offene Ausgleichsposition, aber das Journal enthält " +
+                        "keinen offenen Ausgleichszyklus — die persistierte Ansicht ist " +
+                        "inkonsistent. Prüfen Sie die Datenbank oder starten Sie eine " +
+                        "Datenbankabstimmung.");
+                }
+
+                var pureAddition = after.Count == before.Count + 1
+                    && after.Take(before.Count).SequenceEqual(before);
+
+                if (pureAddition || rows.Count == 0)
+                {
+                    changes.Add(new PlannedChange(CreateRow(openEpisode, newIdFactory), true));
+                }
+                else
+                {
+                    UpdateIfDrifted(changes, rows[^1], openEpisode);
                 }
             }
             else if (beforeOpen)
@@ -215,7 +289,6 @@ internal static class SettlementPositionSync
                 // Journalwahrheit.
                 if (openRow is not null)
                 {
-                    affectedRow = openRow;
                     var lastEpisode = after.Count > 0 ? after[^1] : null;
                     if (lastEpisode is not null
                         && lastEpisode.Status == SettlementStatus.Beglichen
@@ -225,7 +298,7 @@ internal static class SettlementPositionSync
                         // Episode (Zufluss nach der Begründung): dieselbe
                         // Begründung — die Zeile folgt der Begleichungsreferenz
                         // der kanonischen Reihenfolge.
-                        openRowChange = UpdateIfDrifted(changes, openRow, lastEpisode);
+                        UpdateIfDrifted(changes, openRow, lastEpisode);
                     }
                     else
                     {
@@ -233,8 +306,7 @@ internal static class SettlementPositionSync
                         // vor der Begründung): die neue Buchung ist die
                         // Begleichungsreferenz; Identität und Höhe der Zeile
                         // bleiben erhalten.
-                        openRowChange = new PlannedChange(CloseRow(openRow, newBooking), false);
-                        changes.Add(openRowChange);
+                        changes.Add(new PlannedChange(CloseRow(openRow, newBooking), false));
                     }
                 }
                 else if (rows.Count > 0)
@@ -263,44 +335,78 @@ internal static class SettlementPositionSync
                     "inkonsistent. Prüfen Sie die Datenbank oder starten Sie eine " +
                     "Datenbankabstimmung.");
             }
-            // Sonst: keine offene Episode, keine offene Zeile — die
-            // beglichene Historie bleibt unverändert (im Übergang einer
-            // einzelnen Buchung kann sich der Wert einer beglichenen
-            // Episode, die nicht die betroffene Zeile trägt, nicht ändern).
+            // Weder offen vorher noch offen nachher: die beglichene
+            // Historie bleibt, was sie ist — eine beglichene Episode, die
+            // eine Zeile begründungsgleich trägt (gleiche erstellende
+            // Buchung), kann durch die Buchung einen veränderten Wert
+            // bekommen (z. B. rückdatierter Zufluss vor der Begründung
+            // kürzt die Episode — Schritt-5-Review R4): die Zeile nimmt
+            // dessen Werte an (Identität bleibt). Werteidentische Zeilen
+            // bleiben unverändert.
+            if (!beforeOpen && !afterOpen && openRow is null)
+            {
+                var taken = new HashSet<string>();
+                foreach (var episode in after.Where(e => e.Status == SettlementStatus.Beglichen))
+                {
+                    var valueMatch = rows.FirstOrDefault(r =>
+                        r.Status == SettlementStatus.Beglichen
+                        && !taken.Contains(r.Id)
+                        && RowMatchesEpisode(r, episode));
+                    if (valueMatch is not null)
+                    {
+                        taken.Add(valueMatch.Id);
+                        continue;
+                    }
+
+                    var createdMatch = rows.FirstOrDefault(r =>
+                        r.Status == SettlementStatus.Beglichen
+                        && !taken.Contains(r.Id)
+                        && r.CreatedByBookingId == episode.CreatedByBookingId
+                        && r.CreatedDate == episode.CreatedDate);
+                    if (createdMatch is not null && !RowMatchesEpisode(createdMatch, episode))
+                    {
+                        taken.Add(createdMatch.Id);
+                        UpdateIfDrifted(changes, createdMatch, episode);
+                    }
+                    // Sonst: keine tragende Zeile — der Historien-Check
+                    // unten entscheidet (fehlende Zeile = Integritäts-
+                    // fehler, außer Altbestand vor der Positionsverwaltung).
+                }
+            }
 
             // Integrität: jede beglichene Episode des nachher-Zustands,
             // die nicht älter ist als die älteste Zeile der Zelle, muss
             // eine werteidentische beglichene Zeile tragen — sonst wäre
             // sie still aus der Ansicht verschwunden (z. B.
             // handschriftlich veränderte Zeile). Die Zeilen des
-            // effektiven Zustands (nach der geplanten Änderung der
-            // betroffenen Zeile) werden gewertet: eine Zeile, die die
-            // Buchung selbst abschließt, zählt als passend. Zeilen ohne
-            // passende Episode (zusammengeführte bzw. voll ausgeglichene
-            // Zyklen) sind dagegen legitime, unsichtbare Historie — sie
-            // dürfen ohne Fehler bleiben.
-            var effectiveRows = new List<SettlementPosition>(rows.Count + (openRowChange is { IsNew: true } ? 1 : 0));
+            // effektiven Zustands (nach den geplanten Änderungen) werden
+            // gewertet: eine Zeile, die die Buchung selbst abschließt,
+            // zählt als passend. Zeilen ohne passende Episode
+            // (zusammengeführte bzw. voll ausgeglichene Zyklen) sind
+            // dagegen legitime, unsichtbare Historie — sie dürfen ohne
+            // Fehler bleiben.
+            // Updates erhalten die Zeilenidentität (Id) — die geplante
+            // Ersatzzeile ist per Id zuordnen; neue Zeilen haben ein
+            // frisches Id.
+            var effectiveRows = new List<SettlementPosition>(rows.Count + changes.Count(c => c.IsNew));
             foreach (var row in rows)
             {
-                if (ReferenceEquals(row, affectedRow) && openRowChange is { IsNew: false })
-                {
-                    effectiveRows.Add(openRowChange.Row);
-                }
-                else
-                {
-                    effectiveRows.Add(row);
-                }
+                var replacement = changes.FirstOrDefault(c => !c.IsNew && c.Row.Id == row.Id)?.Row;
+                effectiveRows.Add(replacement ?? row);
             }
 
-            if (openRowChange is { IsNew: true })
+            foreach (var change in changes.Where(c => c.IsNew))
             {
-                effectiveRows.Add(openRowChange.Row);
+                effectiveRows.Add(change.Row);
             }
 
             var effectiveSettledRows = effectiveRows
                 .Where(r => r.Status == SettlementStatus.Beglichen)
                 .ToList();
-            var oldestRow = effectiveRows.Count > 0 ? effectiveRows[0] : null;
+            var oldestRow = effectiveRows
+                .OrderBy(r => r.CreatedDate)
+                .ThenBy(r => r.CreatedByBookingId, StringComparer.Ordinal)
+                .FirstOrDefault();
 
             foreach (var episode in after.Where(e => e.Status == SettlementStatus.Beglichen))
             {
@@ -314,10 +420,9 @@ internal static class SettlementPositionSync
                 // ohne Zeile sind legitim (unsichtbar, Backfill legt für
                 // sie keine Zeile an).
                 var beforeOldestRow = oldestRow is null
-                    || episode.CreatedDate < oldestRow.CreatedDate
-                    || (episode.CreatedDate == oldestRow.CreatedDate
-                        && string.CompareOrdinal(
-                            episode.CreatedByBookingId, oldestRow.CreatedByBookingId) < 0);
+                    || CompareIdentity(
+                        episode.CreatedDate, episode.CreatedByBookingId,
+                        oldestRow.CreatedDate, oldestRow.CreatedByBookingId) < 0;
                 if (!beforeOldestRow)
                 {
                     throw new LarioDomainException(
@@ -346,7 +451,31 @@ internal static class SettlementPositionSync
             return null;
         }
 
-        var updated = new SettlementPosition
+        var change = new PlannedChange(ApplyEpisodeValues(row, episode), false);
+        changes.Add(change);
+        return change;
+    }
+
+    private static bool RowMatchesEpisode(
+        SettlementPosition row, SettlementPositionState episode)
+    {
+        return row.Amount == episode.Amount
+            && row.RestAmount == episode.RestAmount
+            && row.Status == episode.Status
+            && row.SettledByBookingId == episode.SettledByBookingId
+            && row.SettledDate == episode.SettledDate;
+    }
+
+    /// <summary>
+    /// Wendet die Werte einer Episode auf eine bestehende Zeile an —
+    /// Identität (Id, Konto, Pool, Begründung, Datum, Notiz) bleibt,
+    /// Höhe, Rest, Status und Begleichungsreferenz folgen der
+    /// Journalwahrheit.
+    /// </summary>
+    private static SettlementPosition ApplyEpisodeValues(
+        SettlementPosition row, SettlementPositionState episode)
+    {
+        return new SettlementPosition
         {
             Id = row.Id,
             SourceAccountId = row.SourceAccountId,
@@ -360,20 +489,19 @@ internal static class SettlementPositionSync
             SettledByBookingId = episode.SettledByBookingId,
             SettledDate = episode.SettledDate,
         };
-
-        var change = new PlannedChange(updated, false);
-        changes.Add(change);
-        return change;
     }
 
-    private static bool RowMatchesEpisode(
-        SettlementPosition row, SettlementPositionState episode)
+    /// <summary>
+    /// Kanonische Reihenfolge: Fachdatum, dann Id (lexikografisch) —
+    /// dieselbe Reihenfolge wie das Journal.
+    /// </summary>
+    private static int CompareIdentity(
+        DateOnly dateA, string idA, DateOnly dateB, string idB)
     {
-        return row.Amount == episode.Amount
-            && row.RestAmount == episode.RestAmount
-            && row.Status == episode.Status
-            && row.SettledByBookingId == episode.SettledByBookingId
-            && row.SettledDate == episode.SettledDate;
+        var byDate = dateA.CompareTo(dateB);
+        return byDate != 0
+            ? byDate
+            : string.CompareOrdinal(idA, idB);
     }
 
     private static SettlementPosition CreateRow(
