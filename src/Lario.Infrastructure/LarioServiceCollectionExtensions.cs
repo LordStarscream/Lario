@@ -35,6 +35,10 @@ public static class LarioServiceCollectionExtensions
         services.AddScoped<TransferReassignmentService>();
         services.AddScoped<BalanceQueryService>();
         services.AddScoped<SettlementQueryService>();
+        // Upgrade-Backfill (Schritt-5-Review P2d): führt beim Host-Start
+        // fehlende Zeilen für offene Ausgleichspositionen älterer
+        // Datenbanken nach — atomar, idempotent.
+        services.AddScoped<SettlementPositionBackfillService>();
 
         return services;
     }

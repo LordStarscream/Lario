@@ -1,5 +1,6 @@
 using System.Net;
 using System.Reflection;
+using Lario.Application.Journal;
 using Lario.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
@@ -66,6 +67,19 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<LarioDbContext>();
     db.Database.Migrate();
+
+    // Upgrade-Backfill (Schritt-5-Review P2d): Datenbanken aus Zeiten
+    // vor der Positionsverwaltung (Schritt 5) können offene
+    // Ausgleichspositionen ohne Zeile tragen. Der Backfill führt sie
+    // nach — atomar, idempotent, vor der ersten Abfrage.
+    var backfill = scope.ServiceProvider.GetRequiredService<SettlementPositionBackfillService>();
+    var backfilledRows = await backfill.EnsureConsistentAsync();
+    if (backfilledRows > 0)
+    {
+        Console.WriteLine(
+            $"Lario: {backfilledRows} offene Ausgleichsposition(en) nachgeführt (Upgrade-Backfill)." +
+            " Siehe docs/step-5/ — die Datenbasis war vor der Positionsverwaltung angelegt.");
+    }
 }
 
 var assembly = Assembly.GetExecutingAssembly();
