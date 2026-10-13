@@ -174,25 +174,19 @@ public sealed class SettlementQueryService(
             }
 
             // Beglichene Episoden ↔ beglichene Zeilen (gleiche Paarung wie
-            // Plan): Zeilen ≥ Episoden → von hinten (überzählige älteste
-            // Zeilen bleiben unsichtbar), sonst von vorn (überzählige
-            // jüngste Episoden ohne Zeile bleiben unsichtbar).
-            if (settledRows.Count >= settledEpisodes.Count)
+            // Plan): immer von hinten — die jüngste beglichene Episode
+            // gehört zur jüngsten beglichenen Zeile, die nächjüngste zur
+            // nächjüngsten usw. Überzählige älteste Zeilen (Neuöffnungen
+            // ohne passende Episode) und überzählige älteste Episoden
+            // ohne Zeile (Altdaten aus Zeiten vor Schritt 5) bleiben
+            // unsichtbar statt falsche Wertepaare zu bilden.
+            var pairCount = Math.Min(settledRows.Count, settledEpisodes.Count);
+            for (var i = 0; i < pairCount; i++)
             {
-                for (var i = 0; i < settledEpisodes.Count; i++)
-                {
-                    AddSettledView(
-                        views, catalog,
-                        settledRows[settledRows.Count - 1 - i],
-                        settledEpisodes[settledEpisodes.Count - 1 - i]);
-                }
-            }
-            else
-            {
-                for (var i = 0; i < settledRows.Count; i++)
-                {
-                    AddSettledView(views, catalog, settledRows[i], settledEpisodes[i]);
-                }
+                AddSettledView(
+                    views, catalog,
+                    settledRows[settledRows.Count - 1 - i],
+                    settledEpisodes[settledEpisodes.Count - 1 - i]);
             }
         }
 
