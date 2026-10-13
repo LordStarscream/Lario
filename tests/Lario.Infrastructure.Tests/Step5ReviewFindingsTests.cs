@@ -200,34 +200,148 @@ public class SettlementIdentityTests
         Assert.Equal("bk-ep-b", persistedA.SettledByBookingId);
     }
 
-    [Fact(DisplayName = "Rückdatierte Einnahme gleicht die offene Episode vollständig aus: sichtbarer Fehler, nichts persistiert")]
-    public async Task BackdatedIncome_FullyCancelsOpenEpisode_FailsVisibly()
+    [Fact(DisplayName = "Rückdatierte Einnahme gleicht die offene Episode vollständig aus: Buchung wird gespeichert, Position kontrolliert abgeschlossen")]
+    public async Task BackdatedIncome_FullSettlement_SavesIncomeAndClosesRow()
     {
         await using var db = new TestDatabase();
         await Step5Scenario.SeedAsync(db);
         await Step5Scenario.AddMixedPurchaseAsync(db);
         var rowId = await OpenRowIdAsync(db);
 
-        // Die Zelle würde +20 € → 0 € laufen: die offene Episode existiert
-        // nach der Buchung nicht mehr, die Zeile hätte keinen Zyklus. Das
-        // darf nicht still verschwinden.
-        var ex = await Assert.ThrowsAsync<LarioDomainException>(() =>
-            db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
-            {
-                Id = "bk-backdated-cancel",
-                Date = new DateOnly(2026, 11, 2),
-                Amount = new Money(2_000),
-                AccountId = Step5Scenario.Haupt,
-                Note = "Rückdatierte Vollausgleichung",
-                Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(2_000))],
-            }));
-        Assert.Contains("Integritätsfehler", ex.Message);
+        // Später erfasster tatsächlich eingegangener Geldfluss: Einnahme
+        // +20 € mit echtem Datum 2.11., VOR der Ausgabe vom 5.11. Im
+        // Replay läuft die Zelle +20 → 0 und bleibt zu Recht ohne
+        // offenen Ausgleich — die gültige Einnahme wird gespeichert,
+        // die Positionshistorie wird kontrolliert abgeschlossen.
+        var result = await db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
+        {
+            Id = "bk-backdated-cancel",
+            Date = new DateOnly(2026, 11, 2),
+            Amount = new Money(2_000),
+            AccountId = Step5Scenario.Haupt,
+            Note = "Rückdatierte Vollausgleichung",
+            Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(2_000))],
+        });
+        Assert.True(result.Created);
 
-        // Atomar: keine Buchung, Zeile unverändert.
-        Assert.Null(await db.Resolve<IBookingRepository>().FindByIdAsync("bk-backdated-cancel"));
-        var open = (await db.Resolve<SettlementQueryService>().GetOpenAsync()).Single();
-        Assert.Equal(rowId, open.Id);
-        Assert.Equal(2_000, open.RestAmount.Cents);
+        // Salden: Einnahme +20 € auf dem Hauptkonto, Freizeit-Pool
+        // wieder voll (300 €).
+        Assert.Equal(93_500, await Step5Scenario.AccountBalanceAsync(db, Step5Scenario.Haupt));
+        Assert.Equal(30_000, await Step5Scenario.AccountBalanceAsync(db, Step5Scenario.Freizeit));
+        Assert.Equal(0, await Step5Scenario.AccountBalanceAsync(db, Step5Scenario.Wohnung));
+        Assert.Equal(93_500, await Step5Scenario.PoolBalanceAsync(db, Step5Scenario.Flex));
+        Assert.Equal(30_000, await Step5Scenario.PoolBalanceAsync(db, Step5Scenario.PoolFreizeit));
+
+        // Keine offene Position mehr.
+        Assert.Empty(await db.Resolve<SettlementQueryService>().GetOpenAsync());
+
+        // Historie erhalten: dieselbe Zeile (Id, Begründung, Fachdatum,
+        // Notiz, Höhe), kontrolliert abgeschlossen — Begleichungs-
+        // referenz ist die rückdatierte Einnahme.
+        var stored = (await db.Resolve<ISettlementPositionRepository>().GetAllAsync()).Single();
+        Assert.Equal(rowId, stored.Id);
+        Assert.Equal("bk-2026-1202", stored.CreatedByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 5), stored.CreatedDate);
+        Assert.Equal(2_000, stored.Amount.Cents);
+        Assert.Equal(0, stored.RestAmount.Cents);
+        Assert.Equal(SettlementStatus.Beglichen, stored.Status);
+        Assert.Equal("bk-backdated-cancel", stored.SettledByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 2), stored.SettledDate);
+
+        // Neustart: neuer Provider auf derselben Datei — Zustand bleibt
+        // stabil, Abfragen funktionieren.
+        using var services = db.NewServiceProvider();
+        using var scope = services.CreateScope();
+        var query = scope.ServiceProvider.GetRequiredService<SettlementQueryService>();
+        Assert.Empty(await query.GetOpenAsync());
+        var repo = scope.ServiceProvider.GetRequiredService<ISettlementPositionRepository>();
+        var persisted = (await repo.GetAllAsync()).Single();
+        Assert.Equal(rowId, persisted.Id);
+        Assert.Equal(SettlementStatus.Beglichen, persisted.Status);
+        Assert.Equal("bk-backdated-cancel", persisted.SettledByBookingId);
+        Assert.Equal(2_000, persisted.Amount.Cents);
+        Assert.Equal(0, persisted.RestAmount.Cents);
+    }
+
+    [Fact(DisplayName = "Gleichdatierter Zufluss mit kleinerer Id gleicht die offene Episode vollständig aus: Buchung wird gespeichert")]
+    public async Task SameDayIncome_SmallerId_FullSettlement_SavesIncomeAndClosesRow()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+        await Step5Scenario.AddMixedPurchaseAsync(db);
+        var rowId = await OpenRowIdAsync(db);
+
+        // Derselbe Fall wie rückdatiert, aber gleichdatiert: der Zufluss
+        // sortiert wegen der lexikografisch kleineren Id VOR der Ausgabe
+        // — die kanonische Reihenfolge ist identisch (+20 → 0).
+        var result = await db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
+        {
+            Id = "bk-2026-1100", // < "bk-2026-1202" (lexikografisch)
+            Date = new DateOnly(2026, 11, 5),
+            Amount = new Money(2_000),
+            AccountId = Step5Scenario.Haupt,
+            Note = "Gleichdatierte Vollausgleichung",
+            Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(2_000))],
+        });
+        Assert.True(result.Created);
+
+        Assert.Equal(93_500, await Step5Scenario.AccountBalanceAsync(db, Step5Scenario.Haupt));
+        Assert.Equal(30_000, await Step5Scenario.PoolBalanceAsync(db, Step5Scenario.PoolFreizeit));
+        Assert.Empty(await db.Resolve<SettlementQueryService>().GetOpenAsync());
+
+        var stored = (await db.Resolve<ISettlementPositionRepository>().GetAllAsync()).Single();
+        Assert.Equal(rowId, stored.Id);
+        Assert.Equal(SettlementStatus.Beglichen, stored.Status);
+        Assert.Equal("bk-2026-1100", stored.SettledByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 5), stored.SettledDate);
+    }
+
+    [Fact(DisplayName = "Legacy-Zelle ohne Positionszeilen: neue Ausgabe legt genau eine offene Zeile an")]
+    public async Task LegacyCell_NewExpense_CreatesExactlyOneOpenRow()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+
+        // Schritt-4-Historie: Ausgabe −20 €, spätere Einnahme +20 € auf
+        // derselben Zelle — abgeschlossener Zyklus.
+        await ExpenseAsync(db, "bk-legacy-exp", new DateOnly(2026, 11, 1), 2_000);
+        await IncomeAsync(db, "bk-legacy-inc", new DateOnly(2026, 11, 2), 2_000);
+
+        // Datenbank aus einer Version ohne persistierte Positionszeilen
+        // simulieren: die angelegte Zeile löschen.
+        using (var scope = db.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<LarioDbContext>();
+            context.SettlementPositions.RemoveRange(
+                await context.SettlementPositions.ToListAsync());
+            await context.SaveChangesAsync();
+        }
+
+        // Startup-Backfill: keine offene Episode → keine neuen Zeilen.
+        Assert.Equal(0, await db.Resolve<SettlementPositionBackfillService>()
+            .EnsureConsistentAsync());
+
+        // Neue Ausgabe −10 € auf derselben Zelle: die offene Episode ist
+        // die JÜNGSTE (nach der abgeschlossenen Legacy-Episode) — genau
+        // eine neue offene Positionszeile mit 10 € Rest wird gemeinsam
+        // mit der Buchung gespeichert, die direkte Abfrage funktioniert.
+        await ExpenseAsync(db, "bk-legacy-exp2", new DateOnly(2026, 11, 20), 1_000);
+
+        var open = Assert.Single(await db.Resolve<SettlementQueryService>().GetOpenAsync());
+        Assert.Equal("bk-legacy-exp2", open.CreatedByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 20), open.CreatedDate);
+        Assert.Equal(1_000, open.Amount.Cents);
+        Assert.Equal(1_000, open.RestAmount.Cents);
+
+        var stored = Assert.Single(await db.Resolve<ISettlementPositionRepository>().GetAllAsync());
+        Assert.Equal(open.Id, stored.Id);
+        Assert.Equal(SettlementStatus.Offen, stored.Status);
+        Assert.Equal("bk-legacy-exp2", stored.CreatedByBookingId);
+        Assert.Equal(1_000, stored.RestAmount.Cents);
+
+        // Salden bleiben rekonstruierbar.
+        Assert.Equal(99_000, await Step5Scenario.AccountBalanceAsync(db, Step5Scenario.Haupt));
+        Assert.Equal(29_000, await Step5Scenario.PoolBalanceAsync(db, Step5Scenario.PoolFreizeit));
     }
 
     private static Task ExpenseAsync(

@@ -367,6 +367,33 @@ public class ReassignmentPersistenceTests
         Assert.Single(reassignments);
     }
 
+    [Fact(DisplayName = "Idempotenz vor Aktivitätsprüfung: implizite Wiederholung nach Archivierung des materialisierten Kontos wird bestätigt")]
+    public async Task Repeat_Implicit_AfterMaterializedAccountArchived_IsConfirmed()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+        var service = db.Resolve<ReassignmentService>();
+        var spec = Reassignment(id: "rr-implizit", accounts: null);
+
+        var first = await service.CreateAsync(spec);
+        Assert.True(first.Created);
+        // Implizit materialisiert: Haupt trägt den Quellpool Flex.
+        Assert.Equal(
+            [(Step5Scenario.Haupt, 50_000L)],
+            first.Booking.ReassignmentAccounts.Select(a => (a.AccountId, a.Amount.Cents)));
+
+        // Das Trägerkonto wird archiviert. Die Aktivitätsprüfung gehört
+        // zur tatsächlichen Neuanlage; die Idempotenzbestätigung greift
+        // davor (Schritt-5-Review R2).
+        await db.Resolve<MasterDataAdmin>().ArchiveAccountAsync(Step5Scenario.Haupt);
+
+        var second = await service.CreateAsync(spec);
+        Assert.False(second.Created);
+        Assert.Equal("rr-implizit", second.Booking.Id);
+        Assert.Single(await db.Resolve<IBookingRepository>().GetAllAsync(),
+            b => b.Type == BookingType.Reassignment);
+    }
+
     [Fact(DisplayName = "Gleiche Id mit anderem Betrag ist ein Konflikt")]
     public async Task ContentConflict_IsRejected()
     {

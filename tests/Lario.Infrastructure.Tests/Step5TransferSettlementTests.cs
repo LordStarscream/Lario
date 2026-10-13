@@ -358,6 +358,32 @@ public class TransferPersistenceTests
         Assert.Single(transfers);
     }
 
+    [Fact(DisplayName = "Idempotenz vor Aktivitätsprüfung: implizite Wiederholung nach Archivierung des materialisierten Pools wird bestätigt")]
+    public async Task Repeat_Implicit_AfterMaterializedPoolArchived_IsConfirmed()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+        var service = db.Resolve<TransferService>();
+        var spec = Transfer(id: "tr-implizit", cents: 10_000, purposes: null);
+
+        var first = await service.CreateAsync(spec);
+        Assert.True(first.Created);
+
+        // Der implizit materialisierte Zweckpool (Flex — die einzige
+        // positive Zelle des Quellkontos) wird archiviert. Die
+        // Aktivitätsprüfung gehört zur tatsächlichen Neuanlage; die
+        // Idempotenzbestätigung greift davor (Schritt-5-Review R2).
+        await db.Resolve<MasterDataAdmin>().ArchivePoolAsync(Step5Scenario.Flex);
+
+        var second = await service.CreateAsync(spec);
+        Assert.False(second.Created);
+        Assert.Equal("tr-implizit", second.Booking.Id);
+        var transfers = (await db.Resolve<IBookingRepository>().GetAllAsync())
+            .Where(b => b.Type == BookingType.AccountTransfer)
+            .ToList();
+        Assert.Single(transfers);
+    }
+
     [Fact(DisplayName = "Gleiche Id mit anderem Betrag ist ein Konflikt; ursprüngliche Buchung bleibt")]
     public async Task ContentConflict_KeepsExisting()
     {
