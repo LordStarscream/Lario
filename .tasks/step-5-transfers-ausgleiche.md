@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 5 – Transfers, Umwidmung und interne Ausgleiche
 
-**Status:** [erledigt, Abnahme ausstehend] (implementiert 12. Okt. 2026, fünf externe Review-Runden am 13./14. Okt. 2026, alle Befunde behoben, **PR #6** → `main`)
+**Status:** [erledigt, Abnahme ausstehend] (implementiert 12. Okt. 2026, sechs externe Review-Runden am 13./14. Okt. 2026, alle Befunde behoben, **PR #6** → `main`)
 **Branch:** `step/5-transfers-ausgleiche`
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 5"
 **Verbindliche Spezifikation:** `docs/step-0/rechenvertrag.md` (§3.3 Postings, §3.4 signierte Konto-Pool-Zuordnung, §3.5 offene Ausgleichspositionen, §3.6 freie Verfügbarkeit, §5.2 Transfer/Umwidmung-Status)
@@ -314,18 +314,81 @@ Idempotenz/Konfliktprüfung, FK-Atomarität, 259/259 Tests, 0 Build-Warnungen.
   10 € vor beiden → A bleibt beglichen mit 10 €, B bleibt offen mit
   10 € Rest, beide Zeilen behalten ihre stabilen Ids; Neustart stabil).
 
+### Sechste externe Review-Runde (14. Okt. 2026, nach der R5-Lieferung) — P1 behoben (strukturell)
+
+- **P1 — Rückdatierter Vollausgleich einer offenen Position wird
+  abgelehnt; manipulierte Zeilen werden still verschluckt oder
+  überschrieben:** Der Historien-Abgleich beglichener Episoden gegen
+  die persistierten Zeilen war auf die Zweige verteilt (R4-Abgleich nur
+  in „weder offen vorher noch offen nachher“, R5-Abgleich nur im
+  Fortsetzungszweig). Der Zweig „offen→kein offen“ (Vollausgleich) hat
+  ihn gar nicht: eine rückdatierte Einnahme, die den offenen Zyklus
+  schließt UND eine beglichene Episode verkürzt (Replay +30, −10, +10,
+  −20 → A beglichen 10 €, B beglichen), wurde mit Integritätsfehler
+  abgelehnt — die verkürzte Episode hatte keine werteidentische Zeile.
+  Strukturproblem: Zweig-weise Abgleich ist nicht vollständig
+  beweisbar — jede neue Übergangsform brauchte einen neuen Sonderfall
+  (fünf P1 derselben Art in fünf Runden). Dazu: eine manipulierte
+  beglichene Zeile (Rest ≠ 0), deren Zyklus im Replay verschwindet,
+  überlebte still (keine Episode mehr, die sie antrifft); eine
+  manipulierte offene Zeile wurde im Fortsetzungszweig still
+  überschrieben.
+- **Fix (strukturell, drei Bausteine):**
+  1. **Einheitlicher Historien-Abgleich in ALLEN Übergangsformen**
+     (`ReconcileSettledEpisodes`): nach der Behandlung des offenen
+     Zyklus werden die beglichenen Episoden des nachher-Zustands gegen
+     die effektiven Zeilen gewertet (geplante Änderungen sind bereits
+     eingepreist) — erst werteidentisch (z. B. die gerade geschlossene
+     Zeile eines Splits), dann per stabiler Identität (die Buchung hat
+     die Episode legitim verändert: verkürzt/vertieft/zusammengeführt —
+     die Zeile nimmt die Replay-Werte an, R4/R5-Semantik). Ersetzt den
+     R4- und den R5-Abgleich.
+  2. **Integritätsprüfung des VORHER-Zustands vor der ersten
+     Überschreibung** (`ValidateBeforeState`): jede
+     vorher-Episode, die nicht älter ist als die älteste Zeile der
+     Zelle, braucht eine werteidentische Trägerzeile (die Trägerzeile
+     darf die Identität abweichen — zusammengeführte Zyklen behalten
+     ihre eigene Begründung, R3; ältere Episoden bzw. Zellen ohne
+     Zeilen sind legitimer Altbestand, Zeilen ohne tragendes Episode
+     legitime unsichtbare Historie). → Manipulierte Zeilen werden
+     sichtbar abgelehnt statt still verschluckt/überschrieben.
+  3. **Upsert der geplanten Änderungen je Row.Id** (`UpsertChange`):
+     mehrfache Änderungen derselben Zeile in einem Plan-Lauf werden
+     zur letzten zusammengeführt — widersprüchliche Duplikate werden
+     nie geplant.
+  Neue Tests (5, echte SQLite):
+  `BackdatedIncome_ClosesOpenCycle_ShortensSettledCycle_SavesIncome`
+  (Reviewer-Beispiel: A 40 € beglichen + B 20 € offen; rückdatierte
+  Einnahme 30 € vor beiden → A beglichen 10 €, B beglichen 20 € mit
+  der tatsächlichen Einnahme als Begleichungsreferenz (10/30), beide
+  Zeilen behalten ihre stabilen Ids; Neustart stabil),
+  `BackdatedIncome_ShortensSettledCycle_OpenCycleContinues_KeepsBothRows`
+  (rückdatierte Einnahme 10 € → A 30 € beglichen, B 10 € offen, beide
+  Zeilen behalten Id und neue Werte),
+  `BackdatedExpense_MergesTwoSettledCycles_LastSettledRowAdoptsMergedEpisode`
+  (Regression: rückdatierte Ausgabe fusioniert zwei beglichene Zyklen —
+  jüngste Zeile übernimmt die fusionierten Werte, Identität bleibt),
+  `TamperedSettledRow_VanishingCycle_FailsVisibly`
+  (manipulierte beglichene Zeile Rest=5 €; rückdatierte Einnahme macht
+  den Zyklus im Replay verschwinden → sichtbarer Integritätsfehler,
+  Buchung verworfen),
+  `TamperedOpenRow_ContinuingCycle_FailsVisibly`
+  (manipulierte offene Zeile; rückdatierte Ausgabe vertieft den
+  weiterlaufenden Zyklus → sichtbarer Integritätsfehler, keine stille
+  Überschreibung).
+
 ## Ergebnis
 
 - Build: `dotnet build Lario.slnx` — 0 Fehler, 0 Warnungen
-- Tests: `dotnet test Lario.slnx` — 286/286 grün (175 Domain, 111
-  Infrastructure; davon 60 echte-SQLite-Integrationstests für Schritt 5)
+- Tests: `dotnet test Lario.slnx` — 291/291 grün (175 Domain, 116
+  Infrastructure; davon 65 echte-SQLite-Integrationstests für Schritt 5)
 
 ## Abweichungen / Offene Punkte
 
 - Umwidmung darf negative Poolbestände erzeugen (oben dokumentiert; §3.6).
 - Bekannte Randgrenze kanonischer Reihenfolge (oben); kein Blocker.
 - Abnahme durch Nutzer ausstehend (PR #6, um die Review-Fixes aller
-  fünf Runden erweitert).
+  sechs Runden erweitert).
 - Hinweis: Der Commit-Text `e2320a2` (R3-Fix) beschreibt den Befund
   ungenau („Vollausgleich … wird abgelehnt"); maßgeblich sind dieser
   R3-Eintrag und `docs/step-5/step5-transfers-ausgleiche.md`
