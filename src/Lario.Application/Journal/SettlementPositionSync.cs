@@ -56,6 +56,29 @@ namespace Lario.Application.Journal;
 ///   Begründung kürzt die Episode — Schritt-5-Review R4); andernfalls
 ///   bleibt die werteidentische Zeile unverändert.
 ///
+/// Einheitlicher Historien-Abgleich (Schritt-5-Review R6): nach der
+/// Behandlung des offenen Zyklus werden in ALLEN Übergangsformen die
+/// beglichenen Episoden des nachher-Zustands gegen die effektiven
+/// Zeilen abgeglichen (geplante Änderungen sind bereits eingepreist) —
+/// erst werteidentisch, dann per stabiler Identität (Begründungsbuchung
+/// + Fachdatum). Eine identitätsgleiche, aber wertverschiedene Zeile
+/// nimmt die Replay-Werte an (die neue Buchung hat die Episode
+/// legitim verändert: verkürzt, vertieft, zusammengeführt); geänderte
+/// Zeilen werden nach Row.Id zusammengeführt (Upsert), es werden nie
+/// widersprüchliche Duplikate geplant. So bleibt die verkürzte/beglichene
+/// Historie auch dann rekonstruierbar, wenn dieselbe Buchung zugleich
+/// einen offenen Zyklus schließt (R6: der Vollausgleich offener
+/// Position wird gespeichert, nicht abgelehnt).
+///
+/// Integrität VOR der ersten Überschreibung (Schritt-5-Review R6): jede
+/// Episode des VORHER-Zustands, die nicht älter ist als die älteste
+/// Zeile der Zelle, muss eine werteidentische Trägerzeile haben — nur
+/// die neue Buchung darf eine Zeile verändern, und das zeigt sich als
+/// vorher-Episode ≠ nachher-Episode. Eine Episode, die ihre Zeile nicht
+/// (mehr) werteidentisch trägt, ist Manipulation und wird sichtbar
+/// gemeldet, statt von einem Zweig still überschrieben oder
+/// verschluckt zu werden.
+///
 /// Damit behalten persistierte Zeilen ihre Identität
 /// (Id, CreatedByBookingId, CreatedDate, Notiz) — sie werden nicht durch
 /// eine Neuableitung verdrängt; nur Rest, Status und
@@ -67,6 +90,8 @@ namespace Lario.Application.Journal;
 /// Integritätsfehler (fehlgeschlagene, sichtbare Abfrage/Speicherung):
 /// - eine Zelle trägt zwei offene Zeilen (die offene Episode einer
 ///   Zelle ist eindeutig);
+/// - eine VORHER-Episode (jünger als der Altbestand) hat keine
+///   werteidentische Trägerzeile (Manipulation — Schritt-5-Review R6);
 /// - die offene Episode des Journals hat keine offene Zeile (fremde
 ///   oder beschädigte Datenbank — der Backfill stellt diese
 ///   Invariante beim Start her);
@@ -141,6 +166,16 @@ internal static class SettlementPositionSync
             var beforeOpen = before.Count > 0 && before[^1].Status == SettlementStatus.Offen;
             var afterOpen = after.Count > 0 && after[^1].Status == SettlementStatus.Offen;
 
+            // Schritt-5-Review R6: Integrität des VORHER-Zustands —
+            // bevor irgendein Zweig eine Zeile verändert, muss jede
+            // Zeile, die eine vorher-Episode per stabiler Identität
+            // trägt, zu dieser werteidentisch sein. Nur die neue Buchung
+            // darf eine Zeile verändern, und das zeigt sich als
+            // vorher-Episode ≠ nachher-Episode; eine Abweichung hier ist
+            // bereits vorhandene Korruption (Manipulation) und wird
+            // sichtbar gemeldet, statt still überschrieben oder
+            // verschluckt zu werden.
+            ValidateBeforeState(rows, before, cell);
 
             if (afterOpen && beforeOpen)
             {
@@ -191,29 +226,12 @@ internal static class SettlementPositionSync
                         UpdateIfDrifted(changes, openRow, openEpisode);
                     }
 
-                    // Schritt-5-Review R5: eine gleichdatierte oder
-                    // rückdatierte Buchung kann eine beglichene Episode
-                    // derselben Zelle verkürzen (oder verändern), während
-                    // der offene Zyklus weiterläuft. Die offene Zeile trägt
-                    // die offene Episode; die beglichenen Episoden derselben
-                    // Zelle müssen zusätzlich gegen ihre persistierten
-                    // Zeilen abgeglichen werden — sonst bliebe die verkürzte
-                    // beglichene Episode ohne werteidentische Zeile und der
-                    // Historien-Integritätscheck (unten) würde die gültige
-                    // Buchung ablehnen. Identität (Id, Begründung, Fachdatum)
-                    // bleibt erhalten; Höhe, Status und Begleichung folgen dem
-                    // Replay. Werteidentische Zeilen bleiben unverändert.
-                    foreach (var episode in after.Where(e => e.Status == SettlementStatus.Beglichen))
-                    {
-                        var row = rows.FirstOrDefault(r =>
-                            r.Status == SettlementStatus.Beglichen
-                            && r.CreatedByBookingId == episode.CreatedByBookingId
-                            && r.CreatedDate == episode.CreatedDate);
-                        if (row is not null)
-                        {
-                            UpdateIfDrifted(changes, row, episode);
-                        }
-                    }
+                    // Beglichene Episoden derselben Zelle (eine
+                    // rückdatierte Buchung kann sie verkürzen oder
+                    // verändern, während der offene Zyklus weiterläuft —
+                    // Schritt-5-Review R5) werden unten im einheitlichen
+                    // Historien-Abgleich gegen die effektiven Zeilen
+                    // gewertet.
                 }
                 else
                 {
@@ -362,44 +380,15 @@ internal static class SettlementPositionSync
                     "inkonsistent. Prüfen Sie die Datenbank oder starten Sie eine " +
                     "Datenbankabstimmung.");
             }
-            // Weder offen vorher noch offen nachher: die beglichene
-            // Historie bleibt, was sie ist — eine beglichene Episode, die
-            // eine Zeile begründungsgleich trägt (gleiche erstellende
-            // Buchung), kann durch die Buchung einen veränderten Wert
-            // bekommen (z. B. rückdatierter Zufluss vor der Begründung
-            // kürzt die Episode — Schritt-5-Review R4): die Zeile nimmt
-            // dessen Werte an (Identität bleibt). Werteidentische Zeilen
-            // bleiben unverändert.
-            if (!beforeOpen && !afterOpen && openRow is null)
-            {
-                var taken = new HashSet<string>();
-                foreach (var episode in after.Where(e => e.Status == SettlementStatus.Beglichen))
-                {
-                    var valueMatch = rows.FirstOrDefault(r =>
-                        r.Status == SettlementStatus.Beglichen
-                        && !taken.Contains(r.Id)
-                        && RowMatchesEpisode(r, episode));
-                    if (valueMatch is not null)
-                    {
-                        taken.Add(valueMatch.Id);
-                        continue;
-                    }
-
-                    var createdMatch = rows.FirstOrDefault(r =>
-                        r.Status == SettlementStatus.Beglichen
-                        && !taken.Contains(r.Id)
-                        && r.CreatedByBookingId == episode.CreatedByBookingId
-                        && r.CreatedDate == episode.CreatedDate);
-                    if (createdMatch is not null && !RowMatchesEpisode(createdMatch, episode))
-                    {
-                        taken.Add(createdMatch.Id);
-                        UpdateIfDrifted(changes, createdMatch, episode);
-                    }
-                    // Sonst: keine tragende Zeile — der Historien-Check
-                    // unten entscheidet (fehlende Zeile = Integritäts-
-                    // fehler, außer Altbestand vor der Positionsverwaltung).
-                }
-            }
+            // Schritt-5-Review R6: einheitlicher Historien-Abgleich in
+            // ALLEN Übergangsformen — die beglichenen Episoden des
+            // nachher-Zustands werden gegen die effektiven Zeilen
+            // gewertet (geplante Änderungen des offenen-Zyklus-Zweigs
+            // sind bereits eingepreist). Erst werteidentisch (z. B. die
+            // gerade geschlossene Zeile eines Splits), dann per stabiler
+            // Identität (die Buchung hat die Episode legitim verändert —
+            // die Zeile nimmt deren Werte an, Schritt-5-Review R4/R5).
+            ReconcileSettledEpisodes(rows, changes, after, cell);
 
             // Integrität: jede beglichene Episode des nachher-Zustands,
             // die nicht älter ist als die älteste Zeile der Zelle, muss
@@ -415,17 +404,7 @@ internal static class SettlementPositionSync
             // Updates erhalten die Zeilenidentität (Id) — die geplante
             // Ersatzzeile ist per Id zuordnen; neue Zeilen haben ein
             // frisches Id.
-            var effectiveRows = new List<SettlementPosition>(rows.Count + changes.Count(c => c.IsNew));
-            foreach (var row in rows)
-            {
-                var replacement = changes.FirstOrDefault(c => !c.IsNew && c.Row.Id == row.Id)?.Row;
-                effectiveRows.Add(replacement ?? row);
-            }
-
-            foreach (var change in changes.Where(c => c.IsNew))
-            {
-                effectiveRows.Add(change.Row);
-            }
+            var effectiveRows = BuildEffectiveRowsForCell(rows, changes, cell);
 
             var effectiveSettledRows = effectiveRows
                 .Where(r => r.Status == SettlementStatus.Beglichen)
@@ -479,8 +458,178 @@ internal static class SettlementPositionSync
         }
 
         var change = new PlannedChange(ApplyEpisodeValues(row, episode), false);
-        changes.Add(change);
+        UpsertChange(changes, change.Row);
         return change;
+    }
+
+    /// <summary>
+    /// Integrität des VORHER-Zustands (Schritt-5-Review R6): jede Episode
+    /// des vorher-Zustands, die nicht älter ist als die älteste Zeile der
+    /// Zelle, muss eine werteidentische Trägerzeile haben. Nur die neue
+    /// Buchung darf eine Zeile verändern — das zeigt sich als
+    /// vorher-Episode ≠ nachher-Episode und wird vom übrigen Abgleich
+    /// behandelt. Eine Episode, die keine werteidentische Zeile mehr hat,
+    /// hat sie durch Manipulation verloren (die Ansicht wäre sonst still
+    /// unrichtig oder die Manipulation würde still verschluckt/überschrieben
+    /// werden).
+    /// <para>
+    /// Die Trägerzeile muss nicht die stabile Identität der Episode tragen
+    /// (zusammengeführte Zyklen behalten ihre eigene Begründung —
+    /// Schritt-5-Review R3). Episoden, die älter sind als die älteste
+    /// Zeile (bzw. bei einer Zelle ohne jede Zeile: die gesamte
+    /// Historie), sind Altbestand vor der Positionsverwaltung und
+    /// legitim unsichtbar. Zeilen ohne tragendes Episode (zusammengeführte
+    /// bzw. voll ausgeglichene Zyklen) sind legitime, unsichtbare
+    /// Historie und bleiben.
+    /// </para>
+    /// </summary>
+    private static void ValidateBeforeState(
+        List<SettlementPosition> rows,
+        IReadOnlyList<SettlementPositionState> before,
+        (string SourceAccountId, string TargetPoolId) cell)
+    {
+        if (rows.Count == 0)
+        {
+            // Ohne Zeilen ist die gesamte Historie Altbestand (vor der
+            // Positionsverwaltung) — legitim unsichtbar.
+            return;
+        }
+
+        var oldestRow = rows
+            .OrderBy(r => r.CreatedDate)
+            .ThenBy(r => r.CreatedByBookingId, StringComparer.Ordinal)
+            .First();
+
+        foreach (var episode in before)
+        {
+            var beforeOldestRow = CompareIdentity(
+                episode.CreatedDate, episode.CreatedByBookingId,
+                oldestRow.CreatedDate, oldestRow.CreatedByBookingId) < 0;
+            if (beforeOldestRow)
+            {
+                // Altbestand vor der Positionsverwaltung — bleibt
+                // unsichtbar (der Backfill legt für ihn keine Zeile an).
+                continue;
+            }
+
+            if (rows.Any(r => RowMatchesEpisode(r, episode)))
+            {
+                continue;
+            }
+
+            throw new LarioDomainException(
+                $"Integritätsfehler: das Journal enthält die Ausgleichsepisode " +
+                $"(Konto '{cell.Item1}', Pool '{cell.Item2}', Begründung '{episode.CreatedByBookingId}') " +
+                "des Zustands vor dieser Buchung, zu der keine passende persistierte " +
+                "Position existiert — die persistierte Ansicht ist inkonsistent. " +
+                "Prüfen Sie die Datenbank oder starten Sie eine Datenbankabstimmung.");
+        }
+    }
+
+    /// <summary>
+    /// Einheitlicher Abgleich der beglichenen Episoden des nachher-Zustands
+    /// gegen die effektiven Zeilen (Schritt-5-Review R6): geänderte Zeilen
+    /// werden im Zustand NACH den geplanten Änderungen gewertet, sodass
+    /// eine Buchung, die zugleich einen offenen Zyklus schließt und eine
+    /// beglichene Episode verkürzt, gespeichert statt abgelehnt wird.
+    /// <para>
+    /// Zuordnung je Episode (Reihenfolge der Episoden):
+    /// <list type="number">
+    /// <item>werteidentische, noch nicht zugeordnete Zeile — fertig
+    ///   (z. B. die gerade geschlossene Zeile eines Splits);</item>
+    /// <item>Zeile mit stabiler Identität (Begründungsbuchung + Fachdatum),
+    ///   aber abweichenden Werten — die Buchung hat die Episode legitim
+    ///   verändert (verkürzt, vertieft, zusammengeführt): die Zeile nimmt
+    ///   die Replay-Werte an, Identität bleibt (Schritt-5-Review R4/R5);</item>
+    /// <item>keine tragende Zeile — der Historien-Integritätscheck unten
+    ///   entscheidet (fehlende Zeile = Integritätsfehler, außer Altbestand
+    ///   vor der Positionsverwaltung).</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    private static void ReconcileSettledEpisodes(
+        List<SettlementPosition> rows,
+        List<PlannedChange> changes,
+        IReadOnlyList<SettlementPositionState> after,
+        (string SourceAccountId, string TargetPoolId) cell)
+    {
+        var effectiveRows = BuildEffectiveRowsForCell(rows, changes, cell);
+        var taken = new HashSet<string>();
+        foreach (var episode in after.Where(e => e.Status == SettlementStatus.Beglichen))
+        {
+            var valueMatch = effectiveRows.FirstOrDefault(r =>
+                r.Status == SettlementStatus.Beglichen
+                && !taken.Contains(r.Id)
+                && RowMatchesEpisode(r, episode));
+            if (valueMatch is not null)
+            {
+                taken.Add(valueMatch.Id);
+                continue;
+            }
+
+            var identityMatch = effectiveRows.FirstOrDefault(r =>
+                r.Status == SettlementStatus.Beglichen
+                && !taken.Contains(r.Id)
+                && r.CreatedByBookingId == episode.CreatedByBookingId
+                && r.CreatedDate == episode.CreatedDate);
+            if (identityMatch is not null && !RowMatchesEpisode(identityMatch, episode))
+            {
+                taken.Add(identityMatch.Id);
+                UpsertChange(changes, ApplyEpisodeValues(identityMatch, episode));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Effektiver Zeilenzustand einer Zelle nach den geplanten
+    /// Änderungen: bestehende Zeilen, ersetzt durch geplante Updates
+    /// (letzte Änderung je Id gewinnt), ergänzt um neue Zeilen —
+    /// gefiltert auf die Zelle (changes enthält Änderungen aller
+    /// bereits bearbeiteten Zellen).
+    /// </summary>
+    private static List<SettlementPosition> BuildEffectiveRowsForCell(
+        List<SettlementPosition> rows,
+        List<PlannedChange> changes,
+        (string SourceAccountId, string TargetPoolId) cell)
+    {
+        var updatesById = new Dictionary<string, SettlementPosition>();
+        foreach (var change in changes.Where(c => !c.IsNew
+            && c.Row.SourceAccountId == cell.Item1
+            && c.Row.TargetPoolId == cell.Item2))
+        {
+            updatesById[change.Row.Id] = change.Row;
+        }
+
+        var effective = rows
+            .Select(r => updatesById.TryGetValue(r.Id, out var replacement) ? replacement : r)
+            .ToList();
+
+        foreach (var change in changes.Where(c => c.IsNew
+            && c.Row.SourceAccountId == cell.Item1
+            && c.Row.TargetPoolId == cell.Item2))
+        {
+            effective.Add(change.Row);
+        }
+
+        return effective;
+    }
+
+    /// <summary>
+    /// Führt geänderte Zeilen nach Row.Id zusammen (Upsert): es werden
+    /// nie mehrere widersprüchliche Updates derselben Zeile geplant —
+    /// eine spätere Änderung ersetzt die frühere (Schritt-5-Review R6).
+    /// </summary>
+    private static void UpsertChange(List<PlannedChange> changes, SettlementPosition updatedRow)
+    {
+        var index = changes.FindIndex(c => !c.IsNew && c.Row.Id == updatedRow.Id);
+        if (index >= 0)
+        {
+            changes[index] = new PlannedChange(updatedRow, false);
+        }
+        else
+        {
+            changes.Add(new PlannedChange(updatedRow, false));
+        }
     }
 
     private static bool RowMatchesEpisode(
