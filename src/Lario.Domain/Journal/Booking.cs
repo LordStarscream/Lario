@@ -52,6 +52,45 @@ public sealed class Booking
     public List<ExpenseSplit> Splits { get; init; } = [];
 
     /// <summary>
+    /// Zweckverteilung der gewanderten Mittel (nur
+    /// <see cref="BookingType.AccountTransfer"/>): je Zeile Pool +
+    /// Zeilenbetrag, Summe exakt = Transferbetrag. Ein reiner Transfer
+    /// hat keine Pool-Postings — die Zweckverteilung ist daher Teil der
+    /// Buchung, damit die Konto-Pool-Zuordnung aus den Postings
+    /// rekonstruierbar bleibt (Rechenvertrag §3.3/§3.4).
+    /// </summary>
+    public List<PoolAllocation> TransferPurposes { get; init; } = [];
+
+    /// <summary>
+    /// Kontoverteilung der umgewidmeten Mittel (nur
+    /// <see cref="BookingType.Reassignment"/>): je Zeile Konto +
+    /// Zeilenbetrag, Summe exakt = Umwidmungsbetrag. Eine Umwidmung hat
+    /// keine Konto-Postings — die physisch tragenden Konten sind daher
+    /// Teil der Buchung (Rechenvertrag §3.3/§3.4).
+    /// </summary>
+    public List<AccountAllocation> ReassignmentAccounts { get; init; } = [];
+
+    /// <summary>
+    /// Offene Ausgleichsposition, die diese Buchung (teilweise) begleicht
+    /// (nur <see cref="BookingType.AccountTransfer"/>; Rechenvertrag §3.5).
+    /// </summary>
+    public string? RelatedSettlementId { get; init; }
+
+    /// <summary>
+    /// Herkunft der Verteilungszeilen (nur <see cref="BookingType.AccountTransfer"/>
+    /// mit <see cref="TransferPurposes"/> und <see cref="BookingType.Reassignment"/>
+    /// mit <see cref="ReassignmentAccounts"/>): <c>true</c> = die Zeilen wurden
+    /// in der Original-Eingabe explizit angegeben; <c>false</c> = implizit aus
+    /// dem Journal abgeleitet (der Zweck/das Konto bleibt erhalten). Die
+    /// gespeicherte Auflösung ist die materialisierte Erstanlage und bleibt
+    /// bei Wiederholung maßgeblich — die Provenienz ist daher Teil des
+    /// Original-Eingabeinhalts und für die Idempotenz erforderlich (Schritt-5-
+    /// Review P2b, analog zu <c>TaxMarking.InheritedFromPreset</c>).
+    /// <c>null</c> = Buchungstyp ohne Verteilungszeilen.
+    /// </summary>
+    public bool? AllocationExplicit { get; init; }
+
+    /// <summary>
     /// Erzeugt eine Buchung ohne Postings. Dieser Konstrutor ist
     /// EF-Compliant: EF Core kann Sammlungs-Navigationsparameter
     /// (<c>AccountPostings</c>, <c>PoolPostings</c>, <c>Splits</c>) und
@@ -81,7 +120,11 @@ public sealed class Booking
         IReadOnlyList<AccountPosting>? accountPostings,
         IReadOnlyList<PoolPosting>? poolPostings,
         YearMonth? fundingMonth = null,
-        IReadOnlyList<ExpenseSplit>? splits = null)
+        IReadOnlyList<ExpenseSplit>? splits = null,
+        IReadOnlyList<PoolAllocation>? transferPurposes = null,
+        IReadOnlyList<AccountAllocation>? reassignmentAccounts = null,
+        string? relatedSettlementId = null,
+        bool? allocationExplicit = null)
     {
         Id = id;
         Type = type;
@@ -91,6 +134,10 @@ public sealed class Booking
         PoolPostings = (poolPostings ?? []).ToList();
         FundingMonth = fundingMonth;
         Splits = (splits ?? []).ToList();
+        TransferPurposes = (transferPurposes ?? []).ToList();
+        ReassignmentAccounts = (reassignmentAccounts ?? []).ToList();
+        RelatedSettlementId = relatedSettlementId;
+        AllocationExplicit = allocationExplicit;
         ValidatePostings();
         ValidateTypeSpecific();
     }
@@ -241,13 +288,178 @@ public sealed class Booking
                     throw new LarioDomainException(
                         $"Anfangsbestand '{Id}' trägt Teilposten — Teilposten gehören zu Ausgaben.");
                 }
+
+                break;
+
+            case BookingType.AccountTransfer:
+                RequireNoFundingMonthOrSplits("Transfer");
+                RequireBalancedAccountPostings("Transfer");
+                if (PoolPostings.Count != 0)
+                {
+                    throw new LarioDomainException(
+                        $"Transfer '{Id}' trägt Pool-Postings — der Gesamtpoolbestand bleibt unveränderbar (§3.3).");
+                }
+
+                if (ReassignmentAccounts.Count != 0)
+                {
+                    throw new LarioDomainException(
+                        $"Transfer '{Id}' trägt eine Kontoverteilung — die gehört zu Umwidmungen.");
+                }
+
+                ValidatePoolAllocationLines(TransferPurposes, "Transfer");
+                break;
+
+            case BookingType.Reassignment:
+                RequireNoFundingMonthOrSplits("Umwidmung");
+                if (AccountPostings.Count != 0)
+                {
+                    throw new LarioDomainException(
+                        $"Umwidmung '{Id}' trägt Konto-Postings — eine Umwidmung ist keine Kontobewegung (§3.3).");
+                }
+
+                RequireBalancedPoolPostings("Umwidmung");
+
+                if (TransferPurposes.Count != 0)
+                {
+                    throw new LarioDomainException(
+                        $"Umwidmung '{Id}' trägt eine Zweckverteilung — die gehört zu Transfers.");
+                }
+
+                ValidateAccountAllocationLines(ReassignmentAccounts, "Umwidmung");
+                break;
+
+            case BookingType.TransferReassignment:
+                RequireNoFundingMonthOrSplits("Transfer/Umwidmung");
+                RequireBalancedAccountPostings("Transfer/Umwidmung");
+                RequireBalancedPoolPostings("Transfer/Umwidmung");
+
+                // Beide Postingpaare addieren einzeln zu null; der getragene
+                // Betrag ist die absolute Höhe des negativen Postings.
+                var transferAmount = AccountPostings.Single(p => p.Amount.Cents > 0).Amount;
+                var reassignmentAmount = PoolPostings.Single(p => p.Amount.Cents > 0).Amount;
+                if (transferAmount != reassignmentAmount)
+                {
+                    throw new LarioDomainException(
+                        $"Kombination '{Id}': Kontobewegung ({transferAmount.ToEuro():0.00} €) und Poolbewegung " +
+                        $"({reassignmentAmount.ToEuro():0.00} €) müssen denselben Betrag tragen.");
+                }
+
+                if (TransferPurposes.Count != 0 || ReassignmentAccounts.Count != 0)
+                {
+                    throw new LarioDomainException(
+                        $"Kombination '{Id}' trägt Zusatzverteilungen — die Kombination ist " +
+                        "vollständig aus ihren Postings ableitbar.");
+                }
+
                 break;
 
             default:
                 // Die übrigen Buchungstypen folgen in den jeweiligen
-                // Schritten (Transfers/Reservierungen/Korrekturen);
+                // Schritten (Reservierungen/Korrekturen/Storno);
                 // typspezifische Invarianten werden dort ergänzt.
                 break;
+        }
+    }
+
+    private void RequireNoFundingMonthOrSplits(string label)
+    {
+        if (FundingMonth is not null)
+        {
+            throw new LarioDomainException(
+                $"{label} '{Id}' trägt einen Finanzierungsmonat — der gehört zu Einnahmen.");
+        }
+
+        if (Splits.Count > 0)
+        {
+            throw new LarioDomainException(
+                $"{label} '{Id}' trägt Teilposten — Teilposten gehören zu Ausgaben.");
+        }
+    }
+
+    private void RequireBalancedAccountPostings(string label)
+    {
+        var negative = AccountPostings.Where(p => p.Amount.Cents < 0).ToList();
+        var positive = AccountPostings.Where(p => p.Amount.Cents > 0).ToList();
+        if (AccountPostings.Count != 2 || negative.Count != 1 || positive.Count != 1)
+        {
+            throw new LarioDomainException(
+                $"{label} '{Id}' muss exakt ein negatives und ein positives AccountPosting tragen " +
+                $"(hat {AccountPostings.Count}).");
+        }
+
+        if (negative[0].Amount != positive[0].Amount.Negate())
+        {
+            throw new LarioDomainException(
+                $"{label} '{Id}': Kontobewegungen addieren nicht zu null " +
+                $"({negative[0].Amount.ToEuro():0.00} € / {positive[0].Amount.ToEuro():0.00} €) — " +
+                "interne Transfers sind weder Einnahme noch Ausgabe.");
+        }
+    }
+
+    private void RequireBalancedPoolPostings(string label)
+    {
+        var negative = PoolPostings.Where(p => p.Amount.Cents < 0).ToList();
+        var positive = PoolPostings.Where(p => p.Amount.Cents > 0).ToList();
+        if (PoolPostings.Count != 2 || negative.Count != 1 || positive.Count != 1)
+        {
+            throw new LarioDomainException(
+                $"{label} '{Id}' muss exakt ein negatives und ein positives PoolPosting tragen " +
+                $"(hat {PoolPostings.Count}).");
+        }
+
+        if (negative[0].Amount != positive[0].Amount.Negate())
+        {
+            throw new LarioDomainException(
+                $"{label} '{Id}': Poolbewegungen addieren nicht zu null " +
+                $"({negative[0].Amount.ToEuro():0.00} € / {positive[0].Amount.ToEuro():0.00} €) — " +
+                "eine Umwidmung erzeugt weder Geld noch verbraucht sie Geld.");
+        }
+    }
+
+    private void ValidatePoolAllocationLines(IReadOnlyList<PoolAllocation> lines, string label)
+    {
+        if (lines.Count == 0)
+        {
+            throw new LarioDomainException(
+                $"{label} '{Id}' ohne Zweckverteilung: der Zweck der gewanderten Mittel ist Teil der Buchung (§3.4).");
+        }
+
+        ValidateAllocationLineIdsAndAmounts(lines.Select(l => (l.PoolId, l.Amount)), label);
+    }
+
+    private void ValidateAccountAllocationLines(IReadOnlyList<AccountAllocation> lines, string label)
+    {
+        if (lines.Count == 0)
+        {
+            throw new LarioDomainException(
+                $"{label} '{Id}' ohne Kontoverteilung: die physischen Trägerkonten sind Teil der Buchung (§3.4).");
+        }
+
+        ValidateAllocationLineIdsAndAmounts(lines.Select(l => (l.AccountId, l.Amount)), label);
+    }
+
+    private static void ValidateAllocationLineIdsAndAmounts(
+        IEnumerable<(string RefId, Money Amount)> lines, string label)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (refId, amount) in lines)
+        {
+            if (string.IsNullOrWhiteSpace(refId))
+            {
+                throw new LarioDomainException($"{label} mit Verteilungszeile ohne Id.");
+            }
+
+            if (!seen.Add(refId))
+            {
+                throw new LarioDomainException(
+                    $"{label}: '{refId}' kommt mehrfach in der Verteilung vor.");
+            }
+
+            if (amount.Cents <= 0)
+            {
+                throw new LarioDomainException(
+                    $"{label}: Verteilungszeile '{refId}' muss positiv sein (ist {amount.ToEuro():0.00} €).");
+            }
         }
     }
 
@@ -356,6 +568,90 @@ public sealed class Booking
                     $"Ausgabe '{Id}': Teilposten für Pool '{poolId}' ({splitsForPool.ToEuro():0.00} €) " +
                     $"entsprechen nicht dem Pool-Posting ({amount.ToEuro():0.00} €).");
             }
+        }
+    }
+
+    /// <summary>
+    /// Delta der Buchung auf die signierte Konto-Pool-Zuordnung
+    /// (Rechenvertrag §3.4: „Sie wird aus den Postings abgeleitet").
+    /// Deterministisch; die Reihenfolge der Einträge ist stabil.
+    /// <para>
+    /// - <b>Anfangsbestand/Einnahme:</b> je Pool-Posting (Konto, Pool) +Betrag;
+    ///   der nicht zugeordnete Rest eines Anfangsbestands hat keine Zelle.
+    /// - <b>Ausgabe:</b> je Pool-Posting (Quellkonto, Pool) −Betrag — der
+    ///   Verbrauch des Zwecks wird am bezahlenden Konto aufgelöst.
+    /// - <b>Kontotransfer:</b> je Zweckzeile (Quelle, Pool) −Betrag und
+    ///   (Ziel, Pool) +Betrag — der Zweck bleibt erhalten (§3.3).
+    /// - <b>Umwidmung:</b> je Kontozeile (Konto, Quellpool) −Betrag und
+    ///   (Konto, Zielpool) +Betrag — das physische Konto bleibt (§3.3).
+    /// - <b>Kombination:</b> (Quellkonto, Quellpool) −Betrag und
+    ///   (Zielkonto, Zielpool) +Betrag.
+    /// </para>
+    /// Noch nicht umgesetzte Buchungstypen (Reservierung, Storno, …) werfen:
+    /// ihre Zuordnungswirkung wird im jeweiligen Schritt ergänzt.
+    /// </summary>
+    public IReadOnlyList<AllocationDeltaEntry> AllocationDelta()
+    {
+        switch (Type)
+        {
+            case BookingType.OpeningBalance:
+            case BookingType.Income:
+                var singleAccount = AccountPostings.Single().AccountId;
+                return PoolPostings
+                    .Select(p => new AllocationDeltaEntry(singleAccount, p.PoolId, p.Amount))
+                    .ToList();
+
+            case BookingType.Expense:
+                var expenseAccount = AccountPostings.Single().AccountId;
+                return PoolPostings
+                    .Select(p => new AllocationDeltaEntry(expenseAccount, p.PoolId, p.Amount))
+                    .ToList();
+
+            case BookingType.AccountTransfer:
+                var transfer = AccountPostings
+                    .ToDictionary(p => p.Amount.Cents >= 0);
+                var fromAccount = transfer[false].AccountId;
+                var toAccount = transfer[true].AccountId;
+                var transferDeltas = new List<AllocationDeltaEntry>(TransferPurposes.Count * 2);
+                foreach (var purpose in TransferPurposes)
+                {
+                    transferDeltas.Add(new AllocationDeltaEntry(fromAccount, purpose.PoolId, purpose.Amount.Negate()));
+                    transferDeltas.Add(new AllocationDeltaEntry(toAccount, purpose.PoolId, purpose.Amount));
+                }
+
+                return transferDeltas;
+
+            case BookingType.Reassignment:
+                var poolMove = PoolPostings
+                    .ToDictionary(p => p.Amount.Cents >= 0);
+                var fromPool = poolMove[false].PoolId;
+                var toPool = poolMove[true].PoolId;
+                var reassignmentDeltas = new List<AllocationDeltaEntry>(ReassignmentAccounts.Count * 2);
+                foreach (var accountLine in ReassignmentAccounts)
+                {
+                    reassignmentDeltas.Add(new AllocationDeltaEntry(accountLine.AccountId, fromPool, accountLine.Amount.Negate()));
+                    reassignmentDeltas.Add(new AllocationDeltaEntry(accountLine.AccountId, toPool, accountLine.Amount));
+                }
+
+                return reassignmentDeltas;
+
+            case BookingType.TransferReassignment:
+                var accountMove = AccountPostings
+                    .ToDictionary(p => p.Amount.Cents >= 0);
+                var poolMove2 = PoolPostings
+                    .ToDictionary(p => p.Amount.Cents >= 0);
+                var amount = accountMove[true].Amount;
+                return new List<AllocationDeltaEntry>
+                {
+                    new(accountMove[false].AccountId, poolMove2[false].PoolId, amount.Negate()),
+                    new(accountMove[true].AccountId, poolMove2[true].PoolId, amount),
+                };
+
+            default:
+                throw new LarioDomainException(
+                    $"Buchungstyp {Type} hat keine umgesetzte Zuordnungswirkung — " +
+                    "die Konto-Pool-Zuordnung wird in Schritt 5 für die Kernbuchungen abgeleitet; " +
+                    "weitere Typen folgen in ihren Schritten.");
         }
     }
 

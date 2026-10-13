@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 4 – Einnahmen, Ausgaben und Splits im Kern
 
-**Status:** [Review-Befunde behoben — wartet auf Abnahme] (12. Okt. 2026)
+**Status:** [erledigt — abgenommen und gemerged] (12. Okt. 2026, Merge-Commit `375b2ca`, PR #5)
 **Branch:** `step/4-einnahmen-ausgaben`
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 4“, §9 „Steuerkategorien, relevante Zahlungen und Nachweise“
 **Verbindliche Spezifikation:** `docs/step-0/rechenvertrag.md` (§2.2/2.3 Finanzierungsmonat, §3.2–3.4 Buchungen/Postings, §3.5 Splitregel, §5.5 Revision)
@@ -214,3 +214,6 @@ Kernbuchungen stimmen unabhängig von der Oberfläche.
     `Migration_AddsInheritedFromPresetColumn`.
   184 Tests grün (133 Domain, 51 Infrastruktur, davon 24 Step-4-Integrationstests
   auf echter SQLite), Build ohne Warnungen.
+- 12. Okt. 2026: **Abgenommen und gemerged** — Merge-Commit `375b2ca` in `main`.
+  Schritt 4 abgeschlossen, nächste Aufgabe: Schritt 5 (Kontenübergreifende
+  Deckung).

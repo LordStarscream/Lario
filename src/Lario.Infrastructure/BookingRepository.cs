@@ -19,6 +19,8 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
             .Include(b => b.PoolPostings)
             .Include(b => b.Splits)
             .ThenInclude(s => s.Tax)
+            .Include(b => b.TransferPurposes)
+            .Include(b => b.ReassignmentAccounts)
             .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
     }
 
@@ -29,6 +31,8 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
             .Include(b => b.PoolPostings)
             .Include(b => b.Splits)
             .ThenInclude(s => s.Tax)
+            .Include(b => b.TransferPurposes)
+            .Include(b => b.ReassignmentAccounts)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
     }
@@ -44,6 +48,48 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         }
 
         db.Bookings.Add(booking);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddAsync(
+        Booking booking,
+        IReadOnlyCollection<SettlementPosition> settlements,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settlements);
+
+        var exists = await db.Bookings.AnyAsync(b => b.Id == booking.Id, cancellationToken);
+        if (exists)
+        {
+            throw new InvalidOperationException(
+                $"Buchung mit der Id '{booking.Id}' existiert bereits. " +
+                "Die Idempotenzprüfung obliegt dem Anwendungsfall.");
+        }
+
+        db.Bookings.Add(booking);
+
+        foreach (var position in settlements)
+        {
+            var tracked = await db.SettlementPositions
+                .FirstOrDefaultAsync(p => p.Id == position.Id, cancellationToken);
+
+            if (tracked is null)
+            {
+                // Neue Position (Episode wurde durch diese Buchung begründet
+                // oder eine vermisste Position wird nachgeführt).
+                db.SettlementPositions.Add(position);
+                continue;
+            }
+
+            // Bestehende Position: Restzustand, Status und
+            // Begleichungsreferenz aktualisieren.
+            tracked.Amount = position.Amount;
+            tracked.RestAmount = position.RestAmount;
+            tracked.Status = position.Status;
+            tracked.SettledByBookingId = position.SettledByBookingId;
+            tracked.SettledDate = position.SettledDate;
+        }
+
         await db.SaveChangesAsync(cancellationToken);
     }
 }

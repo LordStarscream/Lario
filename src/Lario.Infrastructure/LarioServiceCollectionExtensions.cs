@@ -24,12 +24,21 @@ public static class LarioServiceCollectionExtensions
 
         services.AddScoped<IMasterDataRepository, MasterDataRepository>();
         services.AddScoped<IBookingRepository, BookingRepository>();
+        services.AddScoped<ISettlementPositionRepository, SettlementPositionRepository>();
 
         services.AddScoped<MasterDataAdmin>();
         services.AddScoped<OpeningBalanceService>();
         services.AddScoped<IncomeService>();
         services.AddScoped<ExpenseService>();
+        services.AddScoped<TransferService>();
+        services.AddScoped<ReassignmentService>();
+        services.AddScoped<TransferReassignmentService>();
         services.AddScoped<BalanceQueryService>();
+        services.AddScoped<SettlementQueryService>();
+        // Upgrade-Backfill (Schritt-5-Review P2d): führt beim Host-Start
+        // fehlende Zeilen für offene Ausgleichspositionen älterer
+        // Datenbanken nach — atomar, idempotent.
+        services.AddScoped<SettlementPositionBackfillService>();
 
         return services;
     }

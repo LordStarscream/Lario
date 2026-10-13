@@ -17,11 +17,17 @@ namespace Lario.Application.Journal;
 /// - prüft bei tatsächlicher Neuanlage die Vorgabe gegen den
 ///   Stammdaten-Katalog und speichert Buchung und Postings atomar
 ///   (vollständige Einnahmeverteilung, exakt ein Kontozugang,
-///   materialisierter Finanzierungsmonat).
+///   materialisierter Finanzierungsmonat);
+/// - speichert zusammen mit der Buchung die internen Ausgleichseffekte
+///   (Rechenvertrag §3.5): eine Einnahme kann die Schuldzelle (Konto,
+///   Pool) verkleinern und so eine offene Ausgleichsposition (teilweise)
+///   begleichen — der Journalzustand ist die Wahrheit, die
+///   Positionstabelle wird in derselben Transaktion nachgeführt.
 /// </summary>
 public sealed class IncomeService(
     IMasterDataRepository masterDataRepository,
-    IBookingRepository bookingRepository)
+    IBookingRepository bookingRepository,
+    ISettlementPositionRepository settlementPositionRepository)
 {
     /// <summary>Ergebnis einer Anlage: <see cref="Created"/> ist false bei Idempotenz-Treffer.</summary>
     public sealed record Result(bool Created, Booking Booking);
@@ -63,8 +69,17 @@ public sealed class IncomeService(
         // Tatsächliche Neuanlage: die Vorgabe muss aktive Stammdaten referenzieren.
         spec.Validate(catalog);
 
+        var bookings = await bookingRepository.GetAllAsync(cancellationToken);
+        var persistedPositions = await settlementPositionRepository.GetAllAsync(cancellationToken);
+
         var booking = spec.ToBooking();
-        await bookingRepository.AddAsync(booking, cancellationToken);
+
+        var changes = SettlementPositionSync.Plan(
+            bookings, booking, persistedPositions,
+            () => $"set-{Guid.NewGuid():N}");
+
+        await bookingRepository.AddAsync(
+            booking, changes.Select(c => c.Row).ToList(), cancellationToken);
         return new Result(true, booking);
     }
 

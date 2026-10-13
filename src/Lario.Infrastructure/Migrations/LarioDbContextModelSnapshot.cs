@@ -17,6 +17,25 @@ namespace Lario.Infrastructure.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
 
+            modelBuilder.Entity("Lario.Domain.Journal.AccountAllocation", b =>
+                {
+                    b.Property<string>("BookingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AccountId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("BookingId", "AccountId");
+
+                    b.HasIndex("AccountId");
+
+                    b.ToTable("ReassignmentAccounts", (string)null);
+                });
+
             modelBuilder.Entity("Lario.Domain.Journal.AccountPosting", b =>
                 {
                     b.Property<string>("BookingId")
@@ -42,6 +61,9 @@ namespace Lario.Infrastructure.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool?>("AllocationExplicit")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("BaseRevision")
                         .HasColumnType("INTEGER");
 
@@ -54,6 +76,10 @@ namespace Lario.Infrastructure.Migrations
 
                     b.Property<string>("Note")
                         .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RelatedSettlementId")
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Type")
@@ -101,6 +127,25 @@ namespace Lario.Infrastructure.Migrations
                     b.ToTable("ExpenseSplits", (string)null);
                 });
 
+            modelBuilder.Entity("Lario.Domain.Journal.PoolAllocation", b =>
+                {
+                    b.Property<string>("BookingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PoolId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("BookingId", "PoolId");
+
+                    b.HasIndex("PoolId");
+
+                    b.ToTable("TransferPurposes", (string)null);
+                });
+
             modelBuilder.Entity("Lario.Domain.Journal.PoolPosting", b =>
                 {
                     b.Property<string>("BookingId")
@@ -118,6 +163,66 @@ namespace Lario.Infrastructure.Migrations
                     b.HasIndex("PoolId");
 
                     b.ToTable("PoolPostings", (string)null);
+                });
+
+            modelBuilder.Entity("Lario.Domain.Journal.SettlementPosition", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CreatedByBookingId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("CreatedDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("RestAmount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SettledByBookingId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly?>("SettledDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceAccountId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetPoolId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedByBookingId");
+
+                    b.HasIndex("SettledByBookingId");
+
+                    b.HasIndex("TargetPoolId");
+
+                    b.HasIndex("SourceAccountId", "TargetPoolId", "CreatedByBookingId")
+                        .IsUnique();
+
+                    b.ToTable("SettlementPositions", (string)null);
                 });
 
             modelBuilder.Entity("Lario.Domain.Journal.TaxMarking", b =>
@@ -291,6 +396,21 @@ namespace Lario.Infrastructure.Migrations
                     b.ToTable("TaxPresets", (string)null);
                 });
 
+            modelBuilder.Entity("Lario.Domain.Journal.AccountAllocation", b =>
+                {
+                    b.HasOne("Lario.Domain.MasterData.Account", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Lario.Domain.Journal.Booking", null)
+                        .WithMany("ReassignmentAccounts")
+                        .HasForeignKey("BookingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Lario.Domain.Journal.AccountPosting", b =>
                 {
                     b.HasOne("Lario.Domain.MasterData.Account", null)
@@ -327,6 +447,21 @@ namespace Lario.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Lario.Domain.Journal.PoolAllocation", b =>
+                {
+                    b.HasOne("Lario.Domain.Journal.Booking", null)
+                        .WithMany("TransferPurposes")
+                        .HasForeignKey("BookingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Lario.Domain.MasterData.Pool", null)
+                        .WithMany()
+                        .HasForeignKey("PoolId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Lario.Domain.Journal.PoolPosting", b =>
                 {
                     b.HasOne("Lario.Domain.Journal.Booking", null)
@@ -338,6 +473,32 @@ namespace Lario.Infrastructure.Migrations
                     b.HasOne("Lario.Domain.MasterData.Pool", null)
                         .WithMany()
                         .HasForeignKey("PoolId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Lario.Domain.Journal.SettlementPosition", b =>
+                {
+                    b.HasOne("Lario.Domain.Journal.Booking", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByBookingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Lario.Domain.Journal.Booking", null)
+                        .WithMany()
+                        .HasForeignKey("SettledByBookingId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Lario.Domain.MasterData.Account", null)
+                        .WithMany()
+                        .HasForeignKey("SourceAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Lario.Domain.MasterData.Pool", null)
+                        .WithMany()
+                        .HasForeignKey("TargetPoolId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
@@ -365,7 +526,11 @@ namespace Lario.Infrastructure.Migrations
 
                     b.Navigation("PoolPostings");
 
+                    b.Navigation("ReassignmentAccounts");
+
                     b.Navigation("Splits");
+
+                    b.Navigation("TransferPurposes");
                 });
 
             modelBuilder.Entity("Lario.Domain.Journal.ExpenseSplit", b =>
