@@ -1,6 +1,6 @@
 # Aufgabe: Schritt 5 – Transfers, Umwidmung und interne Ausgleiche
 
-**Status:** [erledigt, abgenommen und gemerged (14. Okt. 2026)] (implementiert 12. Okt. 2026, sechs externe Review-Runden am 13./14. Okt. 2026, alle Befunde behoben, **PR #6** → `main`, Merge-Commit `a004d10`)
+**Status:** [erledigt, abgenommen und gemerged (13. Okt. 2026)] (implementiert 12. Okt. 2026, sechs externe Review-Runden am 13./14. Okt. 2026, alle Befunde behoben, **PR #6** → `main`, Merge-Commit `a004d10`)
 **Branch:** `step/5-transfers-ausgleiche`
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 5"
 **Verbindliche Spezifikation:** `docs/step-0/rechenvertrag.md` (§3.3 Postings, §3.4 signierte Konto-Pool-Zuordnung, §3.5 offene Ausgleichspositionen, §3.6 freie Verfügbarkeit, §5.2 Transfer/Umwidmung-Status)
@@ -113,7 +113,7 @@ Start: Hauptkonto/Flex 1.000 €, Freizeitkonto/Freizeit 300 €.
 - [x] Vollständiger Testlauf (Domain + Infrastructure) + Build ohne Warnungen
       (259 Tests: 175 Domain + 84 Infrastructure, 0 Warnungen)
 - [x] Review (Selbst-Review + reviewer-Subagent)
-- [x] commit + push + PR (Nutzer-Workflow), Abnahme durch Nutzer (14. Okt. 2026, Merge `a004d10`)
+- [x] commit + push + PR (Nutzer-Workflow), Abnahme durch Nutzer (13. Okt. 2026, Merge `a004d10`)
 
 ## Befunde und Entscheidungen
 
@@ -387,7 +387,7 @@ Idempotenz/Konfliktprüfung, FK-Atomarität, 259/259 Tests, 0 Build-Warnungen.
 
 - Umwidmung darf negative Poolbestände erzeugen (oben dokumentiert; §3.6).
 - Bekannte Randgrenze kanonischer Reihenfolge (oben); kein Blocker.
-- Abnahme durch Nutzer: 14. Okt. 2026 — PR #6 gemerged (Merge-Commit `a004d10`).
+- Abnahme durch Nutzer: 13. Okt. 2026 — PR #6 gemerged (Merge-Commit `a004d10`).
 - Hinweis: Der Commit-Text `e2320a2` (R3-Fix) beschreibt den Befund
   ungenau („Vollausgleich … wird abgelehnt"); maßgeblich sind dieser
   R3-Eintrag und `docs/step-5/step5-transfers-ausgleiche.md`
