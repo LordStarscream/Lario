@@ -137,14 +137,51 @@ Integritätsfehler aus (kein stiller Zustand). Für die Plan-Referenzfälle
 exakten Zahlen verifiziert, alle 5 verbindlichen „Prüfen“-Punkte abgedeckt,
 Idempotenz/Konfliktprüfung, FK-Atomarität, 259/259 Tests, 0 Build-Warnungen.
 
+### Externe Review-Runde (13. Okt. 2026) — drei Befunde, alle behoben
+
+- **P1 — Pairing bei rückdatierten/gleichdatierten Buchungen:**
+  `SettlementPositionSync.Plan` und `SettlementQueryService` paarten Zeilen und
+  abgeleitete Episoden über `(Konto, Pool, Begründungsbuchung)`. Eine
+  rückdatierte Ausgabe verschiebt die Begründung des offenen Zyklus —
+  die alte Zeile wäre dann nie gepaart worden (offene Episode ohne Zeile /
+  Zeile ohne Episode). **Fix:** Journal-Wahrheit mit stabiler Identität:
+  pro Zelle trägt die **jüngste Zeile die (maximal eine) offene Episode**;
+  beglichene Episoden/Zeilen werden chronologisch gepaart (Zeilen ≥ Episoden:
+  von hinten, überzählige älteste Zeilen bleiben unsichtbare Historie;
+  Episoden > Zeilen: von vorn, überzählige jüngste Episoden bleiben
+  unsichtbar). Persistierte Zeilen behalten ihre Identität (Id, Begründung,
+  Notiz); die Ansicht zeigt den Journalzustand mit der stabilen Zeilen-Id.
+  Abweichungen = sichtbarer Integritätsfehler, kein stiller Zustand.
+  Neue Tests: `SettlementIdentityTests` (6 Fälle: Teilbegleichung/Vollbegleichung
+  gleichdatiert, rückdatierte Einnahme/Ausgabe, Zusammenführung zweier
+  beglichener Zyklen, Storno-Ablehnung).
+- **P2b — Herkunft der Finanzierung (explicit/implicit):**
+  `Booking.AllocationExplicit` (bool?, Migration
+  `20261013072950_AllocationProvenance`, INTEGER nullable; `null` =
+  Buchungstyp ohne Verteilungszeilen oder Vor-Review-Daten): `true` = Zeilen
+  explizit angegeben, `false` = implizit aus dem Journal abgeleitet. Teil des
+  Original-Eingabeinhalts und der Idempotenzprüfung (explizite Wiederholung
+  muss explizit gespeichert sein und umgekehrt), analog
+  `TaxMarking.InheritedFromPreset`. Neue Tests: `AllocationProvenanceTests`
+  (5 Fälle inkl. Persistenz-Roundtrip über echten SQLite-Provider-Neustart
+  und Idempotenz bei Wiederholung mit/ohne Zeilenangabe).
+- **P2d — Upgrade-Backfill für bestehende Datenbanken:**
+  `SettlementPositionBackfillService` läuft beim Host-Start nach der
+  Migration und materialisiert fehlende **offene** Positionen (offene
+  Episode in einer Zelle ohne persistierte Zeile, z. B. DB nur bis
+  `SplitMarkingProvenance` migriert), atomar und idempotent. Beglichene
+  Episoden ohne Zeile bleiben unsichtbar (Historie). Neue Tests:
+  `SettlementBackfillTests` (2 Fälle: frische DB → 0 Zeilen; DB ohne
+  Positionsverwaltung → 2 Zeilen, zweiter Lauf → 0).
+
 ## Ergebnis
 
 - Build: `dotnet build Lario.slnx` — 0 Fehler, 0 Warnungen
-- Tests: `dotnet test Lario.slnx` — 260/260 grün (175 Domain, 85 Infrastructure;
-davon 34 echte-SQLite-Integrationstests für Schritt 5)
+- Tests: `dotnet test Lario.slnx` — 273/273 grün (175 Domain, 98 Infrastructure;
+  davon 47 echte-SQLite-Integrationstests für Schritt 5)
 
 ## Abweichungen / Offene Punkte
 
 - Umwidmung darf negative Poolbestände erzeugen (oben dokumentiert; §3.6).
 - Bekannte Randgrenze kanonischer Reihenfolge (oben); kein Blocker.
-- Abnahme durch Nutzer ausstehend (PR).
+- Abnahme durch Nutzer ausstehend (PR #6, um die Review-Fixes erweitert).
