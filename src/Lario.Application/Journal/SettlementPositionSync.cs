@@ -25,7 +25,10 @@ namespace Lario.Application.Journal;
 /// - Offener Zyklus vor der Buchung:
 ///   - Läuft er im Replay bis zum Journalende (<i>Fortsetzung</i>), ist
 ///     er dieselbe Episode nachher (vertieft/gekürzt/umgeordnet — die
-///     offene Zeile trägt ihn und nimmt dessen Werte an).
+///     offene Zeile trägt ihn und nimmt dessen Werte an); verkürzt oder
+///     verändert die Buchung daneben eine beglichene Episode derselben
+///     Zelle (z. B. rückdatierter Zufluss), folgt deren bestehende Zeile
+///     dem Replay — Identität bleibt (Schritt-5-Review R5).
 ///   - Wurde er durch die Buchung abgeschlossen, ist es ein <i>Split</i>
 ///     (der linke Teil — gleiche Begründung — ist beglichen und schließt
 ///     die offene Zeile; der neue offene Zyklus bekommt eine eigene
@@ -186,6 +189,30 @@ internal static class SettlementPositionSync
                     else
                     {
                         UpdateIfDrifted(changes, openRow, openEpisode);
+                    }
+
+                    // Schritt-5-Review R5: eine gleichdatierte oder
+                    // rückdatierte Buchung kann eine beglichene Episode
+                    // derselben Zelle verkürzen (oder verändern), während
+                    // der offene Zyklus weiterläuft. Die offene Zeile trägt
+                    // die offene Episode; die beglichenen Episoden derselben
+                    // Zelle müssen zusätzlich gegen ihre persistierten
+                    // Zeilen abgeglichen werden — sonst bliebe die verkürzte
+                    // beglichene Episode ohne werteidentische Zeile und der
+                    // Historien-Integritätscheck (unten) würde die gültige
+                    // Buchung ablehnen. Identität (Id, Begründung, Fachdatum)
+                    // bleibt erhalten; Höhe, Status und Begleichung folgen dem
+                    // Replay. Werteidentische Zeilen bleiben unverändert.
+                    foreach (var episode in after.Where(e => e.Status == SettlementStatus.Beglichen))
+                    {
+                        var row = rows.FirstOrDefault(r =>
+                            r.Status == SettlementStatus.Beglichen
+                            && r.CreatedByBookingId == episode.CreatedByBookingId
+                            && r.CreatedDate == episode.CreatedDate);
+                        if (row is not null)
+                        {
+                            UpdateIfDrifted(changes, row, episode);
+                        }
                     }
                 }
                 else

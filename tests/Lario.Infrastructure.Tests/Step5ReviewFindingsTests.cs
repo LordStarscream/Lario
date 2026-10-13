@@ -1034,3 +1034,109 @@ public class SettlementBackdatedValueTests
             Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(cents))],
         });
 }
+
+/// <summary>
+/// Schritt-5-Review R5 auf echter SQLite: eine rückdatierte Einnahme kann
+/// gleichzeitig eine ältere abgeschlossene Episode UND einen späteren
+/// offenen Zyklus verkürzen. Vor dem Fix lief der Historien-Abgleich
+/// (beglichene Episoden gegen Zeilen) nur, wenn die Zelle weder vorher
+/// noch nachher offen war — im Fortsetzungszweig (offen vorher UND nachher)
+/// wurde nur der offene Zyklus aktualisiert und der beglichene Zyklus
+/// behielt seinen alten Wert; der Integritätscheck lehnte die gültige
+/// Einnahme dann ab (keine werteidentische Zeile für die verkürzte
+/// beglichene Episode).
+/// </summary>
+public class SettlementBackdatedHistoryTests
+{
+    [Fact(DisplayName = "R5: Rückdatierte Einnahme verkürzt beglichenen und offenen Zyklus — Einnahme wird gespeichert, beide Zeilen nehmen die neuen Werte an")]
+    public async Task BackdatedIncome_ShortensSettledAndOpenCycles_SavesIncome_UpdatesBothRows()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+
+        // Zyklus A: Ausgabe 20 € (11/1) + Einnahme 20 € (11/2) → beglichen.
+        await ExpenseAsync(db, "bk-r5-a1", new DateOnly(2026, 11, 1), 2_000);
+        await IncomeAsync(db, "bk-r5-a2", new DateOnly(2026, 11, 2), 2_000);
+        var rowAId = (await db.Resolve<ISettlementPositionRepository>().GetAllAsync())
+            .Single(r => r.CreatedByBookingId == "bk-r5-a1").Id;
+
+        // Zyklus B: Ausgabe 20 € (11/5) → offen.
+        await ExpenseAsync(db, "bk-r5-b1", new DateOnly(2026, 11, 5), 2_000);
+        var rowBId = (await db.Resolve<ISettlementPositionRepository>().GetAllAsync())
+            .Single(r => r.CreatedByBookingId == "bk-r5-b1").Id;
+        Assert.NotEqual(rowAId, rowBId);
+
+        // Einnahme 10 € rückdatiert auf 30.10. (vor beiden Zyklen):
+        // das Replay lautet +10, −10, +10, −10. A bleibt beglichen mit
+        // Amount=10 €; B bleibt offen mit Amount/Rest=10 €.
+        await IncomeAsync(db, "bk-r5-i0", new DateOnly(2026, 10, 30), 1_000);
+
+        // Beide Zeilen behalten ihre stabilen Ids und nehmen die neuen
+        // Werte an (Identität: Id, Begründung, Fachdatum bleibt).
+        var all = await db.Resolve<ISettlementPositionRepository>().GetAllAsync();
+        var rowA = all.Single(r => r.Id == rowAId);
+        var rowB = all.Single(r => r.Id == rowBId);
+
+        Assert.Equal(SettlementStatus.Beglichen, rowA.Status);
+        Assert.Equal(1_000, rowA.Amount.Cents);
+        Assert.Equal(0, rowA.RestAmount.Cents);
+        Assert.Equal("bk-r5-a1", rowA.CreatedByBookingId);
+        Assert.Equal("bk-r5-a2", rowA.SettledByBookingId);
+        Assert.Equal(new DateOnly(2026, 11, 2), rowA.SettledDate);
+
+        Assert.Equal(SettlementStatus.Offen, rowB.Status);
+        Assert.Equal(1_000, rowB.Amount.Cents);
+        Assert.Equal(1_000, rowB.RestAmount.Cents);
+        Assert.Equal("bk-r5-b1", rowB.CreatedByBookingId);
+
+        // Direkte Abfrage funktioniert (kein Integritätsfehler).
+        var open = (await db.Resolve<SettlementQueryService>().GetOpenAsync()).Single();
+        Assert.Equal(rowBId, open.Id);
+        Assert.Equal(1_000, open.RestAmount.Cents);
+
+        // Neustart: der Zustand bleibt stabil (keine Drift bei der
+        // nächsten Übernahme/Abfrage).
+        using var services = db.NewServiceProvider();
+        using var scope = services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<ISettlementPositionRepository>();
+        var persisted = await repo.GetAllAsync();
+        Assert.Equal(2, persisted.Count);
+        Assert.Equal(1_000, persisted.Single(r => r.Id == rowAId).Amount.Cents);
+        Assert.Equal(1_000, persisted.Single(r => r.Id == rowBId).RestAmount.Cents);
+        var views = await scope.ServiceProvider
+            .GetRequiredService<SettlementQueryService>().GetAllAsync();
+        Assert.Equal(2, views.Count);
+        Assert.Single(views, v => v.Status == SettlementStatus.Offen);
+    }
+
+    private static Task ExpenseAsync(
+        TestDatabase db, string id, DateOnly date, long cents) =>
+        db.Resolve<ExpenseService>().CreateAsync(new ExpenseSpec
+        {
+            Id = id,
+            Date = date,
+            AccountId = Step5Scenario.Haupt,
+            TotalAmount = new Money(cents),
+            Splits =
+            [
+                new ExpenseSplitSpec
+                {
+                    Id = $"sp-{id}",
+                    Amount = new Money(cents),
+                    PoolId = Step5Scenario.PoolFreizeit,
+                    CategoryId = "cat-freizeit",
+                },
+            ],
+        });
+
+    private static Task IncomeAsync(
+        TestDatabase db, string id, DateOnly date, long cents) =>
+        db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
+        {
+            Id = id,
+            Date = date,
+            Amount = new Money(cents),
+            AccountId = Step5Scenario.Haupt,
+            Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(cents))],
+        });
+}
