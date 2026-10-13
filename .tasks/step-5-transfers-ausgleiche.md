@@ -174,14 +174,53 @@ Idempotenz/Konfliktprüfung, FK-Atomarität, 259/259 Tests, 0 Build-Warnungen.
   `SettlementBackfillTests` (2 Fälle: frische DB → 0 Zeilen; DB ohne
   Positionsverwaltung → 2 Zeilen, zweiter Lauf → 0).
 
+### Zweite externe Review-Runde (13. Okt. 2026, nach der P1-Fix-Lieferung) — alle Befunde behoben
+
+- **P1a — Vollausgleich einer offenen Position durch die neue Buchung
+  (rückdatierte oder gleichdatierte Einnahme, kanonisch vor der Begründung
+  sortiert):** Der erste P1-Fix behandelte nur Teilbegleichung und
+  Zusammenführung; der Vollausgleich lieferte `episodes.Count == 0` und
+  wurde weiterhin als `LarioDomainException` abgelehnt. **Fix:** Die
+  gültige Einnahme wird gespeichert; die offene Positionszeile wird
+  kontrolliert abgeschlossen (Status beglichen, Rest 0, Identität und
+  Höhe bleiben, Begleichungsreferenz = die neue Buchung). Ist der Zyklus
+  im Replay als jüngste beglichene Episode erhalten (Zufluss nach der
+  Begründung), folgt die Zeile der Journalwahrheit (Begleichungsreferenz
+  der kanonischen Reihenfolge). Die Query-Prüfung „offene Zeile ohne
+  Episode“ bleibt als Sicherheitsnetz für fremde/korrupte Datenbanken.
+  Neue Tests: `BackdatedIncome_FullSettlement_SavesIncomeAndClosesRow`
+  (Salden, abgeschlossene Historie, Neustart) und
+  `SameDayIncome_SmallerId_FullSettlement_SavesIncomeAndClosesRow`
+  (gleichdatierter Zufluss mit lexikografisch kleinerer Id).
+- **P1b — `episodes[0]` statt der jüngsten Episode:** In
+  `SettlementPositionSync.Plan` wählte der P1-Fix die offene Episode mit
+  `episodes[0]`; bei Altdaten mit bereits abgeschlossener Episode ohne
+  Zeile + neuer Ausgabe materialisierte er die falsche (beglichene)
+  Episode als neue offene Zeile. **Fix:** Die offene Episode ist per
+  Ableitungsregel immer `episodes[^1]`; Paarung beglichener Episoden und
+  Zeilen einheitlich von hinten (älteste Episoden ohne Zeile bleiben
+  unsichtbare Historie) — auch in `SettlementQueryService`.
+  Neuer Test: `LegacyCell_NewExpense_CreatesExactlyOneOpenRow` (inkl.
+  Nachweis, dass der P2d-Backfill in diesem Zustand 0 Zeilen legt).
+- **R2 — Idempotenz vor Aktivitätsprüfung:**
+  `TransferService`/`ReassignmentService` prüften bei impliziter
+  Wiederholung die Aktivität der materialisierten Konten/Pools — eine
+  identische Vorgabe wurde nach Archivierung als Konflikt verworfen
+  statt idempotent bestätigt (Idempotenz greift vor der Aktivitäts-
+  prüfung; die gehört zur tatsächlichen Neuanlage und bleibt dort).
+  Neue Tests: `Repeat_Implicit_AfterMaterializedPoolArchived_IsConfirmed`
+  (Transfer), `Repeat_Implicit_AfterMaterializedAccountArchived_IsConfirmed`
+  (Umwidmung).
+
 ## Ergebnis
 
 - Build: `dotnet build Lario.slnx` — 0 Fehler, 0 Warnungen
-- Tests: `dotnet test Lario.slnx` — 273/273 grün (175 Domain, 98 Infrastructure;
-  davon 47 echte-SQLite-Integrationstests für Schritt 5)
+- Tests: `dotnet test Lario.slnx` — 277/277 grün (175 Domain, 102
+  Infrastructure; davon 51 echte-SQLite-Integrationstests für Schritt 5)
 
 ## Abweichungen / Offene Punkte
 
 - Umwidmung darf negative Poolbestände erzeugen (oben dokumentiert; §3.6).
 - Bekannte Randgrenze kanonischer Reihenfolge (oben); kein Blocker.
-- Abnahme durch Nutzer ausstehend (PR #6, um die Review-Fixes erweitert).
+- Abnahme durch Nutzer ausstehend (PR #6, um die Review-Fixes beider
+  Runden erweitert).
