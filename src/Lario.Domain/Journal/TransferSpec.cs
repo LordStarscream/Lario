@@ -177,7 +177,10 @@ public sealed class TransferSpec
     /// aufgelöste Zweckverteilung (explizit oder vom Anwendungsfall aus
     /// dem Journal abgeleitet); sie muss die gleichen Prüfungen erfüllen
     /// wie <see cref="Purposes"/> (eindeutige Pools, positive Zeilen,
-    /// exakte Summe) und wird hier erneut geprüft.
+    /// exakte Summe) und wird hier erneut geprüft. Die Provenanz der
+    /// Verteilung (explizit / implizit) wird als Buchungsinhalt
+    /// materialisiert — sie gehört zum Original-Eingabeinhalt und steuert
+    /// die Idempotenz der Wiederholung.
     /// </summary>
     public Booking ToBooking(IReadOnlyList<PoolAllocation> effectivePurposes)
     {
@@ -195,7 +198,8 @@ public sealed class TransferSpec
             ],
             [],
             transferPurposes: effectivePurposes.ToList(),
-            relatedSettlementId: RelatedSettlementId);
+            relatedSettlementId: RelatedSettlementId,
+            allocationExplicit: Purposes is not null);
     }
 
     /// <summary>

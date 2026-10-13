@@ -114,6 +114,15 @@ public sealed class TransferService(
     /// Prüft, ob die Vorgabe exakt den Inhalt der vorhandenen Buchung
     /// hat: Fachdatum, Konten, Betrag, Notiz und Begleichungsreferenz
     /// müssen stimmen. Die Zweckzuordnung wird wie folgt verglichen:
+    /// - die Herkunft der Zuordnung (persistiert als
+    ///   <c>AllocationExplicit</c>, analog <c>TaxMarking.InheritedFromPreset</c>)
+    ///   muss zusammenpassen: gespeicherte explizite Herkunft bestätigt
+    ///   nur eine explizite Wiederholung, gespeicherte implizite Herkunft
+    ///   nur eine implizite — eine explizite Wiederholung einer implizit
+    ///   aufgelösten Erstanlage ist ein Inhaltswechsel, auch wenn die
+    ///   Zeilen der gespeicherten Auflösung entsprechen; fehlende Herkunft
+    ///   (Daten dieser Version) → struktureller Vergleich ohne
+    ///   Herkunftsprüfung (Upgrade-Kompatibilität);
     /// - explizite Zuordnung der Vorgabe: 1:1 mit den gespeicherten
     ///   Zeilen (Pool, Betrag);
     /// - implizite Vorgabe (keine Zeilen): die gespeicherte Zuordnung
@@ -160,6 +169,16 @@ public sealed class TransferService(
 
         var storedPurposes = booking.TransferPurposes;
         if (storedPurposes.Count == 0)
+        {
+            return false;
+        }
+
+        // Herkunft der Zuordnung (siehe Methodenkommentar).
+        if (booking.AllocationExplicit is true && spec.Purposes is null)
+        {
+            return false;
+        }
+        if (booking.AllocationExplicit is false && spec.Purposes is not null)
         {
             return false;
         }

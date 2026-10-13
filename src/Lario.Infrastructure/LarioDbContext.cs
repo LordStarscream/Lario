@@ -124,6 +124,11 @@ public class LarioDbContext : DbContext
                 .HasMaxLength(7);
             // Begleichungsreferenz nur bei Kontotransfers (null sonst).
             e.Property(x => x.RelatedSettlementId).HasMaxLength(128);
+            // Herkunft der Verteilungszeilen (true = explizit, false =
+            // implizit, null = Buchungstyp ohne Verteilung) — Teil des
+            // Original-Eingabeinhalts, für die Idempotenz der
+            // Wiederholung gebraucht (Schritt-5-Review P2b).
+            e.Property(x => x.AllocationExplicit);
         });
 
         modelBuilder.Entity<AccountPosting>(e =>

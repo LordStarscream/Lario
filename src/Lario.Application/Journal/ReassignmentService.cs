@@ -119,6 +119,15 @@ public sealed class ReassignmentService(
     /// Prüft, ob die Vorgabe exakt den Inhalt der vorhandenen Buchung
     /// hat: Fachdatum, Quell- und Zielpool, Betrag, Notiz und die
     /// Kontoverteilung. Die Kontoverteilung wird wie folgt verglichen:
+    /// - die Herkunft der Verteilung (persistiert als
+    ///   <c>AllocationExplicit</c>, analog <c>TaxMarking.InheritedFromPreset</c>)
+    ///   muss zusammenpassen: gespeicherte explizite Herkunft bestätigt
+    ///   nur eine explizite Wiederholung, gespeicherte implizite Herkunft
+    ///   nur eine implizite — eine explizite Wiederholung einer implizit
+    ///   aufgelösten Erstanlage ist ein Inhaltswechsel, auch wenn die
+    ///   Zeilen der gespeicherten Auflösung entsprechen; fehlende Herkunft
+    ///   (Daten dieser Version) → struktureller Vergleich ohne
+    ///   Herkunftsprüfung (Upgrade-Kompatibilität);
     /// - explizite Verteilung der Vorgabe: 1:1 als Multiset (Konto, Betrag);
     /// - implizite Vorgabe (keine Zeilen): die gespeicherte Verteilung wird
     ///   akzeptiert, wenn sie zur Buchung passt (Summe = Betrag, aktive
@@ -153,6 +162,16 @@ public sealed class ReassignmentService(
 
         var storedAccounts = booking.ReassignmentAccounts;
         if (storedAccounts.Count == 0)
+        {
+            return false;
+        }
+
+        // Herkunft der Verteilung (siehe Methodenkommentar).
+        if (booking.AllocationExplicit is true && spec.Accounts is null)
+        {
+            return false;
+        }
+        if (booking.AllocationExplicit is false && spec.Accounts is not null)
         {
             return false;
         }

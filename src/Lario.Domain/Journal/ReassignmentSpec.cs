@@ -169,7 +169,10 @@ public sealed class ReassignmentSpec
     /// aufgelöste Verteilung (explizit oder vom Anwendungsfall aus dem
     /// Journal abgeleitet); sie muss die gleichen Prüfungen erfüllen wie
     /// <see cref="Accounts"/> (eindeutige Konten, positive Zeilen, exakte
-    /// Summe) und wird hier erneut geprüft.
+    /// Summe) und wird hier erneut geprüft. Die Provenanz der Verteilung
+    /// (explizit / implizit) wird als Buchungsinhalt materialisiert — sie
+    /// gehört zum Original-Eingabeinhalt und steuert die Idempotenz der
+    /// Wiederholung.
     /// </summary>
     public Booking ToBooking(IReadOnlyList<AccountAllocation> effectiveAccounts)
     {
@@ -186,7 +189,8 @@ public sealed class ReassignmentSpec
                 new PoolPosting { PoolId = FromPoolId, Amount = Amount.Negate() },
                 new PoolPosting { PoolId = ToPoolId, Amount = Amount },
             ],
-            reassignmentAccounts: effectiveAccounts.ToList());
+            reassignmentAccounts: effectiveAccounts.ToList(),
+            allocationExplicit: Accounts is not null);
     }
 
     /// <summary>

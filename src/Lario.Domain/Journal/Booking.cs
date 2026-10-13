@@ -77,6 +77,20 @@ public sealed class Booking
     public string? RelatedSettlementId { get; init; }
 
     /// <summary>
+    /// Herkunft der Verteilungszeilen (nur <see cref="BookingType.AccountTransfer"/>
+    /// mit <see cref="TransferPurposes"/> und <see cref="BookingType.Reassignment"/>
+    /// mit <see cref="ReassignmentAccounts"/>): <c>true</c> = die Zeilen wurden
+    /// in der Original-Eingabe explizit angegeben; <c>false</c> = implizit aus
+    /// dem Journal abgeleitet (der Zweck/das Konto bleibt erhalten). Die
+    /// gespeicherte Auflösung ist die materialisierte Erstanlage und bleibt
+    /// bei Wiederholung maßgeblich — die Provenienz ist daher Teil des
+    /// Original-Eingabeinhalts und für die Idempotenz erforderlich (Schritt-5-
+    /// Review P2b, analog zu <c>TaxMarking.InheritedFromPreset</c>).
+    /// <c>null</c> = Buchungstyp ohne Verteilungszeilen.
+    /// </summary>
+    public bool? AllocationExplicit { get; init; }
+
+    /// <summary>
     /// Erzeugt eine Buchung ohne Postings. Dieser Konstrutor ist
     /// EF-Compliant: EF Core kann Sammlungs-Navigationsparameter
     /// (<c>AccountPostings</c>, <c>PoolPostings</c>, <c>Splits</c>) und
@@ -109,7 +123,8 @@ public sealed class Booking
         IReadOnlyList<ExpenseSplit>? splits = null,
         IReadOnlyList<PoolAllocation>? transferPurposes = null,
         IReadOnlyList<AccountAllocation>? reassignmentAccounts = null,
-        string? relatedSettlementId = null)
+        string? relatedSettlementId = null,
+        bool? allocationExplicit = null)
     {
         Id = id;
         Type = type;
@@ -122,6 +137,7 @@ public sealed class Booking
         TransferPurposes = (transferPurposes ?? []).ToList();
         ReassignmentAccounts = (reassignmentAccounts ?? []).ToList();
         RelatedSettlementId = relatedSettlementId;
+        AllocationExplicit = allocationExplicit;
         ValidatePostings();
         ValidateTypeSpecific();
     }

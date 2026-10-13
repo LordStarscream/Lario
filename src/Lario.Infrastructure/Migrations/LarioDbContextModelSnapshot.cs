@@ -61,6 +61,9 @@ namespace Lario.Infrastructure.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool?>("AllocationExplicit")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("BaseRevision")
                         .HasColumnType("INTEGER");
 
