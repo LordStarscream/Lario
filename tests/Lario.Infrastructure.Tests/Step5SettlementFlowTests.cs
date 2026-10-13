@@ -2,6 +2,7 @@ using Lario.Application;
 using Lario.Application.Journal;
 using Lario.Domain;
 using Lario.Domain.Journal;
+using Lario.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -170,6 +171,60 @@ public class SettlementFlowPersistenceTests
             await provider.GetRequiredService<ISettlementPositionRepository>().GetAllAsync());
         Assert.Equal(SettlementStatus.Beglichen, row.Status);
         Assert.Equal("tr-neustart", row.SettledByBookingId);
+    }
+
+    [Fact(DisplayName = "Alte Datenbank: abgeschlossener Schuldzyklus ohne Positionszeile bleibt unsichtbar (kein Integritätsfehler)")]
+    public async Task LegacyDb_ClosedCycleWithoutRow_StaysInvisible()
+    {
+        await using var db = new TestDatabase();
+        await Step5Scenario.SeedAsync(db);
+
+        // Freizeit-Ausgabe 20 € vom Hauptkonto: Zelle (Haupt, Freizeit) −20,
+        // die offene Position wird atomar mit der Buchung persistiert.
+        await db.Resolve<ExpenseService>().CreateAsync(new ExpenseSpec
+        {
+            Id = "bk-legacy-1",
+            Date = new DateOnly(2026, 11, 1),
+            AccountId = Step5Scenario.Haupt,
+            TotalAmount = new Money(2_000),
+            Splits =
+            [
+                new ExpenseSplitSpec
+                {
+                    Id = "sp-legacy-1",
+                    Amount = new Money(2_000),
+                    PoolId = Step5Scenario.PoolFreizeit,
+                    CategoryId = "cat-freizeit",
+                },
+            ],
+        });
+
+        // Datenbank aus einer Version ohne persistierte Positionszeilen
+        // simulieren: Zeile löschen.
+        using (var scope = db.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<LarioDbContext>();
+            var stored = Assert.Single(await context.SettlementPositions.ToListAsync());
+            context.SettlementPositions.Remove(stored);
+            await context.SaveChangesAsync();
+        }
+
+        // Einnahme 20 € auf derselben Zelle schließt den Zyklus: das
+        // Journal leitet eine beglichene Episode ab, für die es keine
+        // persistierte Zeile gibt.
+        await db.Resolve<IncomeService>().CreateAsync(new IncomeSpec
+        {
+            Id = "bk-legacy-2",
+            Date = new DateOnly(2026, 11, 2),
+            AccountId = Step5Scenario.Haupt,
+            Amount = new Money(2_000),
+            Allocations = [new IncomeAllocationSpec(Step5Scenario.PoolFreizeit, new Money(2_000))],
+        });
+
+        // Geschlossene Episode ohne Historie bleibt unsichtbar — dasselbe
+        // Verhalten wie SettlementPositionSync.Plan (kein Integritätsfehler).
+        Assert.Empty(await db.Resolve<SettlementQueryService>().GetAllAsync());
+        Assert.Empty(await db.Resolve<SettlementQueryService>().GetOpenAsync());
     }
 }
 

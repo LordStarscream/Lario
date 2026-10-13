@@ -78,6 +78,14 @@ public sealed class SettlementQueryService(
             var key = (episode.SourceAccountId, episode.TargetPoolId, episode.CreatedByBookingId);
             if (!persistedByKey.TryGetValue(key, out var row))
             {
+                if (episode.Status != SettlementStatus.Offen)
+                {
+                    // Geschlossene Episode ohne Historie (z. B. DB aus einer
+                    // Version ohne persistierte Positionszeilen): bleibt
+                    // unsichtbar — dasselbe Verhalten wie SettlementPositionSync.Plan.
+                    continue;
+                }
+
                 throw new LarioDomainException(
                     $"Integritätsfehler: die abgeleitete Ausgleichsposition " +
                     $"(Konto '{episode.SourceAccountId}', Pool '{episode.TargetPoolId}', " +
