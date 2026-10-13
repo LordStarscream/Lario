@@ -139,9 +139,9 @@ Idempotenz/Konfliktprüfung, FK-Atomarität, 259/259 Tests, 0 Build-Warnungen.
 
 ## Ergebnis
 
-- Build: `dotnet build Lario.sln` — 0 Fehler, 0 Warnungen
-- Tests: `dotnet test Lario.sln` — 259/259 grün (175 Domain, 84 Infrastructure;
-davon 16 echte-SQLite-Integrationstests für Schritt 5)
+- Build: `dotnet build Lario.slnx` — 0 Fehler, 0 Warnungen
+- Tests: `dotnet test Lario.slnx` — 260/260 grün (175 Domain, 85 Infrastructure;
+davon 34 echte-SQLite-Integrationstests für Schritt 5)
 
 ## Abweichungen / Offene Punkte
 
