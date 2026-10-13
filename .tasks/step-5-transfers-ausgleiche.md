@@ -212,15 +212,52 @@ Idempotenz/Konfliktprüfung, FK-Atomarität, 259/259 Tests, 0 Build-Warnungen.
   (Transfer), `Repeat_Implicit_AfterMaterializedAccountArchived_IsConfirmed`
   (Umwidmung).
 
+### Dritte externe Review-Runde (13. Okt. 2026, nach der R2-Lieferung) — alle Befunde behoben
+
+- **P1 — Neuer Zyklus überschreibt abgeschlossene Position:**
+  `SettlementPositionSync.Plan` und `SettlementQueryService` verwendeten die
+  Regel „Zeilen ≥ Episoden: die jüngste Zeile trägt die offene Episode".
+  Startete ein **neuer** Zyklus auf einer Zelle mit beglichener Zeile (reine
+  Addition: vorherige Episoden im neuen Zustand werteidentisch enthalten,
+  offene Episode angehängt), wurde die jüngste **beglichene** Zeile wieder
+  geöffnet und trug den neuen Zyklus — die abgeschlossene Historie (Status,
+  Begleichungsreferenz, Identität) ging verloren; gleiches nach einem
+  rückdatierten Vollausgleich (P1a). **Fix (Übergangsanalyse):** `Plan`
+  leitet den Zellenzustand **vor und nach** der Buchung ab; der Übergang
+  bestimmt die Änderung: offen→offen = dieselbe Episode (die offene Zeile
+  trägt sie); offen→beglichen = kontrollierter Abschluss (P1a);
+  beglichen→offen = reine Addition → **neue Zeile mit neuem Id** (neuer
+  Zyklus), sonst (Verlängerung/Zusammenführung beglichener Zyklen) → die
+  jüngste Zeile trägt die offene Episode (wird sie beglichen, wird sie
+  wieder geöffnet und behält ihre Identität); beglichen→beglichen =
+  unverändert. Ohne jede Zeile (Historie vor der Positionsverwaltung) wird
+  ebenfalls eine neue angelegt. Neue Integritätsfehler (sichtbar): zwei
+  offene Zeilen pro Zelle; offene Episode ohne offene Zeile; beglichene
+  Episode (nicht älter als die älteste Zeile) ohne werteidentische Zeile.
+  Verwaiste Zeilen ohne passende Episode bleiben legitime unsichtbare
+  Historie (R1/R3). **Fix (Ansicht):** offene Ansicht = Journalzustand
+  (Episode: Werte + Begründung) mit stabiler Zeilen-Id, beglichene Ansicht
+  = persistierte Zeile (stabile Historie, auch wenn die zusammengeführte
+  Episode eine andere Begründung trägt); Id und Stammdaten immer von der
+  Zeile. Neue Tests (5, echte SQLite): `SettlementNewCycleTests` —
+  `NewCycleAfterSettledEpisode_CreatesNewRow_KeepsOldSettled`,
+  `NewCycleAfterBackdatedFullSettlement_CreatesNewRow_KeepsClosedHistory`,
+  `NewCycleAfterMergeAndSettlement_CreatesThirdRow`,
+  `LegacyEpisodeWithoutRow_NewCycle_ViewStaysConsistent`,
+  `TamperedSettledRow_UnchangedPrefix_FailsVisibly`.
+
 ## Ergebnis
 
 - Build: `dotnet build Lario.slnx` — 0 Fehler, 0 Warnungen
-- Tests: `dotnet test Lario.slnx` — 277/277 grün (175 Domain, 102
-  Infrastructure; davon 51 echte-SQLite-Integrationstests für Schritt 5)
+- Tests: `dotnet test Lario.slnx` — 282/282 grün (175 Domain, 107
+  Infrastructure; davon 56 echte-SQLite-Integrationstests für Schritt 5)
 
 ## Abweichungen / Offene Punkte
 
 - Umwidmung darf negative Poolbestände erzeugen (oben dokumentiert; §3.6).
 - Bekannte Randgrenze kanonischer Reihenfolge (oben); kein Blocker.
-- Abnahme durch Nutzer ausstehend (PR #6, um die Review-Fixes beider
+- Abnahme durch Nutzer ausstehend (PR #6, um die Review-Fixes aller drei
   Runden erweitert).
+- Hinweis: Der Commit-Text `e2320a2` (R3-Fix) beschreibt den Befund
+  ungenau („Vollausgleich … wird abgelehnt"); maßgeblich sind dieser
+  R3-Eintrag und `docs/step-5/step5-transfers-ausgleiche.md`

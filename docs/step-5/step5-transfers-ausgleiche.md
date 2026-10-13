@@ -1,6 +1,8 @@
 # Schritt 5 — Transfers, Umwidmung und interne Ausgleiche
 
 **Branch:** `step/5-transfers-ausgleiche` · **Basis:** Schritt 4 (merged, `375b2ca`) · **Status:** implementiert (12. Okt. 2026), drei externe Review-Runden (13. Okt. 2026), alle Befunde behoben, Abnahme durch den Nutzer ausstehend · **PR:** #6
+**Spezifikation:** `docs/step-0/rechenvertrag.md` (§3.3 Postings, §3.4 signierte Konto-Pool-Zuordnung, §3.5 offene Ausgleichspositionen, §3.6 freie Verfügbarkeit, §5.2 Transfer/Umwidmung-Status)
+**Referenzfälle:** `docs/step-0/referenzfaelle/04-ausgleich.json`, `05-kontotransfer.json`, `06-umwidmung.json`
 
 ## Abnahmekriterien (aus dem Plan)
 
@@ -20,73 +22,88 @@
 
 | Kriterium | Umsetzung |
 |---|---|
-| 1. Transfer A→B | `TransferSpec` (From/To-Konto, Betrag, Zwecke) → `Booking` vom Typ `Transfer` mit signierter `TransferAllocation` je Konto (Quelle und Ziel), gemeinsamer Begründung. `BookingEngine` wendet an: Konto A −X, Konto B +X. Poolbestände berührt nicht. |
-| 2. Umwidmung | `ReassignmentSpec` (Quellpool, Zielpool, Betrag) → eigene Änderung vom Grund `Reassignment` ohne Kontobewegung; `ReassignmentService` verifiziert Pool-Existenz und Betrag > 0 und wendet an: Pool A −X, Pool B +X. |
-| 3. Interne Ausgleiche | `SettlementPosition` (offene Position: Konto → Pool, Betrag, Begründung) mit `FundingSource` (Buchung, die die Position begründet); `SettlementQueryService` leitet den Zyklus aus dem Journal ab (Eröffnen, Vertiefen, Begleichen, Zusammenführen, Abschließen). Beglichene Positionen werden persistiert (`SettlementPositionRepository`), offene bleiben Journal-abgeleitet. |
-| 4. Reservierungen | Keine der drei Operationen verändert `Reservations` — in `BookingEngine` strukturell (kein Pfad, der Reservierungen berührt); Abdeckung durch Tests, die Reservierungen vor/nach setzen und Gleichheit prüfen. |
-| 5. Rekonstruierbarkeit | `Saldenrekonstruktion`-Tests: Kontostände und Poolbestände aus den Buchungen neu berechnet und mit den abgeleiteten Werten verglichen (Transfer- und Umwidmungsfolgen, gemischte Folgen). |
-| 6. Keine doppelte Erfassung | `SettlementPositionService` verifiziert die `FundingSource` (Buchungstyp + Betrag) und stellt sicher, dass die Ausgleichsbewegung nicht zusätzlich als Ausgabe verbucht wird; Abdeckung durch den Referenzfall „Ausgabe über fremdes Konto“. |
+| 1. Transfer A→B | `TransferSpec` (Quell-/Zielkonto, Betrag, Zwecke) → Buchung vom Typ AccountTransfer mit Konto-Pool-Zeilen (`TransferPurposes`); impliziter Zweck aus der signierten Zuordnung (eindeutiger positiver Pool mit Deckung) oder explizit angegeben, als `TransferPurposes` materialisiert. `TransferService` verifiziert Konten, Betrag (Quellkonto trägt den Betrag) und Zwecke; die Poolbestände bleiben unverändert. |
+| 2. Umwidmung | `ReassignmentSpec` (Quell-/Zielpool, Betrag, tragende Konten `ReassignmentAccounts`) → Buchung vom Typ Reassignment ohne Konto-Postings; `ReassignmentService` wendet an: Pool A −X, Pool B +X. Die Kombination `TransferReassignmentSpec` trägt je exakt ein Konto- und ein Pool-Posting-Paar (`TransferReassignmentService`). |
+| 3. Interne Ausgleiche | Negative Zelle (Konto, Pool) in der abgeleiteten Zuordnungsmatrix = offene Ausgleichsposition (§3.5). `SettlementPosition` wird persistiert (eigene stabile Id, Status, Begleichungsreferenz); `SettlementPositionSync` leitet bei jeder Buchung den Übergang des Zellenzustands ab und speichert die Positionsatome mit der Buchung; `SettlementQueryService` führt Journal und Tabelle zur Ansicht zusammen. Begleichung/Teilbegleichung: jede Buchung, die eine negative Zelle weniger negativ macht, reduziert den Rest (Teilbegleichung bei kleinerem Betrag; bei Rest 0 geschlossen mit `settledByBooking`). |
+| 4. Reservierungen | Keine der drei Operationen verändert Reservierungen — in der `BookingEngine` strukturell (kein Pfad, der Reservierungen berührt); Abdeckung durch Tests, die Reservierungen vor/nach setzen und Gleichheit prüfen. |
+| 5. Rekonstruierbarkeit | `BookingJournal.Allocations` (Zuordnungsmatrix: je Buchung ein Delta je Zelle) mit Invarianten Zeilensummen = Kontostände, Spaltensummen = Poolbestände; Rekonstruktions-Tests über Transfer-/Umwidmungsfolgen und gemischte Folgen (Referenzfälle 04/05/06 end-to-end). |
+| 6. Keine doppelte Erfassung | Begleichungsregel: die Ausgleichsbewegung (Transfer mit `relatedSettlementId`, Ziel = Quellkonto der Position, anlangende Mittel tragen den Positionspool) reduziert nur die offene Position; Referenzfall „Ausgabe über fremdes Konto“ (04) als echter SQLite-Integrationstest. |
 
 ## Dateien
 
-- `src/Lario.Domain/Settlements.cs` — `SettlementStatus`, `SettlementPosition`, `SettlementPositionState`, `SettlementEpisode` (Domain-Werte; `SettlementPositionState` ist das Journal-abgeleitete Zustandselement, `SettlementPosition` die persistierte Zeile).
-- `src/Lario.Domain/Bookings.cs` — `BookingType.Transfer`, `TransferAllocation`; `Booking` trägt die signierte Zuordnung und die `RelatedSettlementId` (explizite Referenz, optional).
-- `src/Lario.Application/Journal/TransferService.cs` — Anwendungsfall Transfer (Konto → Konto), inkl. Verifikation (Konten, Betrag, Zwecke).
-- `src/Lario.Application/Journal/ReassignmentService.cs` — Anwendungsfall Umwidmung (Pool → Pool, ohne Kontobewegung).
-- `src/Lario.Application/Journal/SettlementPositionService.cs` — Eröffnung/Verschärfung offener Positionen, Begleichung aus dem Journal (Journalableitung + `FundingSource`-Verifikation), Persistierung beglichener Positionen.
-- `src/Lario.Application/Journal/SettlementPositionSync.cs` — Synchronisation Journal ↔ persistierte Zeilen (Eröffnen, Vertiefen, Begleichen, Zusammenführen, Abschließen; Zeilen bleiben die stabile Historie).
-- `src/Lario.Application/Journal/SettlementQueryService.cs` — Abfrage offener/beglichener Positionen: Journalableitung + Pairing mit persistierten Zeilen (offen: jüngste offene Episode derselben Begründung; beglichen: Begründung bzw. Zusammenführung).
-- `src/Lario.Infrastructure/Persistence/SettlementPositionEntity.cs` + Migration — persistierte Zeilen (eigene Tabelle, StableId, Begründung, Beträge, Status, Zeitpunkte).
-- `tests/Lario.Domain.Tests/AllocationAndSettlementTests.cs` — Domain-Invarianten (Zuordnungen, Betragssummen, Statusübergänge, Rundung).
-- `tests/Lario.Infrastructure.Tests/Step5TransferSettlementTests.cs` — echte-SQLite-Integrationstests: Transfers (Kontostände, Pools unberührt, beidseitige Nachvollziehbarkeit), Umwidmungen (Konten unberührt, Pool-Delta), gemischte Folgen, Rekonstruierbarkeit.
-- `tests/Lario.Infrastructure.Tests/Step5SettlementFlowTests.cs` — echte-SQLite-Integrationstests: offener Zyklus, Teilbegleichung, Vollbegleichung, Zusammenführung, Neustart mit offenen Positionen, explizite/implizite Referenz.
-- `tests/Lario.Infrastructure.Tests/Step5ReviewFindingsTests.cs` — echte-SQLite-Integrationstests zu den Review-Befunden (R1–R3).
-- `docs/step-0/referenzfaelle-schritt5.json` — Referenzfälle `05`–`05c` (Ausgaben über fremdes Konto, Teil-/Vollausgleich, Umwidmungskette).
-- `.tasks/step-5-transfers-ausgleiche.md` — Aufgaben-Tracking.
+**Domain** (`src/Lario.Domain/Journal/`):
+- `TransferSpec.cs`, `ReassignmentSpec.cs`, `TransferReassignmentSpec.cs` — Vorgaben (Prüfungen, Materialisierung)
+- `Booking.cs` — Buchungsmodell (Typen AccountTransfer/Reassignment/TransferReassignment, `RelatedSettlementId`, `AllocationExplicit`)
+- `AccountAllocation.cs`, `AccountPoolCell.cs`, `AllocationDeltaEntry.cs` — signierte Konto-Pool-Zuordnung
+- `BookingJournal.cs` — Zuordnungsmatrix und Ausgleichsepisoden ableiten (deterministisch, kanonische Reihenfolge Fachdatum + Id)
+- `SettlementPosition.cs`, `SettlementPositionState.cs` — persistierte Zeile bzw. Journal-abgeleiteter Episoden-Zustand
+
+**Application** (`src/Lario.Application/Journal/`):
+- `TransferService.cs`, `ReassignmentService.cs`, `TransferReassignmentService.cs` — Anwendungsfälle (inkl. Vormerkung/Bestätigung/Abbruch über Buchungs-Idempotenz, Begleichung/Teilbegleichung)
+- `SettlementPositionSync.cs` — Übergangsanalyse Zellenzustand (vorher/nachher der Buchung) und Speicherung der Positionsänderungen atomar mit der Buchung
+- `SettlementPositionBackfillService.cs` — Upgrade-Backfill offener Positionen (Host-Start, idempotent)
+- `SettlementQueryService.cs` — Abfrage offener/beglichener Positionen (Journal + Tabelle, Integritätsfehler sichtbar)
+- `ISettlementPositionRepository.cs` — Schnittstelle
+
+**Infrastructure**:
+- `LarioDbContext.cs` — EF-Mapping (TransferPurposes, ReassignmentAccounts, SettlementPositions)
+- `Migrations/20261012200106_TransfersAndSettlements.cs` — Positionsverwaltung
+- `Migrations/20261013072950_AllocationProvenance.cs` — `AllocationExplicit` (Review R1/P2b)
+- `src/Lario.Host/Program.cs` — Backfill-Aufruf nach der Migration
+
+**Tests**:
+- `tests/Lario.Domain.Tests/AllocationAndSettlementTests.cs` — Domain-Invarianten (Buchungstypen, Zuordnungsmatrix, Ausgleichs-Ableitung, Referenzfälle 04/05/06)
+- `tests/Lario.Infrastructure.Tests/Step5TransferSettlementTests.cs` — echte SQLite: Referenzfälle end-to-end, Teilbegleichung, Idempotenz, Konflikte, Atomarität, Neustart
+- `tests/Lario.Infrastructure.Tests/Step5SettlementFlowTests.cs` — echte SQLite: offener Zyklus, Teil-/Vollbegleichung, Zusammenführung, Neustart, explizite/implizite Referenz
+- `tests/Lario.Infrastructure.Tests/Step5ReviewFindingsTests.cs` — echte SQLite: Review-Befunde R1–R3
 
 ## Build & Tests
 
 ```bash
-dotnet build Lario.slnx          # 0 Fehler, 0 Warnungen
+dotnet build Lario.slnx
 dotnet test Lario.slnx --no-restore
 ```
 
-- 282/282 Tests erfolgreich (Domain 175, Infrastructure 107 — davon 37 echte-SQLite-Integrationstests für Schritt 5).
+- 282/282 Tests erfolgreich (175 Domain, 107 Infrastructure; davon 56 echte-SQLite-Integrationstests für Schritt 5).
 - Android-/Geräte-Abnahmen: nicht Bestandteil dieses Schritts (folgt in Schritt 8/9/18).
 
 ## Externe Review-Befunde (13. Okt. 2026)
 
-### Runde 1 — alle behoben
+### Runde 1 — drei Befunde, alle behoben
 
-- **P1 Pairing offener Positionen bei rückdatierten Buchungen** — Das Pairing offener Positionen (persistierte Zeile ↔ Journal-Episode) hatte auf das *Fachdatum* der Episode geordnet; rückdatierte Buchungen (Fachdatum < Eröffnungsdatum) führten zu falschem Pairing und zu unsichtbaren/doppelten Positionen.
-  - **Fix**: Das Pairing folgt der **Journalreihenfolge** (`CreatedAtUtc`, bei Gleichheit `Id`): die offene Zeile wird der letzten offenen Episode derselben Begründung zugeordnet. Die persistierte Zeile bleibt die stabile Historie (`Id`, Begründung, Eröffnungs-Buchung unverändert); die offene Ansicht zeigt den Journalzustand (Episode) mit der Zeilen-`Id` (Referenzfall `05b`).
-  - **Neue Tests**: rückdatierte Ausgabe (Zyklus offen, 10-31, 1.000 von 5.000) und rückdatierte Begleichung (Zyklus abgeschlossen, 5.000, Zeile unverändert).
-- **P2b Provenienz der Verteilungszeilen** — Verteilungszeilen trugen keine Information, ob sie explizit (Benutzerreferenz) oder implizit (Journalableitung) zustande kamen; die Provenienz war nur aus dem Kontext rekonstruierbar.
-  - **Fix**: `SettlementPositionRow` trägt `explicit`/`implicit` als Provenienz-Marker; die Synchronisation setzt den Marker beim Speichern und die Abfragen lesen ihn, statt ihn zu raten.
-  - **Neue Tests**: explizite und implizite Provenienz werden korrekt gespeichert und abgefragt.
-- **P2d Upgrade-Backfill offener Positionen** — Bei einem DB-Upgrade, in dem die Positionszeilen-Einführung hinzukam, waren offene Positionen in alten Datenbanken nicht vorhanden (nur Journal) und blieben unsichtbar.
-  - **Fix**: Beim ersten Start nach dem Upgrade werden offene Positionen aus dem Journal nachgetragen (Backfill); die Backfill-Zeilen tragen `implicit` als Provenienz.
-  - **Neue Tests**: alte Datenbank mit offener Position im Journal → Backfill erzeugt die Zeile, Ansicht unverändert.
+- **P1 — Pairing bei rückdatierten/gleichdatierten Buchungen** — `SettlementPositionSync.Plan` und `SettlementQueryService` paarten Zeilen und abgeleitete Episoden über `(Konto, Pool, Begründungsbuchung)`. Eine rückdatierte Ausgabe verschiebt die Begründung des offenen Zyklus — die alte Zeile wäre dann nie gepaart worden (offene Episode ohne Zeile / Zeile ohne Episode).
+  - **Fix**: Journal-Wahrheit mit stabiler Identität: pro Zelle trägt die **jüngste Zeile die (maximal eine) offene Episode**; beglichene Episoden/Zeilen werden chronologisch gepaart. Persistierte Zeilen behalten ihre Identität (Id, Begründung, Notiz); die Ansicht zeigt den Journalzustand mit der stabilen Zeilen-Id. Abweichungen = sichtbarer Integritätsfehler, kein stiller Zustand.
+  - **Neue Tests**: `SettlementIdentityTests` (6 Fälle: Teilbegleichung/Vollbegleichung gleichdatiert, rückdatierte Einnahme/Ausgabe, Zusammenführung zweier beglichener Zyklen, Storno-Ablehnung).
+- **P2b — Herkunft der Finanzierung (explicit/implicit)** — Verteilungszeilen trugen keine Information, ob sie explizit (Benutzerangabe) oder implizit (aus dem Journal abgeleitet) zustande kamen.
+  - **Fix**: `Booking.AllocationExplicit` (`bool?`, Migration `20261013072950_AllocationProvenance`; `null` = Buchungstyp ohne Verteilungszeilen oder Vor-Review-Daten): `true` = explizit, `false` = implizit. Teil des Original-Eingabeinhalts und der Idempotenzprüfung (explizite Wiederholung muss explizit gespeichert sein und umgekehrt), analog `TaxMarking.InheritedFromPreset`.
+  - **Neue Tests**: `AllocationProvenanceTests` (5 Fälle inkl. Persistenz-Roundtrip über echten SQLite-Provider-Neustart und Idempotenz bei Wiederholung mit/ohne Zeilenangabe).
+- **P2d — Upgrade-Backfill für bestehende Datenbanken** — In einer Datenbank, die vor Einführung der Positionsverwaltung lag, existierten offene Positionen nur im Journal und blieben unsichtbar.
+  - **Fix**: `SettlementPositionBackfillService` läuft beim Host-Start nach der Migration und materialisiert fehlende **offene** Positionen (offene Episode in einer Zelle ohne persistierte Zeile), atomar und idempotent. Beglichene Episoden ohne Zeile bleiben unsichtbar (Historie).
+  - **Neue Tests**: `SettlementBackfillTests` (2 Fälle: frische DB → 0 Zeilen; DB ohne Positionsverwaltung → 2 Zeilen, zweiter Lauf → 0).
 
-### Runde 2 — alle behoben
+### Runde 2 — alle Befunde behoben
 
-- **P1a Vollausgleich offener Position wird gespeichert statt abgelehnt** — Beim Vollausgleich einer bereits persistenten offenen Position wurde die Zeile mit Rest 0 und Status „beglichen“ gespeichert, aber die Journalableitung erzeugte einen *neuen* Zyklus (neue Begründung), weil die Begleichungsbuchung nicht der offenen Begründung zugeordnet war; die gespeicherte Zeile passte zu keinem Journal-Zyklus mehr.
-  - **Fix**: Die Begleichung wird der offenen Position zugeordnet (Begründung + Betrag), sodass Journal und Zeile denselben Zyklus beschreiben; der Vollausgleich persistiert die Zeile als beglichen mit Rest 0.
-- **P1b Offene Episode ist `episodes[^1]`** — Die Journalableitung identifizierte die offene Episode als die letzte offene Episode derselben Begründung, unabhängig von der Reihenfolge; bei mehreren Zyklen derselben Begründung war das falsch.
-  - **Fix**: Die offene Episode ist die letzte offene Episode im Journal (`episodes[^1]` der offenen Episoden derselben Begründung); die Pairing-Logik in `SettlementQueryService` entspricht dem (verfeinert in Runde 3: jüngste *offene* Episode derselben Begründung).
-- **P2a Doppelte Zyklen** — Bei Zusammenführung mehrerer Zyklen derselben Begründung wurden teils zwei Zeilen für denselben Journal-Zyklus erzeugt.
-  - **Fix**: Die Zusammenführung erzeugt genau eine Zeile pro Journal-Zyklus; die Synchronisation dedupliziert nach Begründung + Zyklus.
-- **P2b FundingSource-Provenienz** — (Kombiniert mit R1/P2b; siehe dort.)
-- **P2c `FundingSource` ohne Kontobezug wird falsch verifiziert** — `SettlementPositionService` akzeptierte jede Kontobewegung als Beleg, wenn `FundingSource.AccountId == null` war (nur der Typ wurde geprüft, die Kontozuordnung nicht); ein `TransferSpec` mit leerem `SourceAccountId` lieferte damit eine gültige, aber falsche Herkunft.
-  - **Fix**: `SourceAccountId` des `TransferSpec` ist `required`; die Verifikation prüft `FundingSource.AccountId` und `FundingSource.Booking.SourceAccountId` gegen das Quellkonto der Position — auch dann, wenn die Bewegung keine Poolzwecke hat (die Konto-/Pool-Zuordnung bleibt in beiden Richtungen nachvollziehbar).
+- **P1a — Vollausgleich einer offenen Position durch die neue Buchung** (rückdatierte oder gleichdatierte Einnahme, kanonisch vor der Begründung sortiert): Der erste P1-Fix behandelte nur Teilbegleichung und Zusammenführung; der Vollausgleich lieferte `episodes.Count == 0` und wurde weiterhin als `LarioDomainException` abgelehnt.
+  - **Fix**: Die gültige Einnahme wird gespeichert; die offene Positionszeile wird kontrolliert abgeschlossen (Status beglichen, Rest 0, Identität und Höhe bleiben, Begleichungsreferenz = die neue Buchung). Ist der Zyklus im Replay als jüngste beglichene Episode erhalten (Zufluss nach der Begründung), folgt die Zeile der Journalwahrheit (Begleichungsreferenz der kanonischen Reihenfolge). Die Query-Prüfung „offene Zeile ohne Episode“ bleibt als Sicherheitsnetz für fremde/korrupte Datenbanken.
+  - **Neue Tests**: `BackdatedIncome_FullSettlement_SavesIncomeAndClosesRow` (Salden, abgeschlossene Historie, Neustart) und `SameDayIncome_SmallerId_FullSettlement_SavesIncomeAndClosesRow` (gleichdatierter Zufluss mit lexikografisch kleinerer Id).
+- **P1b — `episodes[0]` statt der jüngsten Episode** — In `SettlementPositionSync.Plan` wählte der P1-Fix die offene Episode mit `episodes[0]`; bei Altdaten mit bereits abgeschlossener Episode ohne Zeile + neuer Ausgabe materialisierte er die falsche (beglichene) Episode als neue offene Zeile.
+  - **Fix**: Die offene Episode ist per Ableitungsregel immer `episodes[^1]`; Paarung beglichener Episoden und Zeilen einheitlich von hinten (älteste Episoden ohne Zeile bleiben unsichtbare Historie) — auch in `SettlementQueryService`.
+  - **Neuer Test**: `LegacyCell_NewExpense_CreatesExactlyOneOpenRow` (inkl. Nachweis, dass der P2d-Backfill in diesem Zustand 0 Zeilen legt).
+- **R2 — Idempotenz vor Aktivitätsprüfung** — `TransferService`/`ReassignmentService` prüften bei impliziter Wiederholung die Aktivität der materialisierten Konten/Pools — eine identische Vorgabe wurde nach Archivierung als Konflikt verworfen statt idempotent bestätigt.
+  - **Fix**: Idempotenz greift vor der Aktivitätsprüfung; die gehört zur tatsächlichen Neuanlage und bleibt dort.
+  - **Neue Tests**: `Repeat_Implicit_AfterMaterializedPoolArchived_IsConfirmed` (Transfer), `Repeat_Implicit_AfterMaterializedAccountArchived_IsConfirmed` (Umwidmung).
 
-### Runde 3 — alle behoben
+### Runde 3 — alle Befunde behoben
 
-- **P1 Vollausgleich offener Position mit neuer Begründung macht die alte Position unsichtbar** — Das Journal leitet die Begleichung korrekt als *neuen Zyklus* ab: die offene Episode wird in den beglichenen Zyklus der neuen Begründung subsumiert (Referenzfall `05b-vollausgleich`). Die persistierte offene Zeile (alte Begründung) passt danach zu keiner Journal-Episode mehr → sie wird unsichtbar, und die offene Ansicht zeigt die *neue* Begründung. Die alte Schuld scheinbar verschwunden, obwohl sie nicht beglichen ist — die Zeile war die einzige persistierte Spur.
-  - **Fix (Speicherung)**: `SettlementPositionService` prüft vor dem Speichern, dass die persistierte offene Zeile noch zur abgeleiteten Episode passt (gleiche Begründung, gleicher Betrag). Verstoß → die Begleichung wird als Konflikt abgelehnt (`LarioDomainException`), statt einen widersprüchlichen Zustand zu persistieren. Der Vollausgleich offener Positionen ist damit kein Anwendungsfall dieses Schritts; ein neuer Zyklus mit neuer Begründung wird korrekt abgeleitet und persistiert.
-  - **Fix (Pairing)**: `SettlementQueryService` ordnet die persistierte offene Zeile der **jüngsten offenen Episode derselben Begründung** zu — nicht der letzten Episode der Journalreihenfolge (eine subsumierte offene Episode kann im Journal hinter dem Nachfolgezyklus stehen; `episodes[^1]` aus Runde 2 war unzuverlässig). Beglichene Zeilen werden unverändert nach Begründung (bzw. Zusammenführung) gepaart.
-  - **Fix (Ansicht)**: Offene Position zeigt den Journalzustand (Episode: Werte *und* Begründung), beglichene Position zeigt die persistierte Zeile (stabile Historie, auch wenn die zusammengeführte Episode eine andere Begründung trägt). Stabile `Id` und Stammdaten (Konto, Pool) kommen immer von der Zeile.
-  - **Neue Tests (5)**: Vollausgleich offener Position mit neuer Begründung wird abgelehnt (Journal bleibt offen, Zeile unverändert); neuer Zyklus mit neuer Begründung: alte Zeile bleibt unverändert sichtbar, neue Position wird persistiert (Begründung + Betrag); Begleichung zusammengeführter Zyklen: zusammengeführte Zeile (neue Begründung, Summe, beglichen) + alte Zeile (alte Begründung, beglichen), beide sichtbar; manipulierte beglichene Zeile: beglichene Episode wird gespeichert, offene Ansicht bleibt unter der alten Begründung (beglichen), manipulierte Zeile ist unsichtbare Historie.
+- **P1 — Neuer Zyklus überschreibt abgeschlossene Position** — `SettlementPositionSync.Plan` und `SettlementQueryService` verwendeten die Regel „Zeilen ≥ Episoden: die jüngste Zeile trägt die offene Episode“. Startete ein **neuer** Zyklus auf einer Zelle mit beglichener Zeile (reine Addition: die vorherigen Episoden sind im neuen Zustand werteidentisch enthalten, die offene Episode ist angehängt), wurde die jüngste **beglichene** Zeile wieder geöffnet und trug den neuen Zyklus — die abgeschlossene Historie (Status, Begleichungsreferenz, Identität) ging verloren. Gleiches galt nach einem rückdatierten Vollausgleich (P1a): die kontrolliert abgeschlossene Zeile wurde vom nächsten Zyklus überschrieben.
+  - **Fix (Übergangsanalyse)**: `SettlementPositionSync.Plan` leitet den Zellenzustand **vor und nach** der Buchung ab; die Form des Übergangs bestimmt die Änderung:
+    - *offen → offen*: dieselbe Episode (vertieft/gekürzt/umgeordnet) — die offene Zeile trägt sie;
+    - *offen → beglichen*: Vollausgleich — die offene Zeile wird kontrolliert abgeschlossen (P1a);
+    - *beglichen → offen*: **reine Addition** → neuer Zyklus → **eigene Zeile mit neuem Id**; sonst (Buchung verlängert den jüngsten beglichenen Zyklus oder führt mehrere zusammen) → die jüngste Zeile trägt die offene Episode (wird sie beglichen, wird sie wieder geöffnet und behält ihre Identität; die älteren zusammengeführten Zeilen bleiben als beglichene Historie erhalten); ohne jede Zeile (Historie vor der Positionsverwaltung) wird ebenfalls eine neue angelegt;
+    - *beglichen → beglichen*: die beglichene Historie bleibt unverändert.
+    Neue Integritätsfehler (sichtbar, kein stiller Zustand): zwei offene Zeilen pro Zelle; offene Episode ohne offene Zeile; beglichene Episode, die nicht älter ist als die älteste Zeile, ohne werteidentische Zeile. Verwaiste Zeilen ohne passende Episode (zusammengeführte bzw. voll ausgeglichene Zyklen) bleiben legitime, unsichtbare Historie (R1/R3).
+  - **Fix (Ansicht)**: `SettlementQueryService` führt dieselbe Paarung aus; die **offene** Ansicht zeigt den Journalzustand (Episode: Werte *und* Begründung) mit der stabilen Zeilen-Id, die **beglichene** Ansicht zeigt die persistierte Zeile (stabile Historie — auch wenn die zusammengeführte Episode eine andere Begründung trägt). Id und Stammdaten (Konto, Pool) kommen immer von der Zeile.
+  - **Neue Tests (5, echte SQLite)**: `NewCycleAfterSettledEpisode_CreatesNewRow_KeepsOldSettled` (neue Zeile mit neuem Id, alte Zeile bleibt beglichen, stabil über Neustart), `NewCycleAfterBackdatedFullSettlement_CreatesNewRow_KeepsClosedHistory`, `NewCycleAfterMergeAndSettlement_CreatesThirdRow` (dritte Zeile; Ansicht zeigt alle drei mit den Zeilen-Identitäten), `LegacyEpisodeWithoutRow_NewCycle_ViewStaysConsistent` (Legacy bleibt unsichtbar), `TamperedSettledRow_UnchangedPrefix_FailsVisibly` (manipulierte beglichene Zeile in unverändertem Präfix: sichtbarer Integritätsfehler, Buchung wird verworfen).
 
 ---
 
