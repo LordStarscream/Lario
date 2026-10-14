@@ -109,19 +109,59 @@ internal static class SettlementPositionSync
     /// <summary>Eine geplante Zeilenänderung: neue Zeile oder Update.</summary>
     public sealed record PlannedChange(SettlementPosition Row, bool IsNew);
 
+    /// <summary>
+    /// Übergang „neue Buchung wird angehängt": vorher = Journal
+    /// <paramref name="bookings"/>, nachher = Journal plus
+    /// <paramref name="newBooking"/>.
+    /// </summary>
     public static IReadOnlyList<PlannedChange> Plan(
         IReadOnlyList<Booking> bookings,
         Booking newBooking,
         IReadOnlyList<SettlementPosition> persisted,
         Func<string> newIdFactory)
+        => PlanCore(
+            bookings,
+            bookings.Concat([newBooking]).ToList(),
+            newBooking, persisted, newIdFactory);
+
+    /// <summary>
+    /// Übergang „Buchung wird in-place korrigiert“ (Schritt 6):
+    /// vorher = Journal <paramref name="bookings"/> (enthält das
+    /// Original), nachher = Journal mit der korrigierten Buchung
+    /// <paramref name="newBooking"/> anstelle des Originals
+    /// <paramref name="oldBooking"/> — dieselbe Id, neuer Inhalt. Der
+    /// Übergang wird mit derselben Übergangsanalyse abgearbeitet wie die
+    /// Neuanlage: die korrigierte Buchung ist die einzige Ursache für
+    /// Abweichungen zwischen vorher- und nachher-Zustand, und
+    /// <paramref name="newBooking"/> ist die Begleichungsreferenz, wenn
+    /// ein offener Zyklus im Replay verschwindet.
+    /// </summary>
+    public static IReadOnlyList<PlannedChange> Plan(
+        IReadOnlyList<Booking> bookings,
+        Booking oldBooking,
+        Booking newBooking,
+        IReadOnlyList<SettlementPosition> persisted,
+        Func<string> newIdFactory)
+        => PlanCore(
+            bookings,
+            bookings.Where(b => b.Id != oldBooking.Id).Concat([newBooking]).ToList(),
+            newBooking, persisted, newIdFactory);
+
+    private static IReadOnlyList<PlannedChange> PlanCore(
+        IReadOnlyList<Booking> beforeBookings,
+        IReadOnlyList<Booking> afterBookings,
+        Booking referenceBooking,
+        IReadOnlyList<SettlementPosition> persisted,
+        Func<string> newIdFactory)
     {
-        ArgumentNullException.ThrowIfNull(bookings);
-        ArgumentNullException.ThrowIfNull(newBooking);
+        ArgumentNullException.ThrowIfNull(beforeBookings);
+        ArgumentNullException.ThrowIfNull(afterBookings);
+        ArgumentNullException.ThrowIfNull(referenceBooking);
         ArgumentNullException.ThrowIfNull(persisted);
         ArgumentNullException.ThrowIfNull(newIdFactory);
 
-        var beforeEpisodes = new BookingJournal(bookings).DeriveSettlementPositions();
-        var afterEpisodes = new BookingJournal(bookings.Concat([newBooking])).DeriveSettlementPositions();
+        var beforeEpisodes = new BookingJournal(beforeBookings).DeriveSettlementPositions();
+        var afterEpisodes = new BookingJournal(afterBookings).DeriveSettlementPositions();
 
         // Zeilen pro Zelle in chronologischer Reihenfolge: (CreatedDate,
         // CreatedByBookingId) sind stabile Attribute — sie werden nach der
@@ -275,7 +315,7 @@ internal static class SettlementPositionSync
                             // dem Replay — kontrollierter Abschluss, die
                             // neue Buchung ist die Begleichungsreferenz
                             // (Schritt-5-Review P1a).
-                            changes.Add(new PlannedChange(CloseRow(openRow, newBooking), false));
+                            changes.Add(new PlannedChange(CloseRow(openRow, referenceBooking), false));
                         }
                     }
 
@@ -351,7 +391,7 @@ internal static class SettlementPositionSync
                         // vor der Begründung): die neue Buchung ist die
                         // Begleichungsreferenz; Identität und Höhe der Zeile
                         // bleiben erhalten.
-                        changes.Add(new PlannedChange(CloseRow(openRow, newBooking), false));
+                        changes.Add(new PlannedChange(CloseRow(openRow, referenceBooking), false));
                     }
                 }
                 else if (rows.Count > 0)
