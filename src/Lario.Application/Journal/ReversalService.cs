@@ -129,6 +129,18 @@ public sealed class ReversalService(
                 "zurücknehmen wollen.");
         }
 
+        var booking = spec.ToBooking(original);
+
+        // Review R2 P1 (B1): ein Storno eines Stornos (Widerruf) reaktiviert
+        // den Ast darüber. Ein Ast darf nur reaktiviert werden, wenn er
+        // finanziell noch mit dem aktuellen Zustand übereinstimmt —
+        // sonst entstehen doppelte wirksame Stornos oder Geld aus dem
+        // Nichts (siehe CheckReversalChainConsistency).
+        if (original.Type == BookingType.Reversal)
+        {
+            CheckReversalChainConsistency(bookings, original, booking, spec.Id);
+        }
+
         // Eine offene Begleichungsposition, auf die sich die Buchung
         // bezieht, blockiert das Storno (Design Schritt 6 §3.2): der
         // Storno würde den offenen Bestand auf eine nicht mehr wirkende
@@ -148,8 +160,6 @@ public sealed class ReversalService(
             }
         }
 
-        var booking = spec.ToBooking(original);
-
         // Begleichungspositionen atomar mit dem Storno nachführen
         // (Vorher = Journal, Nachher = Journal + Reversal — die gesamte
         // Schritt-5-Übergangsanalyse greift ohne Sonderwege, Design
@@ -159,8 +169,10 @@ public sealed class ReversalService(
             bookings, booking, persistedPositions,
             () => $"set-{Guid.NewGuid():N}");
 
-        // Atomar: Reversal-Buchung + Original-Revision++ (eine
-        // Transaktion).
+        // Atomar: Reversal-Buchung + Ketten-Revision (eine Transaktion —
+        // das Original und, wenn es selbst ein Storno ist, die gesamte
+        // Kette bis zum Wurzeloriginal, jedes mit eigenem Concurrency-
+        // Token; Review R2 B2).
         var stored = await bookingRepository.AddWithOriginalRevisionAsync(
             booking, original, changes.Select(c => c.Row).ToList(), cancellationToken);
         return new Result(true, stored);
@@ -187,4 +199,143 @@ public sealed class ReversalService(
         BookingType.Reversal => true,
         _ => false,
     };
+
+    /// <summary>
+    /// Konsistenzcheck der Storno-Kette vor einem Widerruf (Storno eines
+    /// Stornos, Review R2 P1 / B1). Der zu widerrufende Ast wird im
+    /// künftigen Zustand (aktuelles Journal + neue Buchung) auf drei
+    /// Invarianten geprüft:
+    /// <list type="number">
+    /// <item><description><b>Linearität</b> — ein Storno darf insgesamt
+    /// höchstens <i>einen</i> Storno tragen. Zwei Widerrufe desselben Stornos
+    /// würden die Kette gabeln und den wirksamen Status mehrdeutig machen
+    /// (die Journal-Parität würde je nach Wegführung anders ausfallen).</description></item>
+    /// <item><description><b>Höchstens ein wirksames Storno je Buchung</b> —
+    /// im künftigen Zustand darf keine Buchung der Kette zwei wirksame
+    /// Stornos haben. Ein zweites wirksames Storno des Wurzeloriginals
+    /// pariert sich im Status zu „nicht storniert“, verschiebt das Saldo
+    /// aber um den Stornobetrag.</description></item>
+    /// <item><description><b>Frische</b> — jedes wirksame Storno des
+    /// Wurzeloriginals im künftigen Zustand muss den <i>aktuellen</i>
+    /// Inhalt des Wurzeloriginals (Kontoposten und Pool-Zuordnung, negiert)
+    /// abbilden. Ein Ast, der während einer In-place-Korrektur des
+    /// Wurzeloriginals widerrufen wurde, ist veraltet — seine Reaktivierung
+    /// würde Geld aus dem Nichts erzeugen. Stattdessen wird ein neues Storno
+    /// des Wurzeloriginals erstellt (der Stornoinhalt leitet sich zum
+    /// Erstellungszeitpunkt aus dem aktuellen Original ab).</description></item>
+    /// </list>
+    /// </summary>
+    private static void CheckReversalChainConsistency(
+        IReadOnlyList<Booking> bookings, Booking original, Booking newReversal, string specId)
+    {
+        var byId = bookings.ToDictionary(b => b.Id);
+
+        // 1. Linearität: ein Storno trägt noch keinen Storno.
+        var existingReversalsOfOriginal = bookings
+            .Where(b => b.Type == BookingType.Reversal && b.ReversesBookingId == original.Id)
+            .ToList();
+        if (existingReversalsOfOriginal.Count > 0)
+        {
+            throw new DomainConflictException(
+                $"Storno '{specId}': das Storno '{original.Id}' wurde bereits widerrufen " +
+                $"(durch '{existingReversalsOfOriginal[0].Id}') — ein zweiter Widerruf desselben " +
+                "Stornos ist ausgeschlossen. Die Storno-Kette ist streng linear (ein Original, " +
+                "maximal ein Storno je Kettenglied). Widerrufen Sie stattdessen den gesamten " +
+                "Zweig oder stornieren Sie das Wurzeloriginal neu, wenn der Storno nicht mehr " +
+                "bestehen soll.");
+        }
+
+        // Kette zum Wurzeloriginal hochlaufen (das erste Kettenglied, das
+        // selbst kein Storno ist). Abbrüche sind ein Integritätsfehler.
+        var chain = new List<Booking> { original };
+        for (var current = original;
+             current.Type == BookingType.Reversal && current.ReversesBookingId is { } parentId;
+             current = byId[parentId])
+        {
+            if (!byId.TryGetValue(parentId, out var parent))
+            {
+                throw new InvalidReferenceException(
+                    $"Storno '{specId}': die Storno-Kette ist unterbrochen — das Original " +
+                    $"'{current.Id}' verweist auf die unbekannte Buchung '{parentId}'.");
+            }
+            chain.Add(parent);
+        }
+        var root = chain[^1];
+
+        // Künftiger Zustand: aktuelles Journal + neue Buchung.
+        var future = new BookingJournal([.. bookings, newReversal]);
+
+        // 2. Höchstens ein wirksames Storno je Kettenglied im künftigen
+        //    Zustand (insbesondere am Wurzeloriginal — doppeltes wirksames
+        //    Storno = Saldo-Verschiebung).
+        foreach (var link in chain)
+        {
+            var effectiveReversals = future.ReversalsOf(link.Id)
+                .Where(r => !future.IsEffectivelyReversed(r.Id))
+                .ToList();
+            if (effectiveReversals.Count > 1)
+            {
+                throw new DomainConflictException(
+                    $"Storno '{specId}': die Buchung '{link.Id}' hätte danach " +
+                    $"{effectiveReversals.Count} wirksame Stornos " +
+                    $"({string.Join(", ", effectiveReversals.Select(r => r.Id))}) — " +
+                    "maximal ein wirksames Storno je Buchung ist erlaubt, sonst " +
+                    "verschiebt sich der Saldo um den Stornobetrag. Widerrufen Sie zuerst " +
+                    "das Storno, das dauerhaft bestehen soll.");
+            }
+        }
+
+        // 3. Frische: jedes wirksame Storno des Wurzeloriginals im künftigen
+        //    Zustand muss dessen aktuellen Inhalt abbilden.
+        foreach (var reversal in future.ReversalsOf(root.Id)
+                     .Where(r => !future.IsEffectivelyReversed(r.Id)))
+        {
+            if (!MatchesCurrentContent(reversal, root))
+            {
+                throw new DomainConflictException(
+                    $"Storno '{specId}': der Widerruf von '{original.Id}' würde das Storno " +
+                    $"'{reversal.Id}' von '{root.Id}' reaktivieren, aber '{root.Id}' wurde " +
+                    "in-place korrigiert — das Storno deckt nicht mehr den aktuellen Inhalt. " +
+                    "Die Reaktivierung eines veralteten Astes ist ausgeschlossen (sie würde " +
+                    "Geld aus dem Nichts erzeugen). Legen Sie stattdessen ein neues Storno " +
+                    "des Wurzeloriginals an; es übernimmt dessen aktuellen Inhalt.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Inhaltliche Gleichheit eines Stornos mit dem aktuellen Gegenstück:
+    /// die Reversal-Deltas des Stornos müssen exakt die negierten
+    /// Pool-Zuordnungen des Originals sein und die Kontoposten exakt die
+    /// negierten Kontoposten (beide Mengen in deterministischer Reihenfolge
+    /// verglichen). Nicht-inhaltliche Änderungen (Notiz, Datum) sind für die
+    /// Frische irrelevant — sie verschieben keine Salden.
+    /// </summary>
+    private static bool MatchesCurrentContent(Booking reversal, Booking root)
+    {
+        var expectedDeltas = root.AllocationDelta()
+            .Select(d => (AccountId: d.AccountId, PoolId: d.PoolId, d.Amount.Negate()))
+            .OrderBy(d => d.AccountId, StringComparer.Ordinal)
+            .ThenBy(d => d.PoolId, StringComparer.Ordinal)
+            .ToList();
+        var actualDeltas = reversal.ReversalDeltas
+            .Select(d => (AccountId: d.AccountId, PoolId: d.PoolId, Amount: d.Amount))
+            .OrderBy(d => d.AccountId, StringComparer.Ordinal)
+            .ThenBy(d => d.PoolId, StringComparer.Ordinal)
+            .ToList();
+        if (!expectedDeltas.SequenceEqual(actualDeltas))
+        {
+            return false;
+        }
+
+        var expectedPostings = root.AccountPostings
+            .Select(p => (AccountId: p.AccountId, Amount: p.Amount.Negate()))
+            .OrderBy(p => p.AccountId, StringComparer.Ordinal)
+            .ToList();
+        var actualPostings = reversal.AccountPostings
+            .Select(p => (AccountId: p.AccountId, Amount: p.Amount))
+            .OrderBy(p => p.AccountId, StringComparer.Ordinal)
+            .ToList();
+        return expectedPostings.SequenceEqual(actualPostings);
+    }
 }

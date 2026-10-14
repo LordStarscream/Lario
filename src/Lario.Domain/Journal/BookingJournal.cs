@@ -68,6 +68,20 @@ public sealed class BookingJournal
         return effectiveReversals % 2 == 1;
     }
 
+    /// <summary>
+    /// Direkte Stornos einer Buchung (wirksam und historisch, in
+    /// Journal-Reihenfolge). Die Parität von
+    /// <see cref="IsEffectivelyReversed"/> allein kann einen zweiten
+    /// wirksamen Storno derselben Buchung nicht erkennen (zwei wirksame
+    /// Stornos parieren sich zu „nicht storniert“ — das Saldo-Verschieben
+    /// bleibt). Die Anwendung erzwingt daher die strengere Struktur: höchstens
+    /// ein wirksames Storno je Buchung (Review R2 P1, Schritt 6).
+    /// </summary>
+    public IReadOnlyList<Booking> ReversalsOf(string bookingId) =>
+        _bookings
+            .Where(b => b.Type == BookingType.Reversal && b.ReversesBookingId == bookingId)
+            .ToList();
+
     /// <summary>Summe aller Kontostände (Gesamtvermögen).</summary>
     public Money TotalAccountBalance() =>
         _bookings

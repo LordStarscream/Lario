@@ -1,6 +1,6 @@
 # Schritt 6 — Korrekturen, Erstattungen und Kontostandsabgleich
 
-**Branch:** `step/6-korrekturen-erstattungen` · **Basis:** Schritt 5 (merged, `a004d10`) · **Status:** implementiert (15. Okt. 2026), externes Review ausstehend
+**Branch:** `step/6-korrekturen-erstattungen` · **Basis:** Schritt 5 (merged, `a004d10`) · **Status:** implementiert (15. Okt. 2026); Review R1 und R2 vollständig beantwortet (14./15. Okt. 2026), 340/340 Tests
 **Spezifikation:** `docs/step-0/rechenvertrag.md` (§2.1 Splitregel, §3.3 Postings, §3.5 offene Ausgleichspositionen)
 **Design:** `.tasks/step-6-design-paket.md` (verbindliches Design-Paket, 15. Okt. 2026)
 **Referenzfälle:** A1–A4 aus `docs/Finanzplanung_Implementierungsplan.md` §5 Schritt 6 („Prüfen"), Pflichtfälle B1–B6 aus dem Design-Paket
@@ -71,4 +71,23 @@ dotnet test Lario.slnx --no-restore
 
 ## Externe Review-Befunde
 
-(ausstehend — T7)
+### Runde 1 (14. Okt. 2026) — alle Befunde behoben (Commit `a9d7e40`)
+
+| # | Befund | Umsetzung |
+|---|---|---|
+| P1 | Revision nur als Concurrency-Token: zwei Kontexte lesen dieselbe Revision, beide committen → beide Updates greifen, zwei Buchungen mit derselben erwarteten Revision | `BaseRevision` ist ein EF-RowVersion-Äquivalent (CAS im UPDATE): parallele Mutation schlägt als `DbUpdateConcurrencyException` fehl und rollt Buchung, Historie und Positionen gemeinsam zurück — als `DomainConflictException` mit erwartetem/Ist-Wert sichtbar. Erwartete Revision wird **vor** der Mutation erfasst (sonst meldet der Konflikt die bereits erhöhte Revision). |
+| P1 | Storno eines Transfers mit Zweckverteilung erzeugt inkonsistente poolneutrale Deltas | Poolneutrale Deltas (Postingsumme 0) werden konsistent gebildet und geprüft. |
+| P2 | Wirksamer Storno-Status nicht über die Kette nachvollziehbar | `BookingJournal.IsEffectivelyReversed` rekursiv über die Storno-Kette (Parität) — ein widerrufenes Storno zählt nicht mehr. |
+| P2 | Idempotenz-Payload unvollständig (Steuer-/Splitinhalt) | Payload-Nachweis umfasst den vollständigen fachlichen Inhalt; gleicher OperationId mit anderem Inhalt ist ein Konflikt. |
+| P2 | Erstattung übersteigt bei Korrektur den Deckel (bereits gewährte Erstattung nicht berücksichtigt) | Korrektur wird abgelehnt, wenn ein Split unter bereits gewährte Erstattungen sinkt; Erstattungen kumulieren nie über den Deckel. |
+
+Neu: `Step6ReviewR1Tests` (10 Tests, echte SQLite; zwei-Kontext-Szenarien mit Barriere nach dem Lesen). Status nach R1: 336/336 Tests, 0 Build-Warnungen.
+
+### Runde 2 (15. Okt. 2026) — alle Befunde behoben
+
+| # | Befund | Umsetzung |
+|---|---|---|
+| B1 (P1) | **Storno-Kette bei Widerruf:** Ein Storno eines Stornos (Widerruf) reaktiviert den Ast darüber. (a) Neben einem neuen Storno des Wurzeloriginals erzeugt er ein zweites wirksames Storno derselben Buchung — im Status pariert sich das zu „nicht storniert“, im Saldo verschiebt es um den Stornobetrag. (b) Nach einer In-place-Korrektur des Wurzeloriginals bildet der Ast den alten Inhalt ab — seine Reaktivierung erzeugt Geld aus dem Nichts (Referenz: E 100→80, R(100)+W(−100)+X(+100) = +20). (c) Zwei Widerrufe desselben Stornos gabeln die Kette und machen den wirksamen Status mehrdeutig. | `ReversalService.CheckReversalChainConsistency` prüft den künftigen Zustand (aktuelles Journal + neue Buchung) vor jedem Widerruf: (1) **Linearität** — ein Storno trägt höchstens ein Storno; (2) **Höchstens ein wirksames Storno je Kettenglied** (insbesondere am Wurzeloriginal); (3) **Frische** — jedes wirksame Storno des Wurzeloriginals muss dessen aktuellen Inhalt abbilden (Kontoposten und Pool-Deltas, negiert, mengenweise verglichen — `MatchesCurrentContent`). Verletzt: `DomainConflictException` mit Hinweis, das Wurzeloriginal neu zu stornieren (das übernimmt den aktuellen Inhalt). |
+| B2 (P1) | **Ketten-Revision:** Ein Storno erhöhte nur die Revision des direkten Originals. Ein Kontext, der ein Kettenglied (und damit dessen wirksamen Status) vor dem Commit eines parallelen Stornos tiefer in der Kette gelesen hat, committet trotzdem — der veraltete wirksame Status wird akzeptiert und erzeugt genau den B1-Zustand. | "Wirksamer Status + Revision" bilden ein konsistentes Aggregat: `BookingRepository.AddWithOriginalRevisionAsync` erhöht in derselben Transaktion das Original **und alle Kettenvorfahren** (wenn es selbst ein Storno ist: dessen Original, … bis zum Wurzeloriginal) um 1 — jedes mit eigenem Concurrency-Token. Ein paralleler Commit auf Basis eines veralteten Kettenglieds erhält einen Revisionskonflikt (gemeldet wird das Kettenglied, dessen CAS tatsächlich fehlgeschlagen ist) und wird vollständig zurückgerollt. |
+
+Neu: `Step6ReviewR2Tests` (4 Tests, echte SQLite): veralteter Ast nach Korrektur (inkl. dem vorgeschlagenen Weg — neues Storno des Wurzeloriginals), doppeltes wirksames Storno, Linearität, paralleler Widerruf in der Kette (zwei Kontexte, Barriere nach dem Lesen). Alle vier Tests schlagen auf dem Stand vor R2 fehl und bestanden auf dem korrigierten Stand. Status nach R2: **340/340 Tests (197 Domain, 143 Infrastructure), 0 Build-Warnungen.**

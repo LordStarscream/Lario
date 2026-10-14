@@ -428,28 +428,35 @@ public class Step6ReviewR1Tests
         Assert.True((await db.Resolve<ReversalService>().ReverseAsync(new ReversalSpec(
             "bk-c7-w", "bk-c7-r1", ExpectedBaseRevision: 1, new DateOnly(2026, 11, 27)))).Created);
 
-        // Jetzt ist die Ausgabe wieder veränderbar:
-        // Korrektur (Revision 2 → 3) …
+        // Jetzt ist die Ausgabe wieder veränderbar. Review R2 P1 (B2):
+        // der Widerruf hat die gesamte Storno-Kette erhöht — inklusive des
+        // Wurzeloriginals bk-c7 (Revision 2 → 3). Jeder Kontext, der das
+        // Wurzeloriginal vor dem Widerruf gelesen hat, erhält jetzt einen
+        // Revisionskonflikt; die Korrektur benötigt daher die aktuelle
+        // Revision (3):
+        // Korrektur (Revision 3 → 4) …
         Assert.True((await db.Resolve<CorrectionService>().CorrectAsync(new CorrectionSpec(
-            "bk-c7", "op-c7-2", ExpectedBaseRevision: 2, Note: "Korrigiert nach Widerruf"))).Created);
+            "bk-c7", "op-c7-2", ExpectedBaseRevision: 3, Note: "Korrigiert nach Widerruf"))).Created);
         // … Erstattung (40 € ≤ Freizeit-Split 40 €; erhöht die Original-
-        // Revision 3 → 4) …
+        // Revision 4 → 5) …
         Assert.True((await db.Resolve<RefundService>().RegisterAsync(new RefundSpec(
             "bk-c7-r", "bk-c7", Step5Scenario.Haupt, new DateOnly(2026, 11, 28),
             [new RefundLineSpec(Step5Scenario.PoolFreizeit, new Money(4_000))]))).Created);
-        // … und ein neues Storno der Ausgabe (Revision 4 → 5).
+        // … und ein neues Storno der Ausgabe (Revision 5 → 6).
         Assert.True((await db.Resolve<ReversalService>().ReverseAsync(new ReversalSpec(
-            "bk-c7-r2", "bk-c7", ExpectedBaseRevision: 4, new DateOnly(2026, 11, 29)))).Created);
+            "bk-c7-r2", "bk-c7", ExpectedBaseRevision: 5, new DateOnly(2026, 11, 29)))).Created);
 
         // R2 wirkt jetzt: ein weiteres Storno der Ausgabe ist ein
         // Doppelstorno (wirksam storniert), Korrektur und Erstattung
-        // sind wieder gesperrt.
+        // sind wieder gesperrt. Die Revision ist hier aktuell, daher
+        // kommt die Ablehnung aus dem wirksamen Storno-Status, nicht aus
+        // der Revision.
         await Assert.ThrowsAsync<DomainConflictException>(() =>
             db.Resolve<ReversalService>().ReverseAsync(new ReversalSpec(
-                "bk-c7-r3", "bk-c7", ExpectedBaseRevision: 5, new DateOnly(2026, 11, 30))));
+                "bk-c7-r3", "bk-c7", ExpectedBaseRevision: 6, new DateOnly(2026, 11, 30))));
         await Assert.ThrowsAsync<DomainConflictException>(() =>
             db.Resolve<CorrectionService>().CorrectAsync(new CorrectionSpec(
-                "bk-c7", "op-c7-3", ExpectedBaseRevision: 5, Note: "Y")));
+                "bk-c7", "op-c7-3", ExpectedBaseRevision: 6, Note: "Y")));
         // Der Refund verwendet eine freie Id (bk-c7-r2 ist das Storno R2)
         // — geprüft wird der wirksame Storno-Status, nicht eine Id-Kollision.
         await Assert.ThrowsAsync<LarioDomainException>(() =>

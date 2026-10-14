@@ -132,13 +132,41 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         // Zwischenzeit, schlägt das UPDATE fehl und der gesamte
         // Vorgang (Buchung + Historie + Positionen) wird
         // zurückgerollt — als Revisionskonflikt sichtbar.
-        // Die erwartete Revision wird VOR der Mutation erfasst: wenn
-        // trackedOriginal und original dieselbe Instanz sind, würde die
-        // Zuweisung original.BaseRevision mitverändern und der
-        // Konfliktbericht die inkorrekte (bereits erhöhte) Revision
-        // melden (Review R1: zwei Kontexte, genau einer gewinnt).
-        var expectedOriginalRevision = original.BaseRevision;
-        trackedOriginal.BaseRevision = expectedOriginalRevision + 1;
+        // Review R2 P1 (B2): ein Storno verändert den wirksamen Status der
+        // gesamten Kette über seinem Original — ein Widerruf reaktiviert
+        // den Ast darüber. "Wirksamer Status + Revision" bilden daher ein
+        // konsistentes Aggregat: alle Kettenvorfahren (das Original und,
+        // wenn es selbst ein Storno ist, dessen Original, … bis zum
+        // Wurzeloriginal) werden in derselben Transaktion um 1 erhöht —
+        // jedes mit seinem eigenen Concurrency-Token. Jeder andere Kontext,
+        // der die Revision eines Kettenglieds vor diesem Commit gelesen
+        // hat, erhält beim eigenen Commit einen Revisionskonflikt und
+        // damit auch den veralteten wirksamen Status abgelehnt.
+        var chain = new List<Booking> { trackedOriginal };
+        for (var current = trackedOriginal;
+             current.Type == BookingType.Reversal && current.ReversesBookingId is { } parentId;)
+        {
+            var parent = await db.Bookings
+                .FirstOrDefaultAsync(b => b.Id == parentId, cancellationToken)
+                ?? throw new InvalidOperationException(
+                    $"Die Storno-Kette ist unterbrochen: '{current.Id}' verweist auf " +
+                    $"die unbekannte Buchung '{parentId}' — die Revisionserhöhung " +
+                    "kann nicht erfolgen.");
+            chain.Add(parent);
+            current = parent;
+        }
+
+        // Die erwarteten Revisionen aller Kettenglieder werden VOR der
+        // Mutation erfasst: wenn ein Kettenglied dieselbe Instanz wie die
+        // vom Anwendungsfall geladene Buchung ist, würde die Zuweisung
+        // BaseRevision mitverändern und der Konfliktbericht die
+        // inkorrekte (bereits erhöhte) Revision melden (Review R1 P1 /
+        // B2: zwei Kontexte, genau einer gewinnt).
+        var expectedRevisions = chain.ToDictionary(b => b.Id, b => b.BaseRevision);
+        foreach (var ancestor in chain)
+        {
+            ancestor.BaseRevision = expectedRevisions[ancestor.Id] + 1;
+        }
 
         db.Bookings.Add(booking);
         AddReversalDeltaRows(booking);
@@ -149,8 +177,7 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         }
         catch (DbUpdateConcurrencyException)
         {
-            throw await RevisionConflictAsync(
-                original.Id, expectedOriginalRevision, cancellationToken);
+            throw await RevisionConflictAsync(chain, expectedRevisions, cancellationToken);
         }
 
         return await LoadFullAsync(booking.Id, cancellationToken);
@@ -211,34 +238,54 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         catch (DbUpdateConcurrencyException)
         {
             throw await RevisionConflictAsync(
-                updated.Id, updated.BaseRevision - 1, cancellationToken);
+                [tracked],
+                new Dictionary<string, int> { [tracked.Id] = tracked.BaseRevision - 1 },
+                cancellationToken);
         }
 
         return await LoadFullAsync(updated.Id, cancellationToken);
     }
 
     /// <summary>
-    /// Übersetzt eine Concurrency-Abweisung (Review R1 P1) in einen
+    /// Übersetzt eine Concurrency-Abweisung (Review R1 P1 / R2 B2) in einen
     /// fachlichen Revisionskonflikt mit erwartetem und Ist-Wert — die
     /// Transaktion (Buchung, Historie, Positionen) wurde bereits von
     /// SQLite zurückgerollt; nur der aktuelle Ist-Zustand wird für die
-    /// Fehlermeldung nachgeladen.
+    /// Fehlermeldung nachgeladen. Gemeldet wird das Kettenglied, dessen
+    /// CAS tatsächlich fehlgeschlagen ist (in Kettentiefe: das direkte
+    /// Original zuerst, dann die Vorfahren bis zum Wurzeloriginal).
     /// </summary>
     private async Task<DomainConflictException> RevisionConflictAsync(
-        string bookingId, int expectedRevision, CancellationToken cancellationToken)
+        IReadOnlyList<Booking> chain,
+        IReadOnlyDictionary<string, int> expectedRevisions,
+        CancellationToken cancellationToken)
     {
-        var current = await db.Bookings
-            .AsNoTracking()
-            .FirstOrDefaultAsync(b => b.Id == bookingId, cancellationToken);
+        var failedId = chain[0].Id;
+        var expected = expectedRevisions[failedId];
+        var actual = expected;
+
+        for (var i = 0; i < chain.Count; i++)
+        {
+            var current = await db.Bookings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(b => b.Id == chain[i].Id, cancellationToken);
+            if (current is not null && current.BaseRevision != expectedRevisions[chain[i].Id])
+            {
+                failedId = chain[i].Id;
+                expected = expectedRevisions[chain[i].Id];
+                actual = current.BaseRevision;
+                break;
+            }
+        }
 
         return new DomainConflictException(
-            $"Buchung '{bookingId}': erwartete Basisrevision {expectedRevision} weicht von der " +
-            $"Ist-Revision {current?.BaseRevision} ab (Revisionskonflikt durch parallele " +
-            "Operation). Der gesamte Vorgang wurde zurückgerollt — die Buchung bleibt im " +
-            "letzten konsistenten Zustand.")
+            $"Buchung '{failedId}': erwartete Basisrevision {expected} weicht von der " +
+            $"Ist-Revision {actual} ab (Revisionskonflikt durch parallele Operation). " +
+            "Der gesamte Vorgang wurde zurückgerollt — die Buchung bleibt im letzten " +
+            "konsistenten Zustand.")
         {
-            ExpectedBaseRevision = expectedRevision,
-            ActualBaseRevision = current?.BaseRevision,
+            ExpectedBaseRevision = expected,
+            ActualBaseRevision = actual,
         };
     }
 
