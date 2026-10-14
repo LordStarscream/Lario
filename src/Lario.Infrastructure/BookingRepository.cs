@@ -1,3 +1,4 @@
+using Lario.Domain;
 using Lario.Domain.Journal;
 using Lario.Application;
 using Microsoft.EntityFrameworkCore;
@@ -14,7 +15,7 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
 {
     public async Task<Booking?> FindByIdAsync(string id, CancellationToken cancellationToken = default)
     {
-        return await db.Bookings
+        var booking = await db.Bookings
             .Include(b => b.AccountPostings)
             .Include(b => b.PoolPostings)
             .Include(b => b.Splits)
@@ -22,11 +23,19 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
             .Include(b => b.TransferPurposes)
             .Include(b => b.ReassignmentAccounts)
             .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
+
+        if (booking is null)
+        {
+            return null;
+        }
+
+        await LoadReversalDeltasAsync([booking], cancellationToken);
+        return booking;
     }
 
     public async Task<IReadOnlyList<Booking>> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        return await db.Bookings
+        var bookings = await db.Bookings
             .Include(b => b.AccountPostings)
             .Include(b => b.PoolPostings)
             .Include(b => b.Splits)
@@ -35,6 +44,9 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
             .Include(b => b.ReassignmentAccounts)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
+
+        await LoadReversalDeltasAsync(bookings, cancellationToken);
+        return bookings;
     }
 
     public async Task AddAsync(Booking booking, CancellationToken cancellationToken = default)
@@ -48,6 +60,7 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         }
 
         db.Bookings.Add(booking);
+        AddReversalDeltaRows(booking);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -67,7 +80,238 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         }
 
         db.Bookings.Add(booking);
+        AddReversalDeltaRows(booking);
+        await ApplySettlementChangesAsync(settlements, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+    }
 
+    /// <summary>
+    /// Review R1 (P1) / R2 (B2) / R3 (P1): Die Revisionserhöhung der
+    /// gesamten Original-Kette und die Einfügung der Buchung laufen in
+    /// derselben Transaktion. Die Concurrency-Token der Kettenglieder
+    /// werden mit den übergebenen Snapshot-Revisionen belegt; EF Core
+    /// erzeugt daraus je ein WHERE BaseRevision = … — eine parallele
+    /// Commit verschiebt eine Revision, das UPDATE betrifft 0 Zeilen,
+    /// und der gesamte Transaktionsstand (Buchung + Kette +
+    /// Ausgleichspositionen) wird zurückgerollt. Eine Buchung auf Basis
+    /// eines veralteten Lesezustands (Doppelstorno, parallele Korrektur,
+    /// neues direktes Storno) kann so nicht mehr committen.
+    /// </summary>
+    public async Task<Booking> AddWithOriginalRevisionAsync(
+        Booking booking,
+        IReadOnlyList<Booking> originalChain,
+        IReadOnlyCollection<SettlementPosition> settlements,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(originalChain);
+        ArgumentNullException.ThrowIfNull(settlements);
+
+        if (originalChain.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "AddWithOriginalRevisionAsync erfordert mindestens ein Kettenglied " +
+                "(das direkte Original).");
+        }
+
+        // Review R3 P1: Die Concurrency-Basis sind die Revisionen der
+        // übergebenen Kettenglieder aus dem geprüften Snapshot — nicht
+        // neu gelesene aktuelle Werte. Zwischen der Prüfung im
+        // Anwendungsfall und diesem Schreiben kann eine parallele
+        // Commit eine Kettenglieder-Revision verschieben (Korrektur der
+        // Wurzel, neues direktes Storno der Wurzel). Würde der Repository
+        // die aktuellen Werte als Basis übernehmen, würde das geprüfte
+        // Ergebnis auf veraltetem Stand committen; gegen die
+        // Snapshot-Revision schlägt das UPDATE fehl und der vollständige
+        // Rollback macht Prüfung und Schreiben atomar.
+        var expectedRevisions = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var link in originalChain)
+        {
+            if (string.IsNullOrWhiteSpace(link.Id))
+            {
+                throw new InvalidOperationException(
+                    "AddWithOriginalRevisionAsync: Kettenglied ohne Id.");
+            }
+
+            if (link.Id == booking.Id)
+            {
+                throw new InvalidOperationException(
+                    $"AddWithOriginalRevisionAsync: Die neue Buchung '{booking.Id}' " +
+                    "darf nicht Teil ihrer eigenen Original-Kette sein.");
+            }
+
+            if (!expectedRevisions.TryAdd(link.Id, link.BaseRevision))
+            {
+                throw new InvalidOperationException(
+                    $"AddWithOriginalRevisionAsync: Kettenglied '{link.Id}' kommt " +
+                    "mehrfach vor — die Original-Kette muss linear sein.");
+            }
+        }
+
+        var exists = await db.Bookings.AnyAsync(b => b.Id == booking.Id, cancellationToken);
+        if (exists)
+        {
+            throw new InvalidOperationException(
+                $"Buchung mit der Id '{booking.Id}' existiert bereits. " +
+                "Die Idempotenzprüfung obliegt dem Anwendungsfall.");
+        }
+
+        // Review R2 (B2): Die Revisionserhöhung umfasst alle Kettenglieder
+        // — jedes mit seinem eigenen Concurrency-Token. Review R3 P1:
+        // Die Concurrency-Basis ist die Snapshot-Revision des
+        // Kettenglieds, nicht der neu gelesene aktuelle Wert.
+        var tracked = new List<Booking>(originalChain.Count);
+        foreach (var snapshot in originalChain)
+        {
+            var instance = await db.Bookings
+                .FirstOrDefaultAsync(b => b.Id == snapshot.Id, cancellationToken)
+                ?? throw new InvalidOperationException(
+                    $"AddWithOriginalRevisionAsync: Kettenglied '{snapshot.Id}' " +
+                    "existiert nicht — die Original-Kette ist unterbrochen.");
+
+            // Concurrency-Token: OriginalValue auf die Snapshot-Revision
+            // setzen (Review R3 P1). EF Core erzeugt daraus das
+            // WHERE BaseRevision = … des UPDATE. Ein zwischenzeitlich
+            // verschiebendes paralleles Commit betrifft 0 Zeilen →
+            // DbUpdateConcurrencyException → vollständiger Rollback.
+            db.Entry(instance)
+                .Property(nameof(Booking.BaseRevision))
+                .OriginalValue = snapshot.BaseRevision;
+            instance.BaseRevision = snapshot.BaseRevision + 1;
+            tracked.Add(instance);
+        }
+
+        db.Bookings.Add(booking);
+        AddReversalDeltaRows(booking);
+        await ApplySettlementChangesAsync(settlements, cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw await RevisionConflictAsync(tracked, expectedRevisions, cancellationToken);
+        }
+
+        return await LoadFullAsync(booking.Id, cancellationToken);
+    }
+
+    public async Task<BookingCorrection?> FindCorrectionAsync(
+        string operationId, CancellationToken cancellationToken = default)
+    {
+        return await db.BookingCorrections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.OperationId == operationId, cancellationToken);
+    }
+
+    public async Task<Booking> UpdateAsync(
+        Booking updated,
+        BookingCorrection correction,
+        IReadOnlyCollection<SettlementPosition> settlements,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settlements);
+        ArgumentNullException.ThrowIfNull(updated);
+        ArgumentNullException.ThrowIfNull(correction);
+
+        var tracked = await db.Bookings
+            .Include(b => b.AccountPostings)
+            .Include(b => b.PoolPostings)
+            .Include(b => b.Splits)
+            .Include(b => b.TransferPurposes)
+            .Include(b => b.ReassignmentAccounts)
+            .FirstOrDefaultAsync(b => b.Id == updated.Id, cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"In-place-Korrektur für unbekannte Buchung '{updated.Id}' — " +
+                "das Original existiert nicht.");
+
+        // Der Typ bleibt; die übrigen skalaren Felder übernehmen den
+        // geprüften Ersatzinhalt (Revisionserhöhung inklusive — sie kommt
+        // aus dem Anwendungsfall).
+        tracked.Date = updated.Date;
+        tracked.Note = updated.Note;
+        tracked.FundingMonth = updated.FundingMonth;
+        tracked.BaseRevision = updated.BaseRevision;
+        tracked.ReversesBookingId = updated.ReversesBookingId;
+        tracked.RefundsExpenseId = updated.RefundsExpenseId;
+
+        ReplaceChildren(tracked, updated);
+        db.BookingCorrections.Add(correction);
+        await ApplySettlementChangesAsync(settlements, cancellationToken);
+
+        // Concurrency-Token (Review R1 P1): commitet eine parallele
+        // Operation (Storno, Erstattung, zweite Korrektur) in der
+        // Zwischenzeit, schlägt das UPDATE auf der Revision fehl und
+        // Buchung, Historie und Positionen werden gemeinsam
+        // zurückgerollt — als Revisionskonflikt sichtbar.
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw await RevisionConflictAsync(
+                [tracked],
+                new Dictionary<string, int> { [tracked.Id] = tracked.BaseRevision - 1 },
+                cancellationToken);
+        }
+
+        return await LoadFullAsync(updated.Id, cancellationToken);
+    }
+
+    /// <summary>
+    /// Übersetzt eine Concurrency-Abweisung (Review R1 P1 / R2 B2) in einen
+    /// fachlichen Revisionskonflikt mit erwartetem und Ist-Wert — die
+    /// Transaktion (Buchung, Historie, Positionen) wurde bereits von
+    /// SQLite zurückgerollt; nur der aktuelle Ist-Zustand wird für die
+    /// Fehlermeldung nachgeladen. Gemeldet wird das Kettenglied, dessen
+    /// CAS tatsächlich fehlgeschlagen ist (in Kettentiefe: das direkte
+    /// Original zuerst, dann die Vorfahren bis zum Wurzeloriginal).
+    /// </summary>
+    private async Task<DomainConflictException> RevisionConflictAsync(
+        IReadOnlyList<Booking> chain,
+        IReadOnlyDictionary<string, int> expectedRevisions,
+        CancellationToken cancellationToken)
+    {
+        var failedId = chain[0].Id;
+        var expected = expectedRevisions[failedId];
+        var actual = expected;
+
+        for (var i = 0; i < chain.Count; i++)
+        {
+            var current = await db.Bookings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(b => b.Id == chain[i].Id, cancellationToken);
+            if (current is not null && current.BaseRevision != expectedRevisions[chain[i].Id])
+            {
+                failedId = chain[i].Id;
+                expected = expectedRevisions[chain[i].Id];
+                actual = current.BaseRevision;
+                break;
+            }
+        }
+
+        return new DomainConflictException(
+            $"Buchung '{failedId}': erwartete Basisrevision {expected} weicht von der " +
+            $"Ist-Revision {actual} ab (Revisionskonflikt durch parallele Operation). " +
+            "Der gesamte Vorgang wurde zurückgerollt — die Buchung bleibt im letzten " +
+            "konsistenten Zustand.")
+        {
+            ExpectedBaseRevision = expected,
+            ActualBaseRevision = actual,
+        };
+    }
+
+    /// <summary>
+    /// Wendet die geplanten Änderungen an den internen Ausgleichspositionen
+    /// an (gleiche Semantik für Anlage und In-place-Korrektur): neue Zeilen
+    /// werden angelegt, bestehende (per stabiler Id) in Restzustand, Status
+    /// und Begleichungsreferenz nachgeführt — in derselben Transaktion wie
+    /// die Buchung (Rechenvertrag §3.2/§3.5).
+    /// </summary>
+    private async Task ApplySettlementChangesAsync(
+        IReadOnlyCollection<SettlementPosition> settlements,
+        CancellationToken cancellationToken)
+    {
         foreach (var position in settlements)
         {
             var tracked = await db.SettlementPositions
@@ -89,7 +333,120 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
             tracked.SettledByBookingId = position.SettledByBookingId;
             tracked.SettledDate = position.SettledDate;
         }
+    }
 
-        await db.SaveChangesAsync(cancellationToken);
+    /// <summary>
+    /// Ersetzt die Kindzeilen einer Buchung: alte Zeilen werden gelöscht,
+    /// neue werden wie im <see cref="AddAsync"/>-Muster angelegt
+    /// (Design Schritt 6: In-place-Korrektur ersetzt Postings, Teilposten
+    /// und Verteilungszeilen — eine Teilübernahme ist ausgeschlossen).
+    /// </summary>
+    private void ReplaceChildren(Booking tracked, Booking updated)
+    {
+        ReplaceChildCollection(db.AccountPostings, tracked.AccountPostings, updated.AccountPostings);
+        ReplaceChildCollection(db.PoolPostings, tracked.PoolPostings, updated.PoolPostings);
+        ReplaceChildCollection(db.ExpenseSplits, tracked.Splits, updated.Splits);
+        ReplaceChildCollection(db.TransferPurposes, tracked.TransferPurposes, updated.TransferPurposes);
+        ReplaceChildCollection(db.ReassignmentAccounts, tracked.ReassignmentAccounts, updated.ReassignmentAccounts);
+    }
+
+    /// <summary>
+    /// Zeilen-Ersatz einer Kindmenge: Zeilen, die der Ersatzinhalt nicht
+    /// mit derselben Instanz weiterführt, werden gelöscht; neue (abgelöste)
+    /// Zeilen werden angelegt. Weitergeführte Instanzen (z. B. Teilposten
+    /// einer Korrektur ohne neue Splits) bleiben unverändert — sie werden
+    /// weder gelöscht noch neu eingefügt.
+    /// </summary>
+    private static void ReplaceChildCollection<T>(
+        DbSet<T> set, List<T> current, IEnumerable<T> replacement)
+        where T : class
+    {
+        var kept = new HashSet<object>(replacement);
+        foreach (var child in current.Where(c => !kept.Contains(c)).ToList())
+        {
+            set.Remove(child);
+        }
+        current.Clear();
+        foreach (var child in replacement)
+        {
+            current.Add(child);
+        }
+    }
+
+    /// <summary>
+    /// Lädt eine Buchung frisch aus der Datenbank, inkl. aller Postings,
+    /// Teilposten, Verteilungszeilen und Storno-Deltas — die Antwort der
+    /// Schreiboperationen trägt den tatsächlichen persistierten Zustand.
+    /// </summary>
+    private async Task<Booking> LoadFullAsync(string id, CancellationToken cancellationToken)
+    {
+        var booking = await db.Bookings
+            .Include(b => b.AccountPostings)
+            .Include(b => b.PoolPostings)
+            .Include(b => b.Splits)
+            .ThenInclude(s => s.Tax)
+            .Include(b => b.TransferPurposes)
+            .Include(b => b.ReassignmentAccounts)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
+
+        if (booking is null)
+        {
+            throw new InvalidOperationException(
+                $"Buchung '{id}' konnte nach dem Speichern nicht nachgeladen werden.");
+        }
+
+        await LoadReversalDeltasAsync([booking], cancellationToken);
+        return booking;
+    }
+
+    /// <summary>
+    /// Persistiert die negierten Deltas eines Stornos als eigene Zeilen
+    /// (Design Schritt 6 §2.2) — in derselben Transaktion wie die Buchung
+    /// selbst. Buchungen ohne Deltas (alle übrigen Typen) erzeugen keine
+    /// Zeilen.
+    /// </summary>
+    private void AddReversalDeltaRows(Booking booking)
+    {
+        foreach (var delta in booking.ReversalDeltas)
+        {
+            db.ReversalDeltas.Add(new ReversalDeltaRow(
+                booking.Id, delta.AccountId, delta.PoolId, delta.Amount.Cents));
+        }
+    }
+
+    /// <summary>
+    /// Bestückt die geladenen Buchungen mit den negierten Storno-Deltas
+    /// (Design Schritt 6 §2.2) — eine Query für alle Buchungen über
+    /// <c>ids.Contains</c>. Buchungen ohne Delta-Zeilen behalten den
+    /// Default (leere Liste).
+    /// </summary>
+    private async Task LoadReversalDeltasAsync(
+        IEnumerable<Booking> bookings,
+        CancellationToken cancellationToken)
+    {
+        var ids = bookings.Select(b => b.Id).ToList();
+        if (ids.Count == 0)
+        {
+            return;
+        }
+
+        var rows = await db.ReversalDeltas
+            .Where(r => ids.Contains(r.BookingId))
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        foreach (var group in rows.GroupBy(r => r.BookingId))
+        {
+            var booking = bookings.FirstOrDefault(b => b.Id == group.Key);
+            if (booking is null)
+            {
+                continue;
+            }
+
+            booking.ReversalDeltas = group
+                .Select(r => new AllocationDeltaEntry(r.AccountId, r.PoolId, Money.FromCents(r.Amount)))
+                .ToList();
+        }
     }
 }

@@ -18,14 +18,48 @@ public sealed class Booking
     /// <summary>Typ des Buchungssatzes (siehe <see cref="BookingType"/>).</summary>
     public BookingType Type { get; init; }
 
-    /// <summary>Fachdatum (tatsächliches Datum/Stichtag, ohne Zeitkomponente).</summary>
-    public DateOnly Date { get; init; }
+    /// <summary>
+    /// Fachdatum (tatsächliches Datum/Stichtag, ohne Zeitkomponente).
+    /// Schreibbar für die In-place-Korrektur (Schritt 6): das Repository
+    /// aktualisiert die getrackte Instanz gemeinsam mit Revision und
+    /// Historie in einer Transaktion.
+    /// </summary>
+    public DateOnly Date { get; set; }
 
-    /// <summary>Freitext, optional.</summary>
-    public string? Note { get; init; }
+    /// <summary>
+    /// Freitext, optional. Schreibbar für die In-place-Korrektur
+    /// (Schritt 6) — siehe <see cref="Date"/>.
+    /// </summary>
+    public string? Note { get; set; }
 
     /// <summary>Eigene Basisrevision; Startwert 1 (Rechenvertrag §5.5).</summary>
     public int BaseRevision { get; set; } = 1;
+
+    /// <summary>
+    /// Verknüpfung zur stornierten Buchung (nur
+    /// <see cref="BookingType.Reversal"/>): stabile Id des Originals, zu dem
+    /// dieser Storno als Gegenbewegung verknüpft ist (Rechenvertrag §5.4,
+    /// Design Schritt 6 §2.1).
+    /// </summary>
+    public string? ReversesBookingId { get; set; }
+
+    /// <summary>
+    /// Verknüpfung zur Ursprungs-Ausgabe (nur
+    /// <see cref="BookingType.Refund"/>): stabile Id der Ausgabe, auf deren
+    /// ursprüngliche Pools der Erstattungsbetrag zurückfließt (Rechenvertrag
+    /// §4, Design Schritt 6 §2.1).
+    /// </summary>
+    public string? RefundsExpenseId { get; set; }
+
+    /// <summary>
+    /// Explizit gespeicherte negierte Deltas der Ursprungsbuchung (nur
+    /// <see cref="BookingType.Reversal"/>): <see cref="AllocationDelta()"/>
+    /// liefert für den Storno exakt diese Einträge — im Replay wird kein
+    /// Cross-Booking-Lookup auf das Original durchgeführt (Design Schritt 6
+    /// §2.1/§2.2). Invariante: <c>ReversalDeltas == Negation(Original.
+    /// AllocationDelta())</c>.
+    /// </summary>
+    public IReadOnlyList<AllocationDeltaEntry> ReversalDeltas { get; set; } = [];
 
     /// <summary>Kontobewegungen der Buchung (signierte Cent-Beträge).</summary>
     public List<AccountPosting> AccountPostings { get; init; } = [];
@@ -40,8 +74,10 @@ public sealed class Booking
     /// „Gehalt am Monatsende finanziert standardmäßig den Folgemonat“
     /// wird bei Erstellung der Einnahme angewandt (Materialisierung,
     /// keine Ableitung). Bindung an Verpflichtungen/Deckung: ab Schritt 12.
+    /// Schreibbar für die In-place-Korrektur (Schritt 6) — siehe
+    /// <see cref="Date"/>.
     /// </summary>
-    public YearMonth? FundingMonth { get; init; }
+    public YearMonth? FundingMonth { get; set; }
 
     /// <summary>
     /// Teilposten der Ausgabe (nur <see cref="BookingType.Expense"/>):
@@ -124,7 +160,10 @@ public sealed class Booking
         IReadOnlyList<PoolAllocation>? transferPurposes = null,
         IReadOnlyList<AccountAllocation>? reassignmentAccounts = null,
         string? relatedSettlementId = null,
-        bool? allocationExplicit = null)
+        bool? allocationExplicit = null,
+        string? reversesBookingId = null,
+        string? refundsExpenseId = null,
+        IReadOnlyList<AllocationDeltaEntry>? reversalDeltas = null)
     {
         Id = id;
         Type = type;
@@ -138,6 +177,9 @@ public sealed class Booking
         ReassignmentAccounts = (reassignmentAccounts ?? []).ToList();
         RelatedSettlementId = relatedSettlementId;
         AllocationExplicit = allocationExplicit;
+        ReversesBookingId = reversesBookingId;
+        RefundsExpenseId = refundsExpenseId;
+        ReversalDeltas = reversalDeltas ?? [];
         ValidatePostings();
         ValidateTypeSpecific();
     }
@@ -353,11 +395,158 @@ public sealed class Booking
 
                 break;
 
+            case BookingType.Reversal:
+                if (string.IsNullOrWhiteSpace(ReversesBookingId))
+                {
+                    throw new LarioDomainException(
+                        $"Storno '{Id}' ohne Verknüpfung zur stornierten Buchung (ReversesBookingId fehlt).");
+                }
+
+                if (ReversesBookingId == Id)
+                {
+                    throw new LarioDomainException(
+                        $"Storno '{Id}' verknüpft sich mit sich selbst — das Original muss eine andere Buchung sein.");
+                }
+
+                if (ReversalDeltas.Count == 0)
+                {
+                    throw new LarioDomainException(
+                        $"Storno '{Id}' ohne ReversalDeltas — die negierten Deltas des Originals sind Teil der Buchung.");
+                }
+
+                ValidateReversalDeltasBalance();
+                break;
+
+            case BookingType.Refund:
+                if (string.IsNullOrWhiteSpace(RefundsExpenseId))
+                {
+                    throw new LarioDomainException(
+                        $"Erstattung '{Id}' ohne Verknüpfung zur Ursprungs-Ausgabe (RefundsExpenseId fehlt).");
+                }
+
+                RequireNoFundingMonthOrSplits("Erstattung");
+
+                RequireSingleAccountPosting(out var refund);
+                if (refund.Cents <= 0)
+                {
+                    throw new LarioDomainException(
+                        $"Erstattung '{Id}': der Kontozugang muss positiv sein (ist {refund.ToEuro():0.00} €).");
+                }
+
+                if (PoolPostings.Count == 0)
+                {
+                    throw new LarioDomainException(
+                        $"Erstattung '{Id}' ohne Pool-Postings — der Rückfluss zum ursprünglichen Pool " +
+                        "gehört zur Buchung (Rechenvertrag §4).");
+                }
+
+                foreach (var poolPosting in PoolPostings)
+                {
+                    if (poolPosting.Amount.Cents <= 0)
+                    {
+                        throw new LarioDomainException(
+                            $"Erstattung '{Id}': Pool-Posting '{poolPosting.PoolId}' muss positiv sein (Rückfluss).");
+                    }
+                }
+                // „Je Pool maximal einmal“ stellt ValidatePostings sicher
+                // (maximal eine Posting-Zelle je Pool).
+                break;
+
+            case BookingType.BalanceCorrection:
+                RequireNoFundingMonthOrSplits("Kontostandskorrektur");
+
+                if (PoolPostings.Count != 0)
+                {
+                    throw new LarioDomainException(
+                        $"Kontostandskorrektur '{Id}' trägt Pool-Postings — die Differenz wird nur auf dem Konto dokumentiert.");
+                }
+
+                RequireSingleAccountPosting(out var correction);
+                if (correction.Cents == 0)
+                {
+                    throw new LarioDomainException(
+                        $"Kontostandskorrektur '{Id}': der Betrag darf nicht null sein (ist {correction.ToEuro():0.00} €).");
+                }
+
+                if (string.IsNullOrWhiteSpace(Note))
+                {
+                    throw new LarioDomainException(
+                        $"Kontostandskorrektur '{Id}' ohne Notiz — die dokumentierte Differenz ist Pflicht.");
+                }
+                break;
+
             default:
                 // Die übrigen Buchungstypen folgen in den jeweiligen
-                // Schritten (Reservierungen/Korrekturen/Storno);
+                // Schritten (z. B. Reservierung/Closeout);
                 // typspezifische Invarianten werden dort ergänzt.
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Balancierung der Storno-Deltas gegen die eigenen Postings
+    /// (Design Schritt 6 §2.1): die Deltasumme je Konto/Pool muss exakt der
+    /// Postingssumme der Buchung entsprechen (fehlende Postings zählen als 0).
+    /// Das bloße Vorkommen einer Delta-Zelle verlangt kein ungleich 0
+    /// Netto-Posting: reine Transfers tragen z. B. poolneutrale Deltas
+    /// (von −x / zu +x auf demselben Pool) mit Deltasumme 0 und ohne
+    /// Pool-Posting — das ist konsistent und muss akzeptiert werden
+    /// (Review R1 P1: Storno einer korrigierten Buchung / Storno eines
+    /// Transfers mit Pool-Zweck).
+    /// </summary>
+    private void ValidateReversalDeltasBalance()
+    {
+        var accountPostingSums = AccountPostings
+            .ToDictionary(p => p.AccountId, p => p.Amount);
+        var poolPostingSums = PoolPostings
+            .ToDictionary(p => p.PoolId, p => p.Amount);
+
+        var accountDeltaSums = new Dictionary<string, Money>(StringComparer.Ordinal);
+        var poolDeltaSums = new Dictionary<string, Money>(StringComparer.Ordinal);
+        foreach (var delta in ReversalDeltas)
+        {
+            if (string.IsNullOrWhiteSpace(delta.AccountId))
+            {
+                throw new LarioDomainException($"Storno '{Id}' mit ReversalDelta ohne Konto-Id.");
+            }
+
+            if (string.IsNullOrWhiteSpace(delta.PoolId))
+            {
+                throw new LarioDomainException($"Storno '{Id}' mit ReversalDelta ohne Pool-Id.");
+            }
+
+            accountDeltaSums[delta.AccountId] =
+                accountDeltaSums.GetValueOrDefault(delta.AccountId, Money.Zero).Add(delta.Amount);
+            poolDeltaSums[delta.PoolId] =
+                poolDeltaSums.GetValueOrDefault(delta.PoolId, Money.Zero).Add(delta.Amount);
+        }
+
+        var allAccounts = new HashSet<string>(accountPostingSums.Keys, StringComparer.Ordinal);
+        allAccounts.UnionWith(accountDeltaSums.Keys);
+        foreach (var account in allAccounts)
+        {
+            var postingSum = accountPostingSums.GetValueOrDefault(account, Money.Zero);
+            var deltaSum = accountDeltaSums.GetValueOrDefault(account, Money.Zero);
+            if (postingSum != deltaSum)
+            {
+                throw new LarioDomainException(
+                    $"Storno '{Id}': Deltas für Konto '{account}' ({deltaSum.ToEuro():0.00} €) balancieren nicht " +
+                    $"gegen die Konto-Postings ({postingSum.ToEuro():0.00} €).");
+            }
+        }
+
+        var allPools = new HashSet<string>(poolPostingSums.Keys, StringComparer.Ordinal);
+        allPools.UnionWith(poolDeltaSums.Keys);
+        foreach (var pool in allPools)
+        {
+            var postingSum = poolPostingSums.GetValueOrDefault(pool, Money.Zero);
+            var deltaSum = poolDeltaSums.GetValueOrDefault(pool, Money.Zero);
+            if (postingSum != deltaSum)
+            {
+                throw new LarioDomainException(
+                    $"Storno '{Id}': Deltas für Pool '{pool}' ({deltaSum.ToEuro():0.00} €) balancieren nicht " +
+                    $"gegen die Pool-Postings ({postingSum.ToEuro():0.00} €).");
+            }
         }
     }
 
@@ -586,8 +775,14 @@ public sealed class Booking
     ///   (Konto, Zielpool) +Betrag — das physische Konto bleibt (§3.3).
     /// - <b>Kombination:</b> (Quellkonto, Quellpool) −Betrag und
     ///   (Zielkonto, Zielpool) +Betrag.
+    /// - <b>Storno:</b> die explizit gespeicherten <see cref="ReversalDeltas"/>
+    ///   (Negation der Deltas des Originals; kein Cross-Booking-Lookup).
+    /// - <b>Erstattung:</b> je Pool-Posting (Konto, Pool) +Zeilenbetrag —
+    ///   der Rückfluss zum Ursprungspool kann offene Ausgleiche (teil-)
+    ///   begleichen (Rechenvertrag §4).
+    /// - <b>Kontostandskorrektur:</b> leer (nur Konto, keine Zelle).
     /// </para>
-    /// Noch nicht umgesetzte Buchungstypen (Reservierung, Storno, …) werfen:
+    /// Noch nicht umgesetzte Buchungstypen (Reservierung, …) werfen:
     /// ihre Zuordnungswirkung wird im jeweiligen Schritt ergänzt.
     /// </summary>
     public IReadOnlyList<AllocationDeltaEntry> AllocationDelta()
@@ -646,6 +841,23 @@ public sealed class Booking
                     new(accountMove[false].AccountId, poolMove2[false].PoolId, amount.Negate()),
                     new(accountMove[true].AccountId, poolMove2[true].PoolId, amount),
                 };
+
+            case BookingType.Reversal:
+                // Explizit gespeichert (Negation der Original-Deltas) —
+                // kein Cross-Booking-Lookup im Replay (Design §2.2).
+                return ReversalDeltas;
+
+            case BookingType.Refund:
+            {
+                var refundAccount = AccountPostings.Single().AccountId;
+                return PoolPostings
+                    .Select(p => new AllocationDeltaEntry(refundAccount, p.PoolId, p.Amount))
+                    .ToList();
+            }
+
+            case BookingType.BalanceCorrection:
+                // Nur Konto, keine Konto-Pool-Zelle (Design §2.2).
+                return [];
 
             default:
                 throw new LarioDomainException(

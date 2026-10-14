@@ -65,6 +65,7 @@ namespace Lario.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("BaseRevision")
+                        .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
                     b.Property<DateOnly>("Date")
@@ -78,7 +79,15 @@ namespace Lario.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("RefundsExpenseId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("RelatedSettlementId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReversesBookingId")
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
@@ -90,6 +99,43 @@ namespace Lario.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Bookings", (string)null);
+                });
+
+            modelBuilder.Entity("Lario.Domain.Journal.BookingCorrection", b =>
+                {
+                    b.Property<string>("OperationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BookingId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NewSnapshot")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OldSnapshot")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("OperationId");
+
+                    b.HasIndex("BookingId");
+
+                    b.ToTable("BookingCorrections", (string)null);
                 });
 
             modelBuilder.Entity("Lario.Domain.Journal.ExpenseSplit", b =>
@@ -396,6 +442,28 @@ namespace Lario.Infrastructure.Migrations
                     b.ToTable("TaxPresets", (string)null);
                 });
 
+            modelBuilder.Entity("Lario.Infrastructure.ReversalDeltaRow", b =>
+                {
+                    b.Property<string>("BookingId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AccountId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PoolId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("BookingId", "AccountId", "PoolId");
+
+                    b.ToTable("ReversalDeltas", (string)null);
+                });
+
             modelBuilder.Entity("Lario.Domain.Journal.AccountAllocation", b =>
                 {
                     b.HasOne("Lario.Domain.MasterData.Account", null)
@@ -423,6 +491,15 @@ namespace Lario.Infrastructure.Migrations
                         .WithMany("AccountPostings")
                         .HasForeignKey("BookingId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Lario.Domain.Journal.BookingCorrection", b =>
+                {
+                    b.HasOne("Lario.Domain.Journal.Booking", null)
+                        .WithMany()
+                        .HasForeignKey("BookingId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
@@ -517,6 +594,15 @@ namespace Lario.Infrastructure.Migrations
                         .WithOne("TaxPreset")
                         .HasForeignKey("Lario.Domain.MasterData.TaxPreset", "CategoryId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Lario.Infrastructure.ReversalDeltaRow", b =>
+                {
+                    b.HasOne("Lario.Domain.Journal.Booking", null)
+                        .WithMany()
+                        .HasForeignKey("BookingId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

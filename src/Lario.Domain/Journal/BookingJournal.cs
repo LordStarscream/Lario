@@ -44,6 +44,44 @@ public sealed class BookingJournal
             .Where(p => p.PoolId == poolId)
             .Aggregate(Money.Zero, (sum, p) => sum.Add(p.Amount));
 
+    /// <summary>
+    /// Wirksamer Storno-Status einer Buchung (Review R1 P2): ein Storno
+    /// einer Buchung macht das Original wirkungslos, ein Storno des Stornos
+    /// (Widerruf) macht es wieder wirksam, usw. Eine Buchung, auf die sich
+    /// kein Storno bezieht, ist nie storniert.
+    ///
+    /// Die Historie kann mehrere Stornos derselben Buchung tragen (Storno,
+    /// Widerruf, erneutes Storno …). Geprüft wird daher nicht nur die erste
+    /// Kette, sondern die Parität aller wirksamen Stornos: Ein Storno wirkt,
+    /// solange es nicht selbst wirksam widerrufen ist. Die Anwendung lässt
+    /// höchstens ein wirksames Storno je Buchung zu (Doppelstorno ist ein
+    /// Konflikt), die Parität bleibt aber die robuste Form über die ganze
+    /// Storno-Historie. Terminiert immer: jede Storno-Buchung trägt eine neue,
+    /// eindeutige Id, und jede Buchung verweist auf höchstens ein Original
+    /// (kein Zyklus).
+    /// </summary>
+    public bool IsEffectivelyReversed(string bookingId)
+    {
+        var effectiveReversals = _bookings
+            .Where(b => b.Type == BookingType.Reversal && b.ReversesBookingId == bookingId)
+            .Count(reversal => !IsEffectivelyReversed(reversal.Id));
+        return effectiveReversals % 2 == 1;
+    }
+
+    /// <summary>
+    /// Direkte Stornos einer Buchung (wirksam und historisch, in
+    /// Journal-Reihenfolge). Die Parität von
+    /// <see cref="IsEffectivelyReversed"/> allein kann einen zweiten
+    /// wirksamen Storno derselben Buchung nicht erkennen (zwei wirksame
+    /// Stornos parieren sich zu „nicht storniert“ — das Saldo-Verschieben
+    /// bleibt). Die Anwendung erzwingt daher die strengere Struktur: höchstens
+    /// ein wirksames Storno je Buchung (Review R2 P1, Schritt 6).
+    /// </summary>
+    public IReadOnlyList<Booking> ReversalsOf(string bookingId) =>
+        _bookings
+            .Where(b => b.Type == BookingType.Reversal && b.ReversesBookingId == bookingId)
+            .ToList();
+
     /// <summary>Summe aller Kontostände (Gesamtvermögen).</summary>
     public Money TotalAccountBalance() =>
         _bookings
@@ -155,7 +193,9 @@ public sealed class BookingJournal
     /// <para>
     /// - <b>Zeilensumme je Account = Kontostand</b> abzüglich des nicht
     ///   zugeordneten Anfangsbestands-Rests des Kontos (der Rest liegt im
-    ///   Kontostand, trägt aber keine Zelle, Rechenvertrag §3.7).
+    ///   Kontostand, trägt aber keine Zelle, Rechenvertrag §3.7) und der
+    ///   Reste aus Kontostandskorrekturen (die nur den Kontostand
+    ///   korrigieren, ohne Zelle, Design Schritt 6 §2.6).
     /// - <b>Spaltensumme je Pool = Poolbestand.</b>
     /// </para>
     /// Leere Liste = konsistent; jede Verletzung ist eine Meldung mit den
@@ -185,12 +225,19 @@ public sealed class BookingJournal
             var rowSum = cells
                 .Where(c => c.Key.AccountId == account)
                 .Aggregate(Money.Zero, (sum, c) => sum.Add(c.Value));
-            var expected = AccountBalance(account).Subtract(UnallocatedRemainderOf(account));
+            // Nicht zugeteilter Rest des Kontos: nicht zugeordneter
+            // Anfangsbestands-Rest plus Rest aus Kontostandskorrekturen.
+            // Beide liegen im Kontostand, tragen aber keine Konto-Pool-Zelle.
+            var expected = AccountBalance(account)
+                .Subtract(UnallocatedRemainderOf(account))
+                .Subtract(BalanceCorrectionRemainderOf(account));
             if (rowSum != expected)
             {
                 violations.Add(
                     $"Zeilensumme Konto '{account}' ({rowSum.ToEuro():0.00} €) ≠ Kontostand " +
-                    $"abzüglich nicht zugeordnetem Anfangsbestands-Rest ({expected.ToEuro():0.00} €).");
+                    $"abzüglich nicht zugeordnetem Rest — Anfangsbestand " +
+                    $"({UnallocatedRemainderOf(account).ToEuro():0.00} €) und " +
+                    $"Kontostandskorrekturen ({BalanceCorrectionRemainderOf(account).ToEuro():0.00} €).");
             }
         }
 
@@ -378,6 +425,21 @@ public sealed class BookingJournal
         UnallocatedOpeningRemainders()
             .Where(r => r.AccountId == accountId)
             .Aggregate(Money.Zero, (sum, r) => sum.Add(r.Amount));
+
+    /// <summary>
+    /// Rest aus Kontostandskorrekturen des Kontos (Schritt 6 §2.6): die
+    /// Kontostandskorrektur trägt genau ein Konto-Posting und KEIN
+    /// Pool-Posting — der korrigierte Betrag liegt im Kontostand, trägt
+    /// aber keine Konto-Pool-Zelle. Wie der nicht zugeordnete
+    /// Anfangsbestands-Rest ist er Teil des „nicht zugeteilten" Rests, der
+    /// die Zeilensummen-Invariante ausgleicht.
+    /// </summary>
+    private Money BalanceCorrectionRemainderOf(string accountId) =>
+        _bookings
+            .Where(b => b.Type == BookingType.BalanceCorrection)
+            .SelectMany(b => b.AccountPostings)
+            .Where(p => p.AccountId == accountId)
+            .Aggregate(Money.Zero, (sum, p) => sum.Add(p.Amount));
 
     private sealed class AllocationCellKeyComparer : IEqualityComparer<(string AccountId, string PoolId)>
     {
