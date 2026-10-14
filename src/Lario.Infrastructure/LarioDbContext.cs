@@ -116,7 +116,14 @@ public class LarioDbContext : DbContext
             e.Property(x => x.Type).HasConversion<string>().HasMaxLength(32);
             e.Property(x => x.Date).IsRequired();
             e.Property(x => x.Note).HasMaxLength(4000);
-            e.Property(x => x.BaseRevision).IsRequired();
+            // Optimistische Synchronisation (Review R1 P1): die
+            // Basisrevision ist ein Concurrency-Token — jede Änderung
+            // (Korrektur, Storno, Erstattung) erhöht sie in derselben
+            // Transaktion und SQLite prüft den erwarteten Wert im
+            // UPDATE. Zwei parallele Operationen auf derselben Buchung
+            // können nicht beide commiten; die Verliererin wird
+            // vollständig zurückgerollt (keine halben Buchungen).
+            e.Property(x => x.BaseRevision).IsRequired().IsConcurrencyToken();
             // Finanzierungsmonat nur bei Einnahmen (null sonst);
             // ISO-Monatsschlüssel "YYYY-MM".
             e.Property(x => x.FundingMonth)
@@ -351,6 +358,9 @@ public class LarioDbContext : DbContext
             // JSON-Snapshots: TEXT ohne Max-Length.
             e.Property(x => x.OldSnapshot).IsRequired();
             e.Property(x => x.NewSnapshot).IsRequired();
+            // Kanonischer Original-Payload (Idempotenznachweis, Review
+            // R1 P2): JSON-TEXT ohne Max-Length.
+            e.Property(x => x.Payload).IsRequired();
             e.Property(x => x.Note).HasMaxLength(4000);
             e.Property(x => x.CreatedAtUtc).IsRequired();
             e.HasOne<Booking>()

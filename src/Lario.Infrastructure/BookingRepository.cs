@@ -127,13 +127,32 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
 
         // Der Storno wird erst wirksam, wenn das Original seine neue
         // Revision trägt — beide Änderungen commiten gemeinsam (Design
-        // Schritt 6 §2.5/§3.2).
-        trackedOriginal.BaseRevision = original.BaseRevision + 1;
+        // Schritt 6 §2.5/§3.2). Die Revision ist ein Concurrency-Token
+        // (Review R1 P1): commitet eine parallele Operation in der
+        // Zwischenzeit, schlägt das UPDATE fehl und der gesamte
+        // Vorgang (Buchung + Historie + Positionen) wird
+        // zurückgerollt — als Revisionskonflikt sichtbar.
+        // Die erwartete Revision wird VOR der Mutation erfasst: wenn
+        // trackedOriginal und original dieselbe Instanz sind, würde die
+        // Zuweisung original.BaseRevision mitverändern und der
+        // Konfliktbericht die inkorrekte (bereits erhöhte) Revision
+        // melden (Review R1: zwei Kontexte, genau einer gewinnt).
+        var expectedOriginalRevision = original.BaseRevision;
+        trackedOriginal.BaseRevision = expectedOriginalRevision + 1;
 
         db.Bookings.Add(booking);
         AddReversalDeltaRows(booking);
         await ApplySettlementChangesAsync(settlements, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw await RevisionConflictAsync(
+                original.Id, expectedOriginalRevision, cancellationToken);
+        }
+
         return await LoadFullAsync(booking.Id, cancellationToken);
     }
 
@@ -179,9 +198,48 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         ReplaceChildren(tracked, updated);
         db.BookingCorrections.Add(correction);
         await ApplySettlementChangesAsync(settlements, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+
+        // Concurrency-Token (Review R1 P1): commitet eine parallele
+        // Operation (Storno, Erstattung, zweite Korrektur) in der
+        // Zwischenzeit, schlägt das UPDATE auf der Revision fehl und
+        // Buchung, Historie und Positionen werden gemeinsam
+        // zurückgerollt — als Revisionskonflikt sichtbar.
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw await RevisionConflictAsync(
+                updated.Id, updated.BaseRevision - 1, cancellationToken);
+        }
 
         return await LoadFullAsync(updated.Id, cancellationToken);
+    }
+
+    /// <summary>
+    /// Übersetzt eine Concurrency-Abweisung (Review R1 P1) in einen
+    /// fachlichen Revisionskonflikt mit erwartetem und Ist-Wert — die
+    /// Transaktion (Buchung, Historie, Positionen) wurde bereits von
+    /// SQLite zurückgerollt; nur der aktuelle Ist-Zustand wird für die
+    /// Fehlermeldung nachgeladen.
+    /// </summary>
+    private async Task<DomainConflictException> RevisionConflictAsync(
+        string bookingId, int expectedRevision, CancellationToken cancellationToken)
+    {
+        var current = await db.Bookings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(b => b.Id == bookingId, cancellationToken);
+
+        return new DomainConflictException(
+            $"Buchung '{bookingId}': erwartete Basisrevision {expectedRevision} weicht von der " +
+            $"Ist-Revision {current?.BaseRevision} ab (Revisionskonflikt durch parallele " +
+            "Operation). Der gesamte Vorgang wurde zurückgerollt — die Buchung bleibt im " +
+            "letzten konsistenten Zustand.")
+        {
+            ExpectedBaseRevision = expectedRevision,
+            ActualBaseRevision = current?.BaseRevision,
+        };
     }
 
     /// <summary>

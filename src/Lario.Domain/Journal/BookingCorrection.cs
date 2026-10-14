@@ -20,9 +20,10 @@ public sealed class BookingCorrection
     }
 
     /// <summary>
-    /// Erzeugt einen Historieneintrag. OperationId, BookingId und beide
-    /// Snapshots müssen gesetzt sein — ein Eintrag ohne Vorher/Nachher-Zustand
-    /// ist fachlich wertlos.
+    /// Erzeugt einen Historieneintrag. OperationId, BookingId, beide
+    /// Snapshots und der kanonische Original-Payload müssen gesetzt sein —
+    /// ein Eintrag ohne Vorher/Nachher-Zustand oder ohne Nachweis der
+    /// eingereichten Vorgabe ist fachlich wertlos.
     /// </summary>
     /// <exception cref="LarioDomainException">
     /// Wenn eine der Pflichtangaben leer oder leer nach Trim ist.
@@ -33,6 +34,7 @@ public sealed class BookingCorrection
         string oldSnapshot,
         string newSnapshot,
         string? note,
+        string payload,
         DateTime createdAtUtc)
     {
         if (string.IsNullOrWhiteSpace(operationId))
@@ -58,11 +60,18 @@ public sealed class BookingCorrection
                 $"Korrektur-Historieneintrag '{operationId}' ohne Nachher-Snapshot.");
         }
 
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            throw new LarioDomainException(
+                $"Korrektur-Historieneintrag '{operationId}' ohne Original-Payload.");
+        }
+
         OperationId = operationId;
         BookingId = bookingId;
         OldSnapshot = oldSnapshot;
         NewSnapshot = newSnapshot;
         Note = note;
+        Payload = payload;
         CreatedAtUtc = createdAtUtc;
     }
 
@@ -86,6 +95,18 @@ public sealed class BookingCorrection
     /// <see cref="OldSnapshot"/>) — der neue Inhalt nach der Korrektur.
     /// </summary>
     public string NewSnapshot { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Kanonischer JSON-String des ursprünglich eingereichten
+    /// Korrektur-Payloads (Revision, Feldpräsenz/null-Semantik und
+    /// Split-/Steuerinhalt inklusive) — der Idempotenznachweis
+    /// (Rechenvertrag §5.5): eine Wiederholung derselben Operation wird
+    /// nur quittet, wenn der Payload exakt dem hier gespeicherten
+    /// entspricht; gleicher OperationId mit anderem Inhalt ist ein
+    /// Konflikt (Review R1 P2). Die Wiederholung bleibt quittierbar, auch
+    /// wenn die Buchung zwischenzeitlich weiter korrigiert wurde.
+    /// </summary>
+    public string Payload { get; set; } = string.Empty;
 
     /// <summary>Begründung der Korrektur, optional.</summary>
     public string? Note { get; set; }

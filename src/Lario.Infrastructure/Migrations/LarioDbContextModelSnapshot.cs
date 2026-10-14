@@ -65,6 +65,7 @@ namespace Lario.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("BaseRevision")
+                        .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
                     b.Property<DateOnly>("Date")
@@ -123,6 +124,10 @@ namespace Lario.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("OldSnapshot")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Payload")
                         .IsRequired()
                         .HasColumnType("TEXT");
 

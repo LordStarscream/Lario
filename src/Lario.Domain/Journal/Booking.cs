@@ -486,9 +486,13 @@ public sealed class Booking
     /// <summary>
     /// Balancierung der Storno-Deltas gegen die eigenen Postings
     /// (Design Schritt 6 §2.1): die Deltasumme je Konto/Pool muss exakt der
-    /// Postingssumme der Buchung entsprechen — jedes Konto/Pool mit
-    /// ungleich 0 Posting muss in den Deltas vorkommen und umgekehrt (jede
-    /// Delta-Zelle braucht ein ungleich 0 Posting).
+    /// Postingssumme der Buchung entsprechen (fehlende Postings zählen als 0).
+    /// Das bloße Vorkommen einer Delta-Zelle verlangt kein ungleich 0
+    /// Netto-Posting: reine Transfers tragen z. B. poolneutrale Deltas
+    /// (von −x / zu +x auf demselben Pool) mit Deltasumme 0 und ohne
+    /// Pool-Posting — das ist konsistent und muss akzeptiert werden
+    /// (Review R1 P1: Storno einer korrigierten Buchung / Storno eines
+    /// Transfers mit Pool-Zweck).
     /// </summary>
     private void ValidateReversalDeltasBalance()
     {
@@ -529,13 +533,6 @@ public sealed class Booking
                     $"Storno '{Id}': Deltas für Konto '{account}' ({deltaSum.ToEuro():0.00} €) balancieren nicht " +
                     $"gegen die Konto-Postings ({postingSum.ToEuro():0.00} €).");
             }
-
-            if (accountDeltaSums.ContainsKey(account) && postingSum.Cents == 0)
-            {
-                throw new LarioDomainException(
-                    $"Storno '{Id}': Deltas referenzieren Konto '{account}', für das die Buchung kein " +
-                    "ungleich 0 Konto-Posting trägt.");
-            }
         }
 
         var allPools = new HashSet<string>(poolPostingSums.Keys, StringComparer.Ordinal);
@@ -549,13 +546,6 @@ public sealed class Booking
                 throw new LarioDomainException(
                     $"Storno '{Id}': Deltas für Pool '{pool}' ({deltaSum.ToEuro():0.00} €) balancieren nicht " +
                     $"gegen die Pool-Postings ({postingSum.ToEuro():0.00} €).");
-            }
-
-            if (poolDeltaSums.ContainsKey(pool) && postingSum.Cents == 0)
-            {
-                throw new LarioDomainException(
-                    $"Storno '{Id}': Deltas referenzieren Pool '{pool}', für das die Buchung kein " +
-                    "ungleich 0 Pool-Posting trägt.");
             }
         }
     }

@@ -59,7 +59,11 @@ public sealed class CorrectionService(
 
         // Idempotenz zuerst (vor Revisions- und Katalogprüfung): die
         // Operation-Id ist der Idempotenzschlüssel der Korrektur-Historie
-        // (Rechenvertrag §5.5).
+        // (Rechenvertrag §5.5). Abgeglichen wird der kanonische
+        // Original-Payload — Revision, Feldpräsenz/null-Semantik und
+        // Split-/Steuerinhalt — NICHT der aktuelle Buchungszustand, denn
+        // die Wiederholung muss auch dann quittiert werden, wenn die
+        // Buchung zwischenzeitlich weiter korrigiert wurde (Review R1 P2).
         var existingCorrection = await bookingRepository
             .FindCorrectionAsync(spec.OperationId, cancellationToken);
         if (existingCorrection is not null)
@@ -72,14 +76,15 @@ public sealed class CorrectionService(
                     "Operation-Id ist eindeutig pro Buchung.");
             }
 
-            if (SpecMatchesBooking(original, spec))
+            if (existingCorrection.Payload == JsonSerializer.Serialize(spec))
             {
                 return new Result(false, original);
             }
 
             throw new DomainConflictException(
                 $"Korrektur-Operation '{spec.OperationId}': diese Operation ist bereits " +
-                "angelegt — aber die Buchung trägt heute anderen Inhalt. Gleiche " +
+                "angelegt, aber die eingereichte Vorgabe weicht vom ursprünglichen " +
+                "Payload ab (Revision, Feldpräsenz oder Split-/Steuerinhalt). Gleiche " +
                 "Operation-Id, anderer Inhalt ist ein Konflikt; die Buchung bleibt " +
                 "unverändert.");
         }
@@ -102,32 +107,46 @@ public sealed class CorrectionService(
         var catalog = await masterDataRepository.LoadCatalogAsync(cancellationToken);
         spec.Validate(catalog, original);
 
-        // Doppelstorno: keine Korrektur auf ein bereits storniertes
-        // Original (sichtbare Ablehnung, Design Schritt 6 §3.2).
+        // Doppelstorno: keine Korrektur auf ein wirksam storniertes
+        // Original (sichtbare Ablehnung, Design Schritt 6 §3.2). Geprüft
+        // wird der wirksame Status über die Storno-Kette: ein widerrufenes
+        // Storno (Storno des Stornos) hat die Buchung wieder wirksam
+        // gemacht — dann ist die Korrektur zulässig (Review R1 P2).
         var journal = await bookingRepository.GetAllAsync(cancellationToken);
-        if (journal.Any(b => b.Type == BookingType.Reversal && b.ReversesBookingId == original.Id))
+        if (new BookingJournal(journal).IsEffectivelyReversed(original.Id))
         {
             throw new DomainConflictException(
-                $"Korrektur der Buchung '{original.Id}': die Buchung ist bereits storniert " +
+                $"Korrektur der Buchung '{original.Id}': die Buchung ist storniert " +
                 "— Korrekturen auf stornierten Buchungen sind ausgeschlossen. Widerrufen " +
                 "Sie das Storno zuerst (Storno des Stornos), dann ist die Korrektur möglich.");
         }
-
-        // Vorher/Nachher-Snapshot (Rechenvertrag §5.2: JSON mit Datum,
-        // Konto, Betrag, Notiz, Split/Verteilung).
-        var now = DateTime.UtcNow;
-        var correction = new BookingCorrection(
-            spec.OperationId,
-            original.Id,
-            JsonSerializer.Serialize(SnapshotOf(original)),
-            JsonSerializer.Serialize(SnapshotOf(spec.BuildUpdatedBooking(original, catalog))),
-            spec.Note,
-            now);
 
         // Neue Fassung bauen (dieselbe Id, Typ und Datum; Revision wird
         // hier erhöht — die Historie trägt die alte).
         var updated = spec.BuildUpdatedBooking(original, catalog);
         updated.BaseRevision = original.BaseRevision + 1;
+
+        // Bereits gewährte Erstattungen müssen auch nach der Korrektur
+        // durch die Split-Positionen gedeckt bleiben (Review R1 P2,
+        // Rechenvertrag §5.3): eine Korrektur, die einen erstatteten
+        // Ursprungspool entfernt oder seine Split-Position unter den
+        // bereits erstatteten Betrag senkt, ist ein Konflikt — sichtbar
+        // abgelehnt, nichts wird persistiert. Die Sicherheit gegen
+        // parallele Erstattungen garantiert der Concurrency-Token auf
+        // der Original-Revision (Review R1 P1).
+        CheckRefundCoverage(updated, journal);
+
+        // Vorher/Nachher-Snapshot (Rechenvertrag §5.2: JSON mit Datum,
+        // Konto, Betrag, Notiz, Split/Verteilung, Steuerkennzeichnung).
+        var now = DateTime.UtcNow;
+        var correction = new BookingCorrection(
+            spec.OperationId,
+            original.Id,
+            JsonSerializer.Serialize(SnapshotOf(original)),
+            JsonSerializer.Serialize(SnapshotOf(updated)),
+            spec.Note,
+            JsonSerializer.Serialize(spec),
+            now);
 
         // Begleichungspositionen atomar mit der Korrektur nachführen
         // (Vorher = Journal mit alter Fassung, Nachher = Journal mit
@@ -146,75 +165,55 @@ public sealed class CorrectionService(
     }
 
     /// <summary>
-    /// Idempotenz-Inhaltsabgleich: die aktuelle Buchung muss zum
-    /// spezifizierten Korrekturinhalt passen (alle gesetzten Felder der
-    /// Spezifikation sind in der Buchung vorhanden; Felder ohne
-    /// Vorgabe sind irrelevant für den Abgleich).
+    /// Prüft, dass bereits gewährte Erstattungen der Ausgabe durch die
+    /// Split-Positionen der korrigierten Fassung gedeckt bleiben (Review
+    /// R1 P2, Rechenvertrag §5.3): je Ursprungspool darf die Summe der
+    /// bereits erstatteten Beträge die korrigierte Split-Position nicht
+    /// überschreiten; ein erstatteter Pool, der in der korrigierten
+    /// Fassung nicht mehr vorkommt, ist immer ein Konflikt.
     /// </summary>
-    private static bool SpecMatchesBooking(Booking booking, CorrectionSpec spec)
+    private static void CheckRefundCoverage(Booking updated, IReadOnlyList<Booking> journal)
     {
-        if (spec.Date is { } date && booking.Date != date)
+        var refunds = journal
+            .Where(b => b.Type == BookingType.Refund && b.RefundsExpenseId == updated.Id)
+            .SelectMany(b => b.PoolPostings)
+            .ToList();
+
+        if (refunds.Count == 0)
         {
-            return false;
+            return;
         }
 
-        if (spec.Note is { } note && booking.Note != note)
-        {
-            return false;
-        }
+        // Ausgaben tragen negative Pool-Postings; die Split-Position ist
+        // der Betrag, den die Ausgabe aus dem Pool gezahlt hat.
+        var correctedSplits = updated.PoolPostings
+            .ToDictionary(p => p.PoolId, p => p.Amount.Negate(), StringComparer.Ordinal);
 
-        if (spec.AccountId is { } accountId)
+        foreach (var group in refunds.GroupBy(p => p.PoolId, StringComparer.Ordinal))
         {
-            if (!booking.AccountPostings.Any(p => p.AccountId == accountId))
-            {
-                return false;
-            }
-        }
-
-        if (spec.TotalAmount is { } total)
-        {
-            var accountAmount = booking.AccountPostings
+            var totalRefunded = group
                 .Aggregate(Money.Zero, (sum, p) => sum.Add(p.Amount));
-            var expected = booking.Type == BookingType.Income ? total : total.Negate();
-            if (accountAmount != expected)
+
+            if (!correctedSplits.TryGetValue(group.Key, out var allowed))
             {
-                return false;
+                throw new DomainConflictException(
+                    $"Korrektur der Buchung '{updated.Id}': der Pool '{group.Key}' ist in der " +
+                    $"korrigierten Fassung kein Ursprungspool mehr, aber es wurden bereits " +
+                    $"{totalRefunded.ToEuro():0.00} € aus diesem Pool erstattet. Bereits " +
+                    "gewährte Erstattungen müssen durch die korrigierten Splits gedeckt " +
+                    "bleiben (Rechenvertrag §5.3). Die Korrektur bleibt abgelehnt.");
+            }
+
+            if (totalRefunded > allowed)
+            {
+                throw new DomainConflictException(
+                    $"Korrektur der Buchung '{updated.Id}': die korrigierte Split-Position des " +
+                    $"Pools '{group.Key}' ({allowed.ToEuro():0.00} €) ist kleiner als die " +
+                    $"bereits erstatteten {totalRefunded.ToEuro():0.00} €. Bereits gewährte " +
+                    "Erstattungen müssen durch die korrigierten Splits gedeckt bleiben " +
+                    "(Rechenvertrag §5.3). Die Korrektur bleibt abgelehnt.");
             }
         }
-
-        if (spec.Splits is { } splits)
-        {
-            var storedSplits = booking.Splits
-                .OrderBy(s => s.Id, StringComparer.Ordinal)
-                .Select(s => (s.Id, s.PoolId, s.Amount.Cents))
-                .ToList();
-            var expectedSplits = splits
-                .OrderBy(s => s.Id, StringComparer.Ordinal)
-                .Select(s => (s.Id, s.PoolId, s.Amount.Cents))
-                .ToList();
-            if (!storedSplits.SequenceEqual(expectedSplits))
-            {
-                return false;
-            }
-        }
-
-        if (spec.Allocations is { } allocations)
-        {
-            var storedAllocations = booking.PoolPostings
-                .OrderBy(p => p.PoolId, StringComparer.Ordinal)
-                .Select(p => (p.PoolId, p.Amount.Cents))
-                .ToList();
-            var expectedAllocations = allocations
-                .OrderBy(a => a.PoolId, StringComparer.Ordinal)
-                .Select(a => (a.PoolId, a.Amount.Cents))
-                .ToList();
-            if (!storedAllocations.SequenceEqual(expectedAllocations))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>
@@ -233,7 +232,27 @@ public sealed class CorrectionService(
             : booking.AccountPostings.Aggregate(Money.Zero, (s, p) => s.Add(p.Amount)).Negate().ToEuro(),
         Note = booking.Note,
         Splits = booking.Splits
-            .Select(s => new { s.Id, s.PoolId, s.CategoryId, s.Note, Amount = s.Amount.ToEuro() })
+            .Select(s => new
+            {
+                s.Id,
+                s.PoolId,
+                s.CategoryId,
+                s.Note,
+                Amount = s.Amount.ToEuro(),
+                // Steuerkennzeichnung vollständig mitspeichern (Review
+                // R1 P2): auch eine rein steuerliche Korrektur muss ein
+                // anderes Vorher-/Nachher-Ergebnis liefern.
+                Tax = s.Tax is { } tax
+                    ? new
+                    {
+                        tax.Relevant,
+                        tax.TaxCategoryId,
+                        MarkedAmount = tax.MarkedAmount?.ToEuro(),
+                        tax.Note,
+                        tax.InheritedFromPreset
+                    }
+                    : null
+            })
             .ToList(),
         PoolPostings = booking.PoolPostings
             .Select(p => new { p.PoolId, Amount = p.Amount.ToEuro() })

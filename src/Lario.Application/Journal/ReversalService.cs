@@ -113,11 +113,14 @@ public sealed class ReversalService(
 
         var bookings = await bookingRepository.GetAllAsync(cancellationToken);
 
-        // Doppelstorno: das Original darf höchstens ein Storno tragen.
-        // Mit veralteter Erwartungsrevision ist dies oben bereits ein
-        // Revisionskonflikt; mit aktueller Revision wird der Doppelstorno
-        // hier sichtbar abgelehnt (Design Schritt 6 §2.5/§3.2).
-        if (bookings.Any(b => b.Type == BookingType.Reversal && b.ReversesBookingId == original.Id))
+        // Doppelstorno: das Original darf höchstens wirksam storniert
+        // sein. Geprüft wird der wirksame Status über die Storno-Kette:
+        // ein widerrufenes Storno (Storno des Stornos) hat das Original
+        // wieder wirksam gemacht — dann ist ein neues Storno des
+        // Originals zulässig (Review R1 P2). Mit veralteter
+        // Erwartungsrevision ist ein paralleler Doppelstorno oben bereits
+        // ein Revisionskonflikt (Design Schritt 6 §2.5/§3.2).
+        if (new BookingJournal(bookings).IsEffectivelyReversed(original.Id))
         {
             throw new DomainConflictException(
                 $"Storno '{spec.Id}': die Buchung '{original.Id}' ist bereits storniert — " +

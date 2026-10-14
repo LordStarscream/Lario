@@ -13,9 +13,15 @@ namespace Lario.Application.Journal;
 ///   <c>RefundsExpenseId</c> — sie ist vom Storno strikt getrennt
 ///   (Plan-Abnahme B2: keine Erstattungs-Mechanik im Storno, kein
 ///   Storno-Verhalten bei Erstattungen);
-/// - kein Revisionsimpuls: die Erstattung ändert das Original nicht
-///   (kein <c>ExpectedBaseRevision</c>) — sie ist eine neue, eigenständige
-///   Buchung (Rechenvertrag §5.3, Design Schritt 6 §3.2);
+/// - Revisionsimpuls auf dem Original: die Erstattung erhöht die
+///   Basisrevision der Ausgabe atomar (gleicher Mechanismus wie das
+///   Storno) — der Concurrency-Token auf der Revision schützt den
+///   Deckel: zwei parallele Erstattungen, die einzeln unter dem Deckel
+///   liegen, können nicht beide commiten (Review R1 P1). Das Original
+///   selbst wird inhaltlich nicht geändert (kein
+///   <c>ExpectedBaseRevision</c> in der Vorgabe) — die Revision
+///   dokumentiert, dass sich der verbleibend erstattungsfähige Bestand
+///   geändert hat;
 /// - Deckelung pro Pool: bereits gewährte Erstattungen (aus dem
 ///   Journal) plus neue Linie dürfen die Split-Position des Originals
 ///   je Pool nicht überschreiten (Rechenvertrag §5.3, Design Schritt 6
@@ -76,9 +82,13 @@ public sealed class RefundService(
 
         var journal = await bookingRepository.GetAllAsync(cancellationToken);
 
-        // Eine Erstattung setzt eine gültige Ausgabe voraus — eine
-        // stornierte Ausgabe hat nichts zu erstatten (B2).
-        if (journal.Any(b => b.Type == BookingType.Reversal && b.ReversesBookingId == original.Id))
+        // Eine Erstattung setzt eine wirksam gültige Ausgabe voraus —
+        // eine stornierte Ausgabe hat nichts zu erstatten (B2). Geprüft
+        // wird der wirksame Status über die Storno-Kette: ein
+        // widerrufenes Storno (Storno des Stornos) hat die Ausgabe
+        // wieder wirksam gemacht — dann ist die Erstattung möglich
+        // (Review R1 P2).
+        if (new BookingJournal(journal).IsEffectivelyReversed(original.Id))
         {
             throw new LarioDomainException(
                 $"Erstattung '{spec.Id}': die Ausgabe '{original.Id}' ist storniert — " +
@@ -122,10 +132,14 @@ public sealed class RefundService(
             journal, booking, persistedPositions,
             () => $"set-{Guid.NewGuid():N}");
 
-        // Normale neue Buchung — KEIN Revisionsimpuls auf das Original.
-        await bookingRepository.AddAsync(
-            booking, changes.Select(c => c.Row).ToList(), cancellationToken);
-        return new Result(true, booking);
+        // Neue Buchung + Original-Revision++ in derselben Transaktion:
+        // der Concurrency-Token auf der Revision verhindert, dass zwei
+        // parallele Erstattungen unter dem Deckel beide commiten
+        // (Review R1 P1) — die Verliererin wird vollständig
+        // zurückgerollt (keine halbe Buchung, Deckel bleibt gewahrt).
+        var stored = await bookingRepository.AddWithOriginalRevisionAsync(
+            booking, original, changes.Select(c => c.Row).ToList(), cancellationToken);
+        return new Result(true, stored);
     }
 
     /// <summary>
@@ -142,7 +156,11 @@ public sealed class RefundService(
     /// <summary>
     /// Inhaltliche Gleichheit einer vorhandenen Erstattung mit der
     /// Spezifikation (Idempotenz-Abgleich: gleiche Id, gleicher Inhalt →
-    /// Quittierung). Der Gesamtbetrag ist die Summe der Zeilen.
+    /// Quittierung). Der Gesamtbetrag ist die Summe der Zeilen. Die
+    /// Pool-Postings werden als sortierte Mengen 1:1 gegen die
+    /// Erstattungslinien verglichen (Bijektion) — eine fehlende Linie
+    /// oder ein doppelter Pool in der Vorgabe ist kein gleicher Inhalt,
+    /// sondern ein Konflikt (Review R1 P2).
     /// </summary>
     private static bool IsSameContent(Booking stored, RefundSpec spec)
     {
@@ -165,13 +183,18 @@ public sealed class RefundService(
             return false;
         }
 
-        // Pool-Postings 1:1 mit den Erstattungslinien.
-        var storedPools = stored.PoolPostings.ToDictionary(p => p.PoolId, p => p.Amount);
-        if (storedPools.Count != spec.Lines.Count)
-        {
-            return false;
-        }
+        // Pool-Postings als sortierte Menge gegen die Zeilen vergleichen
+        // (Bijektion: gleiche Paare (Pool, Betrag), keine Mehr- oder
+        // Minderbelegung, doppelte Pools in der Vorgabe ausgeschlossen).
+        var storedLines = stored.PoolPostings
+            .OrderBy(p => p.PoolId, StringComparer.Ordinal)
+            .Select(p => (PoolId: p.PoolId, Cents: p.Amount.Cents))
+            .ToList();
+        var specLines = spec.Lines
+            .OrderBy(l => l.PoolId, StringComparer.Ordinal)
+            .Select(l => (PoolId: l.PoolId, Cents: l.Amount.Cents))
+            .ToList();
 
-        return spec.Lines.All(l => storedPools.TryGetValue(l.PoolId, out var amount) && amount == l.Amount);
+        return storedLines.SequenceEqual(specLines);
     }
 }

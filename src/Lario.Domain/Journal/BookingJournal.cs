@@ -44,6 +44,30 @@ public sealed class BookingJournal
             .Where(p => p.PoolId == poolId)
             .Aggregate(Money.Zero, (sum, p) => sum.Add(p.Amount));
 
+    /// <summary>
+    /// Wirksamer Storno-Status einer Buchung (Review R1 P2): ein Storno
+    /// einer Buchung macht das Original wirkungslos, ein Storno des Stornos
+    /// (Widerruf) macht es wieder wirksam, usw. Eine Buchung, auf die sich
+    /// kein Storno bezieht, ist nie storniert.
+    ///
+    /// Die Historie kann mehrere Stornos derselben Buchung tragen (Storno,
+    /// Widerruf, erneutes Storno …). Geprüft wird daher nicht nur die erste
+    /// Kette, sondern die Parität aller wirksamen Stornos: Ein Storno wirkt,
+    /// solange es nicht selbst wirksam widerrufen ist. Die Anwendung lässt
+    /// höchstens ein wirksames Storno je Buchung zu (Doppelstorno ist ein
+    /// Konflikt), die Parität bleibt aber die robuste Form über die ganze
+    /// Storno-Historie. Terminiert immer: jede Storno-Buchung trägt eine neue,
+    /// eindeutige Id, und jede Buchung verweist auf höchstens ein Original
+    /// (kein Zyklus).
+    /// </summary>
+    public bool IsEffectivelyReversed(string bookingId)
+    {
+        var effectiveReversals = _bookings
+            .Where(b => b.Type == BookingType.Reversal && b.ReversesBookingId == bookingId)
+            .Count(reversal => !IsEffectivelyReversed(reversal.Id));
+        return effectiveReversals % 2 == 1;
+    }
+
     /// <summary>Summe aller Kontostände (Gesamtvermögen).</summary>
     public Money TotalAccountBalance() =>
         _bookings

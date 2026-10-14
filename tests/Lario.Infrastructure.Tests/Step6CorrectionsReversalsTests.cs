@@ -120,9 +120,15 @@ public class Step6CorrectionsReversalsTests
         Assert.Equal(91_000, await Step5Scenario.AccountBalanceAsync(db, Step5Scenario.Haupt));
         Assert.Equal(91_000, await Step5Scenario.PoolBalanceAsync(db, Step5Scenario.Flex));
 
-        // Die Ursprungs-Ausgabe bleibt unangetastet (kein Revisionseffekt).
+        // Die Ursprungs-Ausgabe trägt den Revisionsimpuls der Erstattung
+        // (Review R1 P1): ihr Zustand (verbleibend erstattungsfähiger
+        // Bestand) hat sich geändert — der Concurrency-Token auf der
+        // Revision schützt den Erstattungs-Deckel gegen parallele
+        // Operationen. Der Buchungsinhalt bleibt unverändert.
         var original = await db.Resolve<IBookingRepository>().FindByIdAsync("bk-a2");
-        Assert.Equal(1, original!.BaseRevision);
+        Assert.Equal(2, original!.BaseRevision);
+        Assert.Equal(new Money(-10_000), original.AccountPostings.Single().Amount);
+        Assert.Equal(Money.Zero, original.Splits.Single().Amount - new Money(10_000)); // Split unverändert
 
         // Keine Einnahme: TotalIncome bleibt 0.
         var balances = await db.Resolve<BalanceQueryService>().GetBalancesAsync();
@@ -675,8 +681,12 @@ public class Step6CorrectionsReversalsTests
                 new ExpenseSplitSpec { Id = "s1", Amount = new Money(4_000), PoolId = Step5Scenario.Flex, CategoryId = "cat-lebensmittel" },
             ]));
         Assert.True(corr1.Created);
+
+        // Wiederholung exakt desselben Payloads (auch mit der alten
+        // Erwartungsrevision 1 — der Client weiß nicht, dass der erste
+        // Versuch commitet hat) wird quittiert.
         var corr2 = await db.Resolve<CorrectionService>().CorrectAsync(new CorrectionSpec(
-            "bk-idem2", "op-idem", ExpectedBaseRevision: 2,
+            "bk-idem2", "op-idem", ExpectedBaseRevision: 1,
             TotalAmount: new Money(4_000),
             Splits:
             [
@@ -684,6 +694,30 @@ public class Step6CorrectionsReversalsTests
             ]));
         Assert.False(corr2.Created);
         Assert.Equal(2, corr2.Booking.BaseRevision); // Revision nicht erneut erhöht.
+
+        // Gleiche Operation-Id mit anderem Inhalt (andere
+        // Erwartungsrevision) ist ein Konflikt (Review R1 P2: die
+        // Revision gehört zum Payload).
+        var conflict = await Assert.ThrowsAsync<DomainConflictException>(() =>
+            db.Resolve<CorrectionService>().CorrectAsync(new CorrectionSpec(
+                "bk-idem2", "op-idem", ExpectedBaseRevision: 2,
+                TotalAmount: new Money(4_000),
+                Splits:
+                [
+                    new ExpenseSplitSpec { Id = "s1", Amount = new Money(4_000), PoolId = Step5Scenario.Flex, CategoryId = "cat-lebensmittel" },
+                ])));
+        Assert.Contains("Konflikt", conflict.Message);
+
+        // Gleiche Operation-Id mit geändertem Split-Inhalt ist ebenfalls
+        // ein Konflikt.
+        await Assert.ThrowsAsync<DomainConflictException>(() =>
+            db.Resolve<CorrectionService>().CorrectAsync(new CorrectionSpec(
+                "bk-idem2", "op-idem", ExpectedBaseRevision: 2,
+                TotalAmount: new Money(3_500),
+                Splits:
+                [
+                    new ExpenseSplitSpec { Id = "s1", Amount = new Money(3_500), PoolId = Step5Scenario.Flex, CategoryId = "cat-lebensmittel" },
+                ])));
 
         var journal = await Step5Scenario.JournalAsync(db);
         Assert.Single(journal.Bookings, b => b.Type == BookingType.Reversal);
