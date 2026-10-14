@@ -103,6 +103,8 @@ public class MigrationTests
             "ExpenseSplits", "SplitTaxMarkings",
             // Schritt 5:
             "TransferPurposes", "ReassignmentAccounts", "SettlementPositions",
+            // Schritt 6:
+            "ReversalDeltas", "BookingCorrections",
         };
         foreach (var table in expected)
         {
@@ -120,14 +122,15 @@ public class MigrationTests
         }
 
         // EF-interne Tabellen (__EFMigrationsHistory, __EFMigrationsLock) ausklammern:
-        // es müssen exakt die dreizehn Fachtabellen existieren (acht aus
+        // es müssen exakt die fünfzehn Fachtabellen existieren (acht aus
         // Schritt 3, dazu ExpenseSplits und SplitTaxMarkings aus Schritt 4,
         // dazu TransferPurposes, ReassignmentAccounts und SettlementPositions
-        // aus Schritt 5).
+        // aus Schritt 5, dazu ReversalDeltas und BookingCorrections aus
+        // Schritt 6).
         var tables = (await db.TableNamesAsync())
             .Where(t => !t.StartsWith("__", StringComparison.Ordinal))
             .ToList();
-        Assert.Equal(13, tables.Count);
+        Assert.Equal(15, tables.Count);
     }
 }
 
