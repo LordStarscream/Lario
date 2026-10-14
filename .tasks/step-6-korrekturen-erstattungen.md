@@ -1,6 +1,6 @@
 # Schritt 6 – Korrekturen, Erstattungen und Kontostandsabgleich
 
-**Status:** aktiv
+**Status:** abgenommen und gemerged (15. Okt. 2026) — Merge-Commit `140446d`, PR #8
 **Branch:** `step/6-korrekturen-erstattungen`
 **Voraussetzung:** Schritt 5 (abgeschlossen, merged `a004d10`)
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 6"
@@ -81,6 +81,7 @@ Vollständiges Design-Paket: `.tasks/step-6-design-paket.md` (Status: final). Ke
   > - **P1 Snapshot-Revision als Concurrency-Basis:** `AddWithOriginalRevisionAsync` las die Kettenvorfahren neu und übernahm deren aktuelle Revisionen als Concurrency-Basis, obwohl die Prüfung im Anwendungsfall gegen das vorherige Journal-Snapshot gelaufen war. Zwischen Prüfung und atomarem Schreiben konnte eine parallele Commit (Korrektur des Wurzeloriginals mit geändertem Betrag → finanziell inkonsistenter Storno; neues direktes Storno der Wurzel → zweites wirksames Storno) die Revisionen verschieben — das Schreiben committierte trotzdem, weil die Repository-Prüfungen die aktuellen Werte sahen. Fix: Die erwarteten Revisionen **aller** geprüften Kettenglieder werden aus dem geprüften Snapshot unverändert übergeben (`originalChain`: direktes Original = getrackte Instanz mit der von der Vorgabe getragenen Revision, Vorfahren = AsNoTracking-Journal-Einträge desselben Snapshot); der Repository belegt die Concurrency-Token mit genau diesen Snapshot-Revisionen (`OriginalValue`) und liest keine aktuelleren Werte als Basis. Parallele Commit → UPDATE betrifft 0 Zeilen → `DbUpdateConcurrencyException` → vollständiger Rollback. `RefundService` übergeben die ein-elementige Kette `[original]`.
   > - Neu: `Step6ReviewR3Tests` (3 Tests, echte SQLite): Korrektur der Wurzel nach dem Snapshot (finanziell inkonsistent, abgelehnt, Saldo intakt), neues direktes Storno der Wurzel nach dem Snapshot (abgelehnt, exakt ein wirksames Storno), positive Kontrolle (Snapshot-Kette committet, Kette +1). **Verifikation: die beiden Konflikt-Tests schlagen auf dem Stand vor R3 fehl (Storno committierte ohne Ausnahme) und bestehen auf dem korrigierten Stand.**
   > - **Status: 343/343 Tests (197 Domain, 146 Infrastructure), 0 Build-Warnungen.**
+  > **Merge (15. Okt. 2026):** Nutzer hat PR #8 gemerged (Merge-Commit `140446d` auf `main`). Schritt 6 abgenommen; kein offener Rest — die unter „Bewusst zurückgestellt" genannten Punkte gehören zu den Folgeschritten 7–18.
 
 ## Bewusst zurückgestellt (nicht in Schritt 6)
 
