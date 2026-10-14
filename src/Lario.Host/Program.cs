@@ -1,6 +1,7 @@
 using System.Net;
 using System.Reflection;
 using Lario.Application.Journal;
+using Lario.Host.Api;
 using Lario.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
@@ -60,6 +61,18 @@ var dataPaths = LarioDataPaths.Resolve(builder.Configuration["Lario:DataDirector
 // Anwendungsfälle. Die produktive REST-API folgt in Schritt 7.
 builder.Services.AddLarioData($"Data Source={dataPaths.DatabaseFilePath}");
 
+// Lokale Authentifizierung (Schritt 7, Design D1/D2): ein lokaler
+// Benutzer, Bearer-Token für /api/v1. Sind Username/Password
+// konfiguriert, gelten sie; andernfalls erzeugt der Host beim ersten
+// Start credentials.json im Datenverzeichnis und zeigt das Passwort
+// einmalig auf der Konsole an (Design D2).
+var authTokenValidityMinutes = Math.Max(1, builder.Configuration.GetValue("Lario:Auth:TokenValidityMinutes", 720));
+builder.Services.AddSingleton(new AuthTokenStore(TimeSpan.FromMinutes(authTokenValidityMinutes)));
+builder.Services.AddSingleton(new AuthService(
+    builder.Configuration.GetValue<string>("Lario:Auth:Username"),
+    builder.Configuration.GetValue<string>("Lario:Auth:Password"),
+    dataPaths.Root));
+
 var app = builder.Build();
 
 // Erste Migration (und spätere) anwenden; ist ohne offene Migration ein No-op.
@@ -81,6 +94,15 @@ using (var scope = app.Services.CreateScope())
             " Siehe docs/step-5/ — die Datenbasis war vor der Positionsverwaltung angelegt.");
     }
 }
+
+// Fehlerformat + Bearer-Authentifizierung für die API (Schritt 7,
+// Design §2.3/D1). Statische Dateien und das SPA-Fallback bleiben
+// unberührt (die Prüfung greift nur auf /api/v1 außer /auth/login).
+app.UseMiddleware<ApiExceptionMiddleware>();
+app.UseApiAuth();
+
+// Authentifizierungs-Endpunkte (Design D1).
+app.MapAuth();
 
 var assembly = Assembly.GetExecutingAssembly();
 var version = assembly.GetName().Version?.ToString(3) ?? "0.0.0";
@@ -108,6 +130,12 @@ if (Directory.Exists(Path.Combine(AppContext.BaseDirectory, "wwwroot")))
 }
 
 app.Run();
+
+/// <summary>
+/// Öffentliche Teilklasse, damit WebApplicationFactory&lt;Program&gt; in den
+/// API-Tests (tests/Lario.Api.Tests) den Host starten kann.
+/// </summary>
+public partial class Program { }
 
 /// <summary>Antwort von /api/health.</summary>
 public sealed record HealthResponse(string Status, string DataDirectory);

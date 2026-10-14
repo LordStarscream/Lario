@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    API-Tests (Schritt 7): WebApplicationFactory-Tests gegen den echten
+    Host (Kestrel-Server wird durch den In-Memory-Testserver ersetzt).
+    Microsoft.AspNetCore.Mvc.Testing 10.0.12 = gleicher .NET-10-Patchstand
+    wie die übrigen Framework-Pakete (Registry-Nachweis Schritt 1).
+  -->
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Lario.Host\Lario.Host.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>
