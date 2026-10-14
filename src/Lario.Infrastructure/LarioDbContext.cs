@@ -39,6 +39,8 @@ public class LarioDbContext : DbContext
     public DbSet<PoolAllocation> TransferPurposes => Set<PoolAllocation>();
     public DbSet<AccountAllocation> ReassignmentAccounts => Set<AccountAllocation>();
     public DbSet<SettlementPosition> SettlementPositions => Set<SettlementPosition>();
+    public DbSet<ReversalDeltaRow> ReversalDeltas => Set<ReversalDeltaRow>();
+    public DbSet<BookingCorrection> BookingCorrections => Set<BookingCorrection>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -129,6 +131,17 @@ public class LarioDbContext : DbContext
             // Original-Eingabeinhalts, für die Idempotenz der
             // Wiederholung gebraucht (Schritt-5-Review P2b).
             e.Property(x => x.AllocationExplicit);
+            // Storno-Referenz (nur Reversal): stabile Id des Originals —
+            // bewusst einfache Referenz ohne FK-Relation; die Existenz des
+            // Originals prüft der Anwendungsfall (Design Schritt 6 §2.2).
+            e.Property(x => x.ReversesBookingId).HasMaxLength(128);
+            // Erstattungs-Referenz (nur Refund): stabile Id der
+            // Ursprungs-Ausgabe (ebenfalls Referenz ohne FK).
+            e.Property(x => x.RefundsExpenseId).HasMaxLength(128);
+            // Die negierten Deltas liegen als eigene Zeilen in
+            // ReversalDeltas; die Domain-Liste (record) mappen weder EF
+            // noch das Modell — das Repository hält sie synchron.
+            e.Ignore(x => x.ReversalDeltas);
         });
 
         modelBuilder.Entity<AccountPosting>(e =>
@@ -304,6 +317,46 @@ public class LarioDbContext : DbContext
                 .HasForeignKey<TaxMarking>(new[] { "BookingId", "SplitId" })
                 .IsRequired(false)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Negierte Deltas eines Stornos (Design Schritt 6 §2.2): die
+        // explizit gespeicherte Gegenbewegung zum Original — im Replay
+        // kein Cross-Booking-Lookup. Primärschlüssel (Buchung, Konto,
+        // Pool): ein Storno fasst dieselbe Zelle nicht doppelt auf
+        // (Invariante auch in der Domain).
+        modelBuilder.Entity<ReversalDeltaRow>(e =>
+        {
+            e.ToTable("ReversalDeltas");
+            e.HasKey(x => new { x.BookingId, x.AccountId, x.PoolId });
+            e.Property(x => x.BookingId).HasMaxLength(128);
+            e.Property(x => x.AccountId).HasMaxLength(128);
+            e.Property(x => x.PoolId).HasMaxLength(128);
+            e.Property(x => x.Amount).IsRequired();
+            e.HasOne<Booking>()
+                .WithMany()
+                .HasForeignKey(x => x.BookingId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Korrektur-Historie (Design Schritt 6 §2.4/§2.5): Vorher/
+        // Nachher-Snapshot je In-place-Änderung; OperationId ist der
+        // Idempotenzschlüssel (Rechenvertrag §5.5). Solange Einträge die
+        // Buchung referenzieren, bleibt sie unverzichtbar (Restrict).
+        modelBuilder.Entity<BookingCorrection>(e =>
+        {
+            e.ToTable("BookingCorrections");
+            e.HasKey(x => x.OperationId);
+            e.Property(x => x.OperationId).HasMaxLength(128);
+            e.Property(x => x.BookingId).HasMaxLength(128);
+            // JSON-Snapshots: TEXT ohne Max-Length.
+            e.Property(x => x.OldSnapshot).IsRequired();
+            e.Property(x => x.NewSnapshot).IsRequired();
+            e.Property(x => x.Note).HasMaxLength(4000);
+            e.Property(x => x.CreatedAtUtc).IsRequired();
+            e.HasOne<Booking>()
+                .WithMany()
+                .HasForeignKey(x => x.BookingId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

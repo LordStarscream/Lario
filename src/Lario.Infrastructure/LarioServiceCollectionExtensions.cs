@@ -33,6 +33,11 @@ public static class LarioServiceCollectionExtensions
         services.AddScoped<TransferService>();
         services.AddScoped<ReassignmentService>();
         services.AddScoped<TransferReassignmentService>();
+        // Schritt 6: Korrekturen, Storno, Erstattungen, Kontostandskorrekturen.
+        services.AddScoped<ReversalService>();
+        services.AddScoped<CorrectionService>();
+        services.AddScoped<RefundService>();
+        services.AddScoped<BalanceCorrectionService>();
         services.AddScoped<BalanceQueryService>();
         services.AddScoped<SettlementQueryService>();
         // Upgrade-Backfill (Schritt-5-Review P2d): führt beim Host-Start
