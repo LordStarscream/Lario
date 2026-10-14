@@ -233,7 +233,7 @@ public class Step6ReviewR2Tests
         var loser = new ReversalSpec(
             "bk-r2d-st-loser", "bk-r2d", ExpectedBaseRevision: 3, new DateOnly(2026, 11, 28));
         var conflict = await Assert.ThrowsAsync<DomainConflictException>(() =>
-            repoA.AddWithOriginalRevisionAsync(loser.ToBooking(staleA!), staleA, []));
+            repoA.AddWithOriginalRevisionAsync(loser.ToBooking(staleA!), [staleA], []));
 
         Assert.Equal(3, conflict.ExpectedBaseRevision);
         Assert.Equal(4, conflict.ActualBaseRevision);

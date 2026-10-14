@@ -119,7 +119,7 @@ public class Step6ReviewR1Tests
         var loser = new ReversalSpec(
             "bk-c2-st-loser", "bk-c2", ExpectedBaseRevision: 1, new DateOnly(2026, 11, 25));
         var conflict = await Assert.ThrowsAsync<DomainConflictException>(() =>
-            repoA.AddWithOriginalRevisionAsync(loser.ToBooking(staleA!), staleA, []));
+            repoA.AddWithOriginalRevisionAsync(loser.ToBooking(staleA!), [staleA], []));
 
         Assert.Equal(1, conflict.ExpectedBaseRevision);
         Assert.Equal(2, conflict.ActualBaseRevision);
@@ -177,7 +177,7 @@ public class Step6ReviewR1Tests
             [new RefundLineSpec(Step5Scenario.Flex, new Money(6_000))],
             "Parallele Erstattung");
         var conflict = await Assert.ThrowsAsync<DomainConflictException>(() =>
-            repoA.AddWithOriginalRevisionAsync(loser.ToBooking(staleA!), staleA, []));
+            repoA.AddWithOriginalRevisionAsync(loser.ToBooking(staleA!), [staleA], []));
 
         Assert.Equal(1, conflict.ExpectedBaseRevision);
         Assert.Equal(2, conflict.ActualBaseRevision);

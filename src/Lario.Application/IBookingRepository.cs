@@ -40,18 +40,31 @@ public interface IBookingRepository
 
     /// <summary>
     /// Fügt eine neue Buchung zusammen mit ihren Ausgleichseffekten UND
-    /// der Revisionserhöhung einer verknüpften Original-Buchung in einer
+    /// der Revisionserhöhung der verknüpften Original-Kette in einer
     /// einzigen Transaktion hinzu (Design Schritt 6 §2.5/§3.2: der
-    /// Erfolgsfall eines Stornos ist „Reversal-Buchung + Original-
-    /// Revision++" atomar). <paramref name="original"/> ist die bereits
-    /// geladene Original-Buchung; ihre <c>BaseRevision</c> wird in derselben
-    /// Transaktion um 1 erhöht. Ohne die gemeinsame Transaktion wäre das
-    /// Revisionskonflikt-Schutz (z. B. Doppelstorno gegen veraltete
-    /// Erwartungsrevision) lückenhaft.
+    /// Erfolgsfall eines Stornos ist „Reversal-Buchung + Ketten-
+    /// Revision++" atomar). <paramref name="originalChain"/> enthält
+    /// zuerst das direkte Original und dann seine Vorfahren bis zur
+    /// Wurzel (Storno des Stornos, …); jedes Kettenglied erhält in
+    /// derselben Transaktion eine Revisionserhöhung mit eigenem
+    /// Concurrency-Token (Review R2 B2).
     /// </summary>
+    /// <remarks>
+    /// Review R3 P1: Die <c>BaseRevision</c> jedes Kettenglieds ist die
+    /// Revision des Lesezustands, gegen den der Anwendungsfall seine
+    /// Prüfungen gelaufen hat (direktes Original: die Instanz mit der
+    /// von der Vorgabe getragenen Revision; Vorfahren: die Einträge des
+    /// geprüften Journals). Der Repository übernimmt diese Revisionen
+    /// unverändert als Optimistic-Concurrency-Basis und liest keine
+    /// aktuelleren Werte nach — eine parallele Commit zwischen Prüfung
+    /// und Schreiben (z. B. Korrektur des Wurzeloriginals oder neues
+    /// direktes Storno) verschiebt eine Revision und führt zum
+    /// Revisionskonflikt samt vollständigem Rollback, statt dass das
+    /// geprüfte Ergebnis auf veraltetem Stand committet würde.
+    /// </remarks>
     Task<Booking> AddWithOriginalRevisionAsync(
         Booking booking,
-        Booking original,
+        IReadOnlyList<Booking> originalChain,
         IReadOnlyCollection<SettlementPosition> settlements,
         CancellationToken cancellationToken = default);
 

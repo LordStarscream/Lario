@@ -169,12 +169,38 @@ public sealed class ReversalService(
             bookings, booking, persistedPositions,
             () => $"set-{Guid.NewGuid():N}");
 
+        // Review R3 P1: Die erwarteten Revisionen aller geprüften
+        // Kettenglieder werden unverändert aus dem geprüften Snapshot an
+        // den Repository übergeben — das direkte Original ist die
+        // getrackte Instanz, deren Revision die Vorgabe getragen hat; die
+        // Vorfahren sind die (AsNoTracking) Journal-Einträge aus demselben
+        // Snapshot, den die Kettenprüfung verwendet hat. Der Repository
+        // CAS gegen genau diese Revisionen und liest keine aktuelleren
+        // Werte nach: eine parallele Commit zwischen Prüfung und Schreiben
+        // (Korrektur des Wurzeloriginals, neues direktes Storno der Wurzel)
+        // führt so zum Revisionskonflikt samt Rollback, statt dass das
+        // geprüfte Ergebnis auf veraltetem Stand committet würde.
+        var byId = bookings.ToDictionary(b => b.Id);
+        var originalChain = new List<Booking> { original };
+        var current = original;
+        while (current.Type == BookingType.Reversal && current.ReversesBookingId is { } parentId)
+        {
+            if (!byId.TryGetValue(parentId, out var parent))
+            {
+                throw new InvalidReferenceException(
+                    $"Storno '{spec.Id}': die Storno-Kette ist unterbrochen — das Original " +
+                    $"'{current.Id}' verweist auf die unbekannte Buchung '{parentId}'.");
+            }
+
+            originalChain.Add(parent);
+            current = parent;
+        }
+
         // Atomar: Reversal-Buchung + Ketten-Revision (eine Transaktion —
-        // das Original und, wenn es selbst ein Storno ist, die gesamte
-        // Kette bis zum Wurzeloriginal, jedes mit eigenem Concurrency-
-        // Token; Review R2 B2).
+        // alle Kettenglieder mit den Snapshot-Revisionen als
+        // Concurrency-Basis; Review R2 B2 / R3 P1).
         var stored = await bookingRepository.AddWithOriginalRevisionAsync(
-            booking, original, changes.Select(c => c.Row).ToList(), cancellationToken);
+            booking, originalChain, changes.Select(c => c.Row).ToList(), cancellationToken);
         return new Result(true, stored);
     }
 

@@ -137,8 +137,12 @@ public sealed class RefundService(
         // parallele Erstattungen unter dem Deckel beide commiten
         // (Review R1 P1) — die Verliererin wird vollständig
         // zurückgerollt (keine halbe Buchung, Deckel bleibt gewahrt).
+        // Das Original ist immer eine Ausgabe (kein Storno) — die Kette
+        // besteht aus der getrackten Instanz, deren Revision die Deckel-
+        // prüfung verwendet hat; der Repository CAS gegen genau diese
+        // Snapshot-Revision (Review R3 P1).
         var stored = await bookingRepository.AddWithOriginalRevisionAsync(
-            booking, original, changes.Select(c => c.Row).ToList(), cancellationToken);
+            booking, [original], changes.Select(c => c.Row).ToList(), cancellationToken);
         return new Result(true, stored);
     }
 

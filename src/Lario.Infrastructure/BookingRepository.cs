@@ -85,26 +85,66 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Review R1 (P1) / R2 (B2) / R3 (P1): Die Revisionserhöhung der
+    /// gesamten Original-Kette und die Einfügung der Buchung laufen in
+    /// derselben Transaktion. Die Concurrency-Token der Kettenglieder
+    /// werden mit den übergebenen Snapshot-Revisionen belegt; EF Core
+    /// erzeugt daraus je ein WHERE BaseRevision = … — eine parallele
+    /// Commit verschiebt eine Revision, das UPDATE betrifft 0 Zeilen,
+    /// und der gesamte Transaktionsstand (Buchung + Kette +
+    /// Ausgleichspositionen) wird zurückgerollt. Eine Buchung auf Basis
+    /// eines veralteten Lesezustands (Doppelstorno, parallele Korrektur,
+    /// neues direktes Storno) kann so nicht mehr committen.
+    /// </summary>
     public async Task<Booking> AddWithOriginalRevisionAsync(
         Booking booking,
-        Booking original,
+        IReadOnlyList<Booking> originalChain,
         IReadOnlyCollection<SettlementPosition> settlements,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(original);
+        ArgumentNullException.ThrowIfNull(originalChain);
         ArgumentNullException.ThrowIfNull(settlements);
 
-        if (string.IsNullOrWhiteSpace(original.Id))
+        if (originalChain.Count == 0)
         {
             throw new InvalidOperationException(
-                "Revisionserhöhung ohne Original-Id — das verknüpfte Original fehlt.");
+                "AddWithOriginalRevisionAsync erfordert mindestens ein Kettenglied " +
+                "(das direkte Original).");
         }
 
-        if (booking.Id == original.Id)
+        // Review R3 P1: Die Concurrency-Basis sind die Revisionen der
+        // übergebenen Kettenglieder aus dem geprüften Snapshot — nicht
+        // neu gelesene aktuelle Werte. Zwischen der Prüfung im
+        // Anwendungsfall und diesem Schreiben kann eine parallele
+        // Commit eine Kettenglieder-Revision verschieben (Korrektur der
+        // Wurzel, neues direktes Storno der Wurzel). Würde der Repository
+        // die aktuellen Werte als Basis übernehmen, würde das geprüfte
+        // Ergebnis auf veraltetem Stand committen; gegen die
+        // Snapshot-Revision schlägt das UPDATE fehl und der vollständige
+        // Rollback macht Prüfung und Schreiben atomar.
+        var expectedRevisions = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var link in originalChain)
         {
-            throw new InvalidOperationException(
-                $"Die neue Buchung '{booking.Id}' darf nicht mit dem Original " +
-                "identisch sein — Storno und Original sind zwei Buchungen.");
+            if (string.IsNullOrWhiteSpace(link.Id))
+            {
+                throw new InvalidOperationException(
+                    "AddWithOriginalRevisionAsync: Kettenglied ohne Id.");
+            }
+
+            if (link.Id == booking.Id)
+            {
+                throw new InvalidOperationException(
+                    $"AddWithOriginalRevisionAsync: Die neue Buchung '{booking.Id}' " +
+                    "darf nicht Teil ihrer eigenen Original-Kette sein.");
+            }
+
+            if (!expectedRevisions.TryAdd(link.Id, link.BaseRevision))
+            {
+                throw new InvalidOperationException(
+                    $"AddWithOriginalRevisionAsync: Kettenglied '{link.Id}' kommt " +
+                    "mehrfach vor — die Original-Kette muss linear sein.");
+            }
         }
 
         var exists = await db.Bookings.AnyAsync(b => b.Id == booking.Id, cancellationToken);
@@ -115,57 +155,29 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
                 "Die Idempotenzprüfung obliegt dem Anwendungsfall.");
         }
 
-        // Das Original wird in derselben Transaktion erhöht: über den
-        // Identitätsabgleich ist dies die vom Anwendungsfall geladene (und
-        // bereits revisiongeprüfte) Instanz — andernfalls die (neu
-        // geladene) Instanz aus dem Kontext.
-        var trackedOriginal = await db.Bookings
-            .FirstOrDefaultAsync(b => b.Id == original.Id, cancellationToken)
-            ?? throw new InvalidOperationException(
-                $"Das Original '{original.Id}' existiert nicht mehr — die Revisionserhöhung " +
-                "kann nicht erfolgen.");
-
-        // Der Storno wird erst wirksam, wenn das Original seine neue
-        // Revision trägt — beide Änderungen commiten gemeinsam (Design
-        // Schritt 6 §2.5/§3.2). Die Revision ist ein Concurrency-Token
-        // (Review R1 P1): commitet eine parallele Operation in der
-        // Zwischenzeit, schlägt das UPDATE fehl und der gesamte
-        // Vorgang (Buchung + Historie + Positionen) wird
-        // zurückgerollt — als Revisionskonflikt sichtbar.
-        // Review R2 P1 (B2): ein Storno verändert den wirksamen Status der
-        // gesamten Kette über seinem Original — ein Widerruf reaktiviert
-        // den Ast darüber. "Wirksamer Status + Revision" bilden daher ein
-        // konsistentes Aggregat: alle Kettenvorfahren (das Original und,
-        // wenn es selbst ein Storno ist, dessen Original, … bis zum
-        // Wurzeloriginal) werden in derselben Transaktion um 1 erhöht —
-        // jedes mit seinem eigenen Concurrency-Token. Jeder andere Kontext,
-        // der die Revision eines Kettenglieds vor diesem Commit gelesen
-        // hat, erhält beim eigenen Commit einen Revisionskonflikt und
-        // damit auch den veralteten wirksamen Status abgelehnt.
-        var chain = new List<Booking> { trackedOriginal };
-        for (var current = trackedOriginal;
-             current.Type == BookingType.Reversal && current.ReversesBookingId is { } parentId;)
+        // Review R2 (B2): Die Revisionserhöhung umfasst alle Kettenglieder
+        // — jedes mit seinem eigenen Concurrency-Token. Review R3 P1:
+        // Die Concurrency-Basis ist die Snapshot-Revision des
+        // Kettenglieds, nicht der neu gelesene aktuelle Wert.
+        var tracked = new List<Booking>(originalChain.Count);
+        foreach (var snapshot in originalChain)
         {
-            var parent = await db.Bookings
-                .FirstOrDefaultAsync(b => b.Id == parentId, cancellationToken)
+            var instance = await db.Bookings
+                .FirstOrDefaultAsync(b => b.Id == snapshot.Id, cancellationToken)
                 ?? throw new InvalidOperationException(
-                    $"Die Storno-Kette ist unterbrochen: '{current.Id}' verweist auf " +
-                    $"die unbekannte Buchung '{parentId}' — die Revisionserhöhung " +
-                    "kann nicht erfolgen.");
-            chain.Add(parent);
-            current = parent;
-        }
+                    $"AddWithOriginalRevisionAsync: Kettenglied '{snapshot.Id}' " +
+                    "existiert nicht — die Original-Kette ist unterbrochen.");
 
-        // Die erwarteten Revisionen aller Kettenglieder werden VOR der
-        // Mutation erfasst: wenn ein Kettenglied dieselbe Instanz wie die
-        // vom Anwendungsfall geladene Buchung ist, würde die Zuweisung
-        // BaseRevision mitverändern und der Konfliktbericht die
-        // inkorrekte (bereits erhöhte) Revision melden (Review R1 P1 /
-        // B2: zwei Kontexte, genau einer gewinnt).
-        var expectedRevisions = chain.ToDictionary(b => b.Id, b => b.BaseRevision);
-        foreach (var ancestor in chain)
-        {
-            ancestor.BaseRevision = expectedRevisions[ancestor.Id] + 1;
+            // Concurrency-Token: OriginalValue auf die Snapshot-Revision
+            // setzen (Review R3 P1). EF Core erzeugt daraus das
+            // WHERE BaseRevision = … des UPDATE. Ein zwischenzeitlich
+            // verschiebendes paralleles Commit betrifft 0 Zeilen →
+            // DbUpdateConcurrencyException → vollständiger Rollback.
+            db.Entry(instance)
+                .Property(nameof(Booking.BaseRevision))
+                .OriginalValue = snapshot.BaseRevision;
+            instance.BaseRevision = snapshot.BaseRevision + 1;
+            tracked.Add(instance);
         }
 
         db.Bookings.Add(booking);
@@ -177,7 +189,7 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         }
         catch (DbUpdateConcurrencyException)
         {
-            throw await RevisionConflictAsync(chain, expectedRevisions, cancellationToken);
+            throw await RevisionConflictAsync(tracked, expectedRevisions, cancellationToken);
         }
 
         return await LoadFullAsync(booking.Id, cancellationToken);
