@@ -155,7 +155,9 @@ public sealed class BookingJournal
     /// <para>
     /// - <b>Zeilensumme je Account = Kontostand</b> abzüglich des nicht
     ///   zugeordneten Anfangsbestands-Rests des Kontos (der Rest liegt im
-    ///   Kontostand, trägt aber keine Zelle, Rechenvertrag §3.7).
+    ///   Kontostand, trägt aber keine Zelle, Rechenvertrag §3.7) und der
+    ///   Reste aus Kontostandskorrekturen (die nur den Kontostand
+    ///   korrigieren, ohne Zelle, Design Schritt 6 §2.6).
     /// - <b>Spaltensumme je Pool = Poolbestand.</b>
     /// </para>
     /// Leere Liste = konsistent; jede Verletzung ist eine Meldung mit den
@@ -185,12 +187,19 @@ public sealed class BookingJournal
             var rowSum = cells
                 .Where(c => c.Key.AccountId == account)
                 .Aggregate(Money.Zero, (sum, c) => sum.Add(c.Value));
-            var expected = AccountBalance(account).Subtract(UnallocatedRemainderOf(account));
+            // Nicht zugeteilter Rest des Kontos: nicht zugeordneter
+            // Anfangsbestands-Rest plus Rest aus Kontostandskorrekturen.
+            // Beide liegen im Kontostand, tragen aber keine Konto-Pool-Zelle.
+            var expected = AccountBalance(account)
+                .Subtract(UnallocatedRemainderOf(account))
+                .Subtract(BalanceCorrectionRemainderOf(account));
             if (rowSum != expected)
             {
                 violations.Add(
                     $"Zeilensumme Konto '{account}' ({rowSum.ToEuro():0.00} €) ≠ Kontostand " +
-                    $"abzüglich nicht zugeordnetem Anfangsbestands-Rest ({expected.ToEuro():0.00} €).");
+                    $"abzüglich nicht zugeordnetem Rest — Anfangsbestand " +
+                    $"({UnallocatedRemainderOf(account).ToEuro():0.00} €) und " +
+                    $"Kontostandskorrekturen ({BalanceCorrectionRemainderOf(account).ToEuro():0.00} €).");
             }
         }
 
@@ -378,6 +387,21 @@ public sealed class BookingJournal
         UnallocatedOpeningRemainders()
             .Where(r => r.AccountId == accountId)
             .Aggregate(Money.Zero, (sum, r) => sum.Add(r.Amount));
+
+    /// <summary>
+    /// Rest aus Kontostandskorrekturen des Kontos (Schritt 6 §2.6): die
+    /// Kontostandskorrektur trägt genau ein Konto-Posting und KEIN
+    /// Pool-Posting — der korrigierte Betrag liegt im Kontostand, trägt
+    /// aber keine Konto-Pool-Zelle. Wie der nicht zugeordnete
+    /// Anfangsbestands-Rest ist er Teil des „nicht zugeteilten" Rests, der
+    /// die Zeilensummen-Invariante ausgleicht.
+    /// </summary>
+    private Money BalanceCorrectionRemainderOf(string accountId) =>
+        _bookings
+            .Where(b => b.Type == BookingType.BalanceCorrection)
+            .SelectMany(b => b.AccountPostings)
+            .Where(p => p.AccountId == accountId)
+            .Aggregate(Money.Zero, (sum, p) => sum.Add(p.Amount));
 
     private sealed class AllocationCellKeyComparer : IEqualityComparer<(string AccountId, string PoolId)>
     {
