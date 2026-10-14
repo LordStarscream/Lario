@@ -63,6 +63,7 @@ Vollständiges Design-Paket: `.tasks/step-6-design-paket.md` (Status: final). Ke
 - [x] T6: Build + Gesamtttest grün (0 neue Warnungen), Doku-Auslieferung, Abnahmedoku `docs/step-6/`
   > 15. Okt. 2026: Build 0 Fehler / 0 Warnungen; 326/326 Tests grün (197 Domain, 129 Infrastructure). Abnahmedoku `docs/step-6/step6-korrekturen-erstattungen.md` (Abnahmekriterien A1–A4 + B1–B6, Umsetzungstabelle, Dateien, Build & Tests). Vor-Commit-Review des Diffs: keine unbeabsichtigten Änderungen (verifiziert: `SettlementPositionSync`/`BookingJournal`-Änderungen entsprechen Design §3.2/§3.3; `DomainConflictException`-Erweiterung = T1-Punkt (3); DI-Registrierung der vier Services).
 - [ ] T7: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR
+  > 15. Okt. 2026: 6 Commits auf `step/6-korrekturen-erstattungen` (smoke-Test-Nachtrag, domain, application, infrastructure, test, docs+tasks), gepusht, **PR #8** angelegt. Externes Review ausstehend — Übergabe: `docs/step-6/step6-korrekturen-erstattungen.md` (Abnahmedoku) + PR-Beschreibung; Prüfpunkte für das Review: (1) Sync-Verallgemeinerung (neue `Plan`-Überladung in-place, R6-Struktur unverändert), (2) Storno-Replay über explizite `ReversalDeltas`, (3) Invarianten-Änderung `BookingJournal` (Abgleichs-Rest als nicht zugeteilter Rest), (4) Idempotenz-Reihenfolge (zuerst Idempotenz, dann Revision), (5) Deckelungslogik `RefundService`.
 
 ## Bewusst zurückgestellt (nicht in Schritt 6)
 
