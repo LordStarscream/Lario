@@ -19,14 +19,40 @@
 
 ## Tasks
 
-- [ ] T1: API-Grundgerüst — Auth (Login/Logout/Token, credentials-Datei), Exception→HTTP-Mapping, Fehlerformat, `partial Program` + Test-Projekt `Lario.Api.Tests` (WebApplicationFactory, echte SQLite), OpenAPI-Dokument `/openapi/v1.json`
-- [ ] T2: Stammdaten-Endpunkte (accounts/pools/categories/tax-categories: CRUD + tax-preset) mit DTOs + Integrationstests
-- [ ] T3: Journal-Read-Endpunkte (bookings list/detail, balances, settlements) mit DTOs (Namen, Tax, effectivelyReversed) + Integrationstests
+- [x] T1: API-Grundgerüst — Auth (Login/Logout/Token, credentials-Datei), Exception→HTTP-Mapping, Fehlerformat, `partial Program` + Test-Projekt `Lario.Api.Tests` (WebApplicationFactory, echte SQLite), OpenAPI-Dokument `/openapi/v1.json`
+- [x] T2: Stammdaten-Endpunkte (accounts/pools/categories/tax-categories: CRUD + tax-preset) mit DTOs + Integrationstests
+- [x] T3: Journal-Read-Endpunkte (bookings list/detail, balances, settlements) mit DTOs (Namen, Tax, effectivelyReversed) + Integrationstests
 - [ ] T4: Journal-Write-Endpunkte (expenses, income, opening-balances, transfers, reassignments, transfer-reassignments, corrections, reversals, refunds, balance-corrections) + DTOs + Integrationstests (Validierung, Idempotenz, 409, Referenzfälle A3)
 - [ ] T5: Persistenz-/Neustart-Tests (A4) + API-Referenzzfälle komplett (A3) + „keine Salden als Input" (A5)
 - [ ] T6: Frontend — Login/Token, Ausgabeformular, Liste, Anfangsbestände, Stammdaten-minimal, Korrektur/Storno/Erstattung-Aktionen, Fehleranzeige; API-Client neu generieren (A6/A7/A8)
 - [ ] T7: UI-Tests (vitest) + Build-/Lint-Verifikation (npm) + Abnahmedoku `docs/step-7/step7-api-desktop-eingabe.md` + README-Befehle
 - [ ] T8: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR
+
+## Status
+
+- **T1 erledigt** (15. Okt. 2026, Commit `d959a64`): Token-Auth (Login/Logout, 12 h, in-memory,
+  widerrufbar), credentials.json (PBKDF2-SHA256 100.000 Iterationen, 0600, einmalige
+  Konsolenanzeige), Fehlerformat + Exception-Mapping (400/409/500), ApiExceptionMiddleware,
+  `partial Program`, Test-Projekt `Lario.Api.Tests` (WebApplicationFactory, echte SQLite),
+  OpenAPI `/openapi/v1.json`. 19 Api-Tests grün.
+- **Wichtige Korrektur (15. Okt. 2026):** Eine frühere Session-Zusammenfassung behauptete,
+  T2–T6 seien erledigt (Controller, 7 Test-Dateien, signalr-Client, npm-Grün). Das war
+  **nicht wahr** — keine dieser Dateien/Änderungen existierte auf dem Branch (verifiziert per
+  `git status`, `git log`, Datei-Suche). Tatsächlicher Stand war nur T1 (uncommitted).
+  Ab hier gilt: nur disk-verifizierbare Arbeit wird als erledigt markiert.
+- **T2 erledigt** (15. Okt. 2026, Commit `fe8ef72`): `src/Lario.Host/Api/MasterData/` (CRUD-Endpunkte für
+  Konten/Pool/Kategorien/Steuerkategorien + Steuer-Voreinstellung, DTOs, Idempotente
+  Erstellung, Inactive → 400 invalid_reference) + 18 Integrationstests in
+  `MasterDataApiTests.cs` (CRUD-Lauf, Idempotenz, Name-Duplikat 400,
+  inaktive Referenz 400, ungültige Typen 400, OpenAPI-Vertrag).
+- **T3 erledigt** (15. Okt. 2026, Commit `fe8ef72`): `src/Lario.Host/Api/Journal/` (Buchungsliste mit
+  Filtern type/from/to/limit + (Datum, Id) absteigend, Buchungsdetail mit Posten/Splits/
+  Steuer/Finanzierungsmonat/Storno-Verknüpfung, Balances mit Kontoständen/Poolbeständen/
+  Lücke/ungeordneter Rest, Ausgleichspositionen gesamt/offen; keine Fachlogik, nur
+  DTO↔Domain-Mapping) + 14 Integrationstests in `JournalReadApiTests.cs` (Buchungen über
+  Application-Services über Host-DI in dieselbe SQLite-DB gesamt; Storno-Szenario prüft
+  effectivelyReversed + Verknüpfung + Poolbestände; Balances-Guthaben gegen
+  BalanceQueryService; Settlements offen → beglichen per Ausgleichs-Transfer).
 
 ## Notizen
 

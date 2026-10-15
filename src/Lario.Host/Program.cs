@@ -2,6 +2,8 @@ using System.Net;
 using System.Reflection;
 using Lario.Application.Journal;
 using Lario.Host.Api;
+using Lario.Host.Api.Journal;
+using Lario.Host.Api.MasterData;
 using Lario.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
@@ -103,6 +105,12 @@ app.UseApiAuth();
 
 // Authentifizierungs-Endpunkte (Design D1).
 app.MapAuth();
+
+// Stammdaten (Schritt 7, T2) — /api/v1/accounts|pools|categories|tax-categories.
+app.MapMasterData();
+
+// Journal-Leseendpunkte (Schritt 7, T3) — /api/v1/bookings|balances|settlements.
+app.MapJournalRead();
 
 var assembly = Assembly.GetExecutingAssembly();
 var version = assembly.GetName().Version?.ToString(3) ?? "0.0.0";
