@@ -71,13 +71,23 @@
   instabile API-Antworten (beobachteter Flaky: Detail-Ausgabe vertauschte die
   Pool-Posten). Fix: `BookingRepository.NormalizeOrder` (kanonische Id-Ordnung an
   den drei Lese-Pfaden, inkl. ReversalDeltas) + `MasterDataRepository.LoadCatalogAsync`
-  (Id-Ordnung, fließt u. a. in Balances ein). Test `Detail_Ausgabe_…` prüft jetzt
+  (Id-Ordnung, fließt u. a. in Balances ein) + `SettlementPositionRepository.GetAllAsync`
+  (Id-Order, Commit `55c8ed9`). Test `Detail_Ausgabe_…` prüft jetzt
   per Pool-Id statt Index. `tests/Lario.Api.Tests/AssemblyInfo.cs` deaktiviert
   xUnit-Parallelisierung (WebApplicationFactory-Konkurrenz machte den Lauf
   instabil; serialisiert ist er deterministisch).
 
 ## Notizen
 
+- **Umgebung (15. Okt. 2026):** `.NET`-Befehle immer mit `/home/mario/.dotnet/dotnet` ausführen —
+  das System-dotnet (`/usr/bin/dotnet` → `/usr/share/dotnet`) hat KEINE
+  `Microsoft.AspNetCore.App`-Runtime (nur NETCore.App) und ignoriert
+  `DOTNET_ROOT`; `/home/mario/.dotnet` hat die volle 10.0.12-Installation
+  (beide Runtimes). Folge: `dotnet test` auf Solution-Ebene schlägt beim
+  Api.Tests-TestHost fehl ("No frameworks were found"), obwohl alle Tests
+  grün sind; pro Projekt gestartet (`dotnet test tests/<P>`) läuft alles
+  deterministisch grün (197/146/64 = 407). `dotnet build-server shutdown`
+  hilft nicht.
 - Geld: JSON-`long` (Cent), Client validiert sichere Ganzzahl (D6).
 - UI-Scope laut D5: Ausgabe + Liste + Anfangsbestände + Stammdaten-minimal + Korrekturaktionen; Einnahme/Transfer/Umwidmung/Kontostandskorrektur nur API+Tests.
 - Auth-Details: D1/D2 (Token 12 h in-memory; auto-erzeugtes Passwort → `credentials.json` 0600, einmalige Konsolenanzeige; Konfiguration hat Vorrang).
