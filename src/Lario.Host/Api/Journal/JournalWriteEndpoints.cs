@@ -118,7 +118,7 @@ public static class JournalWriteEndpoints
             TotalAmount = new Money(command.TotalAmount),
             AccountId = command.AccountId,
             Note = command.Note,
-            Splits = command.Splits.Select(MapSplitSpec).ToList(),
+            Splits = RequiredList(command.Splits, "splits").Select(MapSplitSpec).ToList(),
             ExpectedBaseRevision = command.ExpectedBaseRevision
         };
 
@@ -141,7 +141,7 @@ public static class JournalWriteEndpoints
             AccountId = command.AccountId,
             Note = command.Note,
             FundingMonth = ParseYearMonth(command.FundingMonth, "fundingMonth"),
-            Allocations = command.Allocations
+            Allocations = RequiredList(command.Allocations, "allocations")
                 .Select(a => new IncomeAllocationSpec(a.PoolId, new Money(a.Amount)))
                 .ToList(),
             ExpectedBaseRevision = command.ExpectedBaseRevision
@@ -163,7 +163,7 @@ public static class JournalWriteEndpoints
             ParseDate(command.Date, "date"),
             command.AccountId,
             new Money(command.Total),
-            command.Distribution
+            RequiredList(command.Distribution, "distribution")
                 .Select(d => new PoolAllocation(d.PoolId, new Money(d.Amount)))
                 .ToList(),
             command.Note);
@@ -188,11 +188,9 @@ public static class JournalWriteEndpoints
             FromAccountId = command.FromAccountId,
             ToAccountId = command.ToAccountId,
             Amount = new Money(command.Amount),
-            Purposes = command.Purposes is null
-                ? null
-                : command.Purposes
-                    .Select(p => new PoolAllocation(p.PoolId, new Money(p.Amount)))
-                    .ToList(),
+            Purposes = OptionalList(command.Purposes, "purposes") is { } purposes
+                ? purposes.Select(p => new PoolAllocation(p.PoolId, new Money(p.Amount))).ToList()
+                : null,
             RelatedSettlementId = command.RelatedSettlementId,
             Note = command.Note
         };
@@ -215,11 +213,9 @@ public static class JournalWriteEndpoints
             FromPoolId = command.FromPoolId,
             ToPoolId = command.ToPoolId,
             Amount = new Money(command.Amount),
-            Accounts = command.Accounts is null
-                ? null
-                : command.Accounts
-                    .Select(a => new AccountAllocation(a.AccountId, new Money(a.Amount)))
-                    .ToList(),
+            Accounts = OptionalList(command.Accounts, "accounts") is { } accounts
+                ? accounts.Select(a => new AccountAllocation(a.AccountId, new Money(a.Amount))).ToList()
+                : null,
             Note = command.Note
         };
 
@@ -268,12 +264,14 @@ public static class JournalWriteEndpoints
             command.Note,
             command.AccountId,
             command.TotalAmount is null ? null : new Money(command.TotalAmount.Value),
-            command.Splits is null ? null : command.Splits.Select(MapSplitSpec).ToList(),
-            command.Allocations is null
-                ? null
-                : command.Allocations
+            OptionalList(command.Splits, "splits") is { } splits
+                ? splits.Select(MapSplitSpec).ToList()
+                : null,
+            OptionalList(command.Allocations, "allocations") is { } allocations
+                ? allocations
                     .Select(a => new IncomeAllocationSpec(a.PoolId, new Money(a.Amount)))
-                    .ToList());
+                    .ToList()
+                : null);
 
         var result = await service.CorrectAsync(spec, cancellationToken);
         return await CreatedAsync(result.Created, result.Booking, bookings, masterData, cancellationToken);
@@ -311,7 +309,7 @@ public static class JournalWriteEndpoints
             id,
             command.AccountId,
             ParseDate(command.Date, "date"),
-            command.Lines
+            RequiredList(command.Lines, "lines")
                 .Select(l => new RefundLineSpec(l.PoolId, new Money(l.Amount)))
                 .ToList(),
             command.Note);
@@ -368,6 +366,54 @@ public static class JournalWriteEndpoints
     }
 
     // ---------- Transport-Formate ----------
+
+    /// <summary>
+    /// Pflichtliste (JSON): fehlt das Feld oder ist es <c>null</c>, ist
+    /// das ein Schemafehler → 400 <c>validation_error</c>. Auch
+    /// Nichtnull-Annotationen erzwingen beim Deserialisieren weder
+    /// Anwesenheit noch null-freie Elemente (System.Text.Json), daher die
+    /// zentrale Prüfung vor dem Command→Spec-Mapping (Review R1 P2).
+    /// </summary>
+    private static IReadOnlyList<T> RequiredList<T>(IReadOnlyList<T>? list, string field)
+        where T : class
+    {
+        if (list is null)
+        {
+            throw new LarioDomainException(
+                $"Das Feld '{field}' ist erforderlich und muss eine Liste enthalten " +
+                "(Feld fehlt oder ist null). Leere Liste nur, wenn die Fachregel sie " +
+                "zulässt — sonst meldet die Domain den fachlichen Fehler.");
+        }
+
+        return CheckNoNullElements(list, field);
+    }
+
+    /// <summary>
+    /// Optionale Liste (JSON): <c>null</c>/fehlend = „keine" (definierte
+    /// Null-Semantik der Domain); null-Elemente sind ein Schemafehler →
+    /// 400 <c>validation_error</c> (Review R1 P2).
+    /// </summary>
+    private static IReadOnlyList<T>? OptionalList<T>(IReadOnlyList<T>? list, string field)
+        where T : class
+    {
+        return list is null ? null : CheckNoNullElements(list, field);
+    }
+
+    private static IReadOnlyList<T> CheckNoNullElements<T>(IReadOnlyList<T> list, string field)
+        where T : class
+    {
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (list[i] is null)
+            {
+                throw new LarioDomainException(
+                    $"Das Feld '{field}' enthält an Position {i} ein null-Element — " +
+                    "Elemente der Liste müssen vollständige Objekte sein.");
+            }
+        }
+
+        return list;
+    }
 
     private static ExpenseSplitSpec MapSplitSpec(ExpenseSplitCommand s) => new()
     {

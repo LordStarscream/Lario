@@ -24,7 +24,7 @@ public static class AuthEndpoints
                 if (request is null || !auth.Verify(request.Username, request.Password))
                 {
                     return Results.Json(
-                        new ErrorResponse(new ApiError(
+                        new ErrorResponse(new ApiErrorBody(
                             "unauthorized",
                             "Benutzername oder Passwort ist falsch.")),
                         statusCode: StatusCodes.Status401Unauthorized);

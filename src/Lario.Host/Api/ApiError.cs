@@ -6,14 +6,14 @@ namespace Lario.Host.Api;
 /// Verbindliches API-Fehlerformat (Schritt 7, Design §2.3):
 /// <c>{ "error": { "code": "...", "message": "...", ... } }</c>.
 /// </summary>
-public sealed record ApiError(
+public sealed record ApiErrorBody(
     string Code,
     string Message,
     int? ExpectedBaseRevision = null,
     int? ActualBaseRevision = null);
 
 /// <summary>Antworthülle für alle API-Fehler.</summary>
-public sealed record ErrorResponse(ApiError Error);
+public sealed record ErrorResponse(ApiErrorBody Error);
 
 /// <summary>
 /// Mapping der Domänen-Exceptionen auf HTTP-Status und Fehlercode
@@ -31,7 +31,7 @@ public static class ApiExceptionMapping
             case DomainConflictException conflict:
                 return (
                     StatusCodes.Status409Conflict,
-                    new ErrorResponse(new ApiError(
+                    new ErrorResponse(new ApiErrorBody(
                         "domain_conflict",
                         conflict.Message,
                         conflict.ExpectedBaseRevision,
@@ -40,22 +40,22 @@ public static class ApiExceptionMapping
             case InvalidReferenceException reference:
                 return (
                     StatusCodes.Status400BadRequest,
-                    new ErrorResponse(new ApiError("invalid_reference", reference.Message)));
+                    new ErrorResponse(new ApiErrorBody("invalid_reference", reference.Message)));
 
             case CycleDetectedException cycle:
                 return (
                     StatusCodes.Status400BadRequest,
-                    new ErrorResponse(new ApiError("cycle_detected", cycle.Message)));
+                    new ErrorResponse(new ApiErrorBody("cycle_detected", cycle.Message)));
 
             case LarioDomainException domain:
                 return (
                     StatusCodes.Status400BadRequest,
-                    new ErrorResponse(new ApiError("validation_error", domain.Message)));
+                    new ErrorResponse(new ApiErrorBody("validation_error", domain.Message)));
 
             default:
                 return (
                     StatusCodes.Status500InternalServerError,
-                    new ErrorResponse(new ApiError(
+                    new ErrorResponse(new ApiErrorBody(
                         "internal_error",
                         "Ein interner Fehler ist auf dem Host aufgetreten.")));
         }

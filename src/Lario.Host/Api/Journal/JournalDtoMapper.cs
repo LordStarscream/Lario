@@ -22,7 +22,7 @@ public static class JournalDtoMapper
         booking.Type.ToString(),
         booking.Date.ToString("yyyy-MM-dd"),
         booking.Note,
-        ComputeTotal(booking),
+        ComputeTotal(booking, journal),
         PrimaryAccount(booking, catalog).Id,
         PrimaryAccount(booking, catalog).Name,
         booking.Splits
@@ -94,7 +94,7 @@ public static class JournalDtoMapper
             .Select(p => new AccountAllocationDto(
                 p.AccountId, catalog.FindAccount(p.AccountId)?.Name, p.Amount.Cents))
             .ToList(),
-        ComputeTotal(booking));
+        ComputeTotal(booking, journal));
 
     public static BalancesDto ToBalancesDto(
         BalanceQueryService.Balances balances,
@@ -139,10 +139,10 @@ public static class JournalDtoMapper
     /// Gesamtbetrag einer Buchung in Cent (Anzeigewert): Income,
     /// OpeningBalance, Refund = positiv; Expense = positiv (Ausgabe);
     /// Transfers/Umverteilungen = Betrag der negativen Ausgangsposition;
-    /// Storno = Summe aller (negierten) Posten, signiert;
+    /// Storno = Negation des Original-Anzeigetotals (s. <see cref="ReversalTotal"/>);
     /// Kontokorrektur = signiert.
     /// </summary>
-    public static long ComputeTotal(Booking b) => b.Type switch
+    public static long ComputeTotal(Booking b, BookingJournal journal) => b.Type switch
     {
         BookingType.Income => b.AccountPostings[0].Amount.Cents,
         BookingType.Expense => b.AccountPostings[0].Amount.Negate().Cents,
@@ -153,13 +153,39 @@ public static class JournalDtoMapper
             b.AccountPostings.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
         BookingType.Reassignment =>
             b.PoolPostings.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
-        BookingType.Reversal =>
-            b.AccountPostings.Sum(p => p.Amount.Cents)
-                + b.PoolPostings.Sum(p => p.Amount.Cents),
+        BookingType.Reversal => ReversalTotal(b, journal),
         BookingType.Refund => b.AccountPostings[0].Amount.Cents,
         BookingType.BalanceCorrection => b.AccountPostings[0].Amount.Cents,
         _ => throw new LarioDomainException($"Unbekannter Buchungstyp '{b.Type}'.")
     };
+
+    /// <summary>
+    /// Storno-Total (Review R1 P2): das Storno ist die exakte Negation
+    /// seines Originals — die Anzeigesumme ist die Negation des
+    /// Original-Anzeigetotals, aufgelöst über
+    /// <see cref="Booking.ReversesBookingId"/>. Damit ist die Konvention
+    /// eindeutig und typabhängig, und das Storno des Stornos (Widerruf)
+    /// ist wieder positiv. Konto- und Poolachse werden nicht mehr
+    /// separat aufaddiert (doppelte Zählung).
+    /// </summary>
+    private static long ReversalTotal(Booking reversal, BookingJournal journal)
+    {
+        if (reversal.ReversesBookingId is not { } originalId)
+        {
+            throw new LarioDomainException(
+                $"Storno '{reversal.Id}' verweist auf kein Original.");
+        }
+
+        var original = journal.Bookings.FirstOrDefault(b => b.Id == originalId);
+        if (original is null)
+        {
+            throw new LarioDomainException(
+                $"Storno '{reversal.Id}': Original '{originalId}' fehlt im Journal — " +
+                "Journalintegrität verletzt.");
+        }
+
+        return -ComputeTotal(original, journal);
+    }
 
     /// <summary>
     /// Haupt-Konto für die Liste: bei Einzel-Posten das Konto, bei
