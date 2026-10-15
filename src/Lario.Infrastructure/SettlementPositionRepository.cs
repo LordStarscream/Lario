@@ -26,8 +26,11 @@ public sealed class SettlementPositionRepository(LarioDbContext db) : ISettlemen
 
     public async Task<IReadOnlyList<SettlementPosition>> GetAllAsync(CancellationToken cancellationToken = default)
     {
+        // Schritt 7 T4: kanonische Id-Ordnung — SQLite liefert Reihenfolgen
+        // nicht garantiert (deterministische API-Antworten).
         return await db.SettlementPositions
             .AsNoTracking()
+            .OrderBy(p => p.Id)
             .ToListAsync(cancellationToken);
     }
 
