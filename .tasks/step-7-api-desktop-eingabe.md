@@ -97,6 +97,38 @@
   noch uncommitted im Working Tree und folgt als Folgecommits in diesem
   Branch. Abnahme (T7/T8) bleibt offen; Merge in `main` nur auf
   Nutzerfreigabe.
+- **Review R1 erledigt** (16. Okt. 2026, Commit `ad7d19e`, gepusht; PR #9
+  aktualisiert): Plan `.tasks/step-7-review-r1-plan.md` (3 Befunde: P1, P2,
+  P3; alle bestätigt, alle behoben).
+  - **P1 (P1):** `ApiAuth` prüfte den Pfad case-sensitiv (`Ordinal`), das
+    ASP.NET-Routing matcht Literaltexte aber case-insensitiv →
+    `/API/V1/...` umging die Authentifizierung. Fix: segmentbasiert
+    (`/api/v1` exakt oder Präfix `/api/v1/`), `OrdinalIgnoreCase` — kein
+    Präfix-Match, `/api/v1foo` bleibt außerhalb; Login-Ausnahme bleibt
+    case-insensitiv erreichbar.
+  - **P2 (P2):** fehlende/null-Listen und null-Elemente in
+    `splits`/`allocations`/`distribution`/`purposes`/`accounts`/`lines`
+    lieferten 500 (NRE in Domain-Prüfung). Fix: `RequiredList`-Validierung
+    in `JournalWriteEndpoints` → 400 `validation_error`, keine Buchung,
+    Revisionen unverbraucht.
+  - **P3 (P3):** Storno-Total war Summe aus Kontoachse (negiert) und
+    Poolachse (nicht negiert) → 85 € Ausgabe zeigte +17.000. Fix:
+    `ComputeTotal(booking, journal)` negiert das Gesamt-Posting, wenn alle
+    Kontoposten negiert sind (Storno-Regel; Verbund-Original bleibt
+    Summe), + `ReversalDeltas`; Konvention in Write-Antwort (Detail),
+    Detail- und Listen-Endpunkt. `ApiError` → `ApiErrorBody` (Konflikt mit
+    generiertem Client-DTO).
+  - **Regressionstests:** `tests/Lario.Api.Tests/Step7ReviewR1Tests.cs` —
+    17 Tests (P1: 4 Bypass-Fälle inkl. Login-Erreichbarkeit + /api/v1foo;
+    P2: 6 × {fehlt, null, Null-Element} mit „keine Buchung“ +
+    Revisions-Nachweis; P3: Storno von Ausgabe/Einnahme/Transfer/Umwidmung
+    = Negation, Widerruf positiv, Kontostandskorrektur nicht stornierbar
+    laut Schritt 6 §3.2). 426/426 Tests (197 Domain + 146 Infrastructure +
+    83 Api), 0 Build-Warnungen.
+  - **Wichtig für T6-Commit:** `ApiError` → `ApiErrorBody` ändert den
+    OpenAPI-Typnamen — `openapi.json` und der generierte Client müssen beim
+    T6-Commit neu generiert werden (der uncommittede Client im Working
+    Tree trägt noch den alten Namen).
 
 ## Notizen
 
