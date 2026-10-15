@@ -112,6 +112,9 @@ app.MapMasterData();
 // Journal-Leseendpunkte (Schritt 7, T3) — /api/v1/bookings|balances|settlements.
 app.MapJournalRead();
 
+// Journal-Schreibendpunkte (Schritt 7, T4).
+app.MapJournalWrite();
+
 var assembly = Assembly.GetExecutingAssembly();
 var version = assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 

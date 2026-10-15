@@ -30,6 +30,7 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         }
 
         await LoadReversalDeltasAsync([booking], cancellationToken);
+        NormalizeOrder(booking);
         return booking;
     }
 
@@ -46,6 +47,10 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
             .ToListAsync(cancellationToken);
 
         await LoadReversalDeltasAsync(bookings, cancellationToken);
+        foreach (var booking in bookings)
+        {
+            NormalizeOrder(booking);
+        }
         return bookings;
     }
 
@@ -397,7 +402,34 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         }
 
         await LoadReversalDeltasAsync([booking], cancellationToken);
+        NormalizeOrder(booking);
         return booking;
+    }
+
+    /// <summary>
+    /// Deterministische Reihenfolge der Kindkollektionen geladener
+    /// Buchungen. SQLite garantiert keine Zeilenreihenfolge bei
+    /// Sammlungsbeziehungen — ohne Normalisierung wären die Reihenfolge
+    /// der Postings/Teilposten und damit die API-Antworten instabil
+    /// (beobachteter Flaky: Detail-Ausgabe vertauschte die Pool-Posten).
+    /// Kanonische Ordnung: Postings nach Konto-/Pool-Id, Teilposten nach
+    /// Teilposten-Id, Verteilungszeilen nach Pool-/Konto-Id (Ordinal);
+    /// dieselbe Id-Sortierung nutzt die Idempotenzprüfung bereits
+    /// (RefundService). Die Fachsemantik ist reihenfolgenunabhängig
+    /// (Aggregation und Referenzsuche), die Normalisierung berührt keine
+    /// Invariante.
+    /// </summary>
+    private static void NormalizeOrder(Booking booking)
+    {
+        booking.AccountPostings.Sort((a, b) => string.CompareOrdinal(a.AccountId, b.AccountId));
+        booking.PoolPostings.Sort((a, b) => string.CompareOrdinal(a.PoolId, b.PoolId));
+        booking.Splits.Sort((a, b) => string.CompareOrdinal(a.Id, b.Id));
+        booking.TransferPurposes.Sort((a, b) => string.CompareOrdinal(a.PoolId, b.PoolId));
+        booking.ReassignmentAccounts.Sort((a, b) => string.CompareOrdinal(a.AccountId, b.AccountId));
+        booking.ReversalDeltas = booking.ReversalDeltas
+            .OrderBy(d => d.AccountId, StringComparer.Ordinal)
+            .ThenBy(d => d.PoolId, StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>

@@ -225,13 +225,15 @@ public class JournalReadApiTests : IDisposable
         Assert.Equal("Konto Eins", postings[0].GetProperty("accountName").GetString());
         Assert.Equal(-8_500, postings[0].GetProperty("amount").GetInt64());
 
-        // Pool-Posten: beide Pools werden verbraucht (negiert).
+        // Pool-Posten: beide Pools werden verbraucht (negiert). Kanonische
+        // API-Ordnung: sortiert nach Pool-Id (Repository-Normalisierung),
+        // daher per Pool-Id nachschlagen statt per Index.
         var poolPostings = detail.GetProperty("poolPostings").EnumerateArray().ToList();
         Assert.Equal(2, poolPostings.Count);
-        Assert.Equal(-6_500, poolPostings[0].GetProperty("amount").GetInt64());
-        Assert.Equal(flex, poolPostings[0].GetProperty("poolId").GetString());
-        Assert.Equal(-2_000, poolPostings[1].GetProperty("amount").GetInt64());
-        Assert.Equal(freizeit, poolPostings[1].GetProperty("poolId").GetString());
+        var flexPosting = poolPostings.Single(p => p.GetProperty("poolId").GetString() == flex);
+        Assert.Equal(-6_500, flexPosting.GetProperty("amount").GetInt64());
+        var freizeitPosting = poolPostings.Single(p => p.GetProperty("poolId").GetString() == freizeit);
+        Assert.Equal(-2_000, freizeitPosting.GetProperty("amount").GetInt64());
 
         // Splits: Beträge, Namen und die Steuerkennzeichnung mit Name.
         var splits = detail.GetProperty("splits").EnumerateArray().ToList();

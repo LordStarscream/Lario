@@ -18,7 +18,8 @@ namespace Lario.Host.Api.Journal;
 /// Ausgleichspositionen (Settlements) kommen aus den Application-
 /// Services; <c>effectivelyReversed</c> und die Kette-Informationen
 /// aus <c>BookingJournal</c>. Die Endpunkte mappen nur DTO ↔ Domain
-/// und leiten reine Anzeige-Werte (Gesamtbetrag pro Buchungsart) ab.
+/// (gemeinsamer <see cref="JournalDtoMapper"/>) und leiten reine
+/// Anzeige-Werte ab.
 ///
 /// Konventionen:
 /// * <c>GET /bookings</c>: Filter <c>type</c> (Enum-Name,
@@ -86,7 +87,7 @@ public static class JournalEndpoints
             .OrderByDescending(b => b.Date)
             .ThenByDescending(b => b.Id, StringComparer.Ordinal)
             .Take(effectiveLimit)
-            .Select(b => ToListItem(b, catalog, journal))
+            .Select(b => JournalDtoMapper.ToListItem(b, catalog, journal))
             .ToList();
 
         return Results.Ok(list);
@@ -104,7 +105,7 @@ public static class JournalEndpoints
 
         var catalog = await masterData.LoadCatalogAsync(cancellationToken);
         var journal = new BookingJournal(all);
-        return Results.Ok(ToDetail(booking, catalog, journal));
+        return Results.Ok(JournalDtoMapper.ToDetail(booking, catalog, journal));
     }
 
     // ---------- Kontostand ----------
@@ -116,7 +117,7 @@ public static class JournalEndpoints
     {
         var result = await balances.GetBalancesAsync(cancellationToken);
         var catalog = await masterData.LoadCatalogAsync(cancellationToken);
-        return Results.Ok(ToDto(result, catalog));
+        return Results.Ok(JournalDtoMapper.ToBalancesDto(result, catalog));
     }
 
     // ---------- Ausgleichspositionen ----------
@@ -126,7 +127,7 @@ public static class JournalEndpoints
         CancellationToken cancellationToken)
     {
         var views = await settlements.GetAllAsync(cancellationToken);
-        return Results.Ok(views.Select(ToDto).ToList());
+        return Results.Ok(views.Select(JournalDtoMapper.ToSettlementDto).ToList());
     }
 
     private static async Task<IResult> GetOpenSettlements(
@@ -134,175 +135,10 @@ public static class JournalEndpoints
         CancellationToken cancellationToken)
     {
         var views = await settlements.GetOpenAsync(cancellationToken);
-        return Results.Ok(views.Select(ToDto).ToList());
+        return Results.Ok(views.Select(JournalDtoMapper.ToSettlementDto).ToList());
     }
 
-    // ---------- Mappings (DTO ↔ Domain) ----------
-
-    private static BookingListItemDto ToListItem(
-        Booking booking,
-        MasterDataCatalog catalog,
-        BookingJournal journal) => new(
-        booking.Id,
-        booking.Type.ToString(),
-        booking.Date.ToString("yyyy-MM-dd"),
-        booking.Note,
-        ComputeTotal(booking),
-        PrimaryAccount(booking, catalog).Id,
-        PrimaryAccount(booking, catalog).Name,
-        booking.Splits
-            .Select(s => new BookingSplitSummaryDto(
-                s.Amount.Cents,
-                catalog.FindPool(s.PoolId)?.Name,
-                catalog.FindCategory(s.CategoryId)?.Name,
-                s.Tax?.Relevant,
-                s.Tax?.TaxCategoryId is { } taxId
-                    ? catalog.FindTaxCategory(taxId)?.Name
-                    : null))
-            .ToList(),
-        booking.PoolPostings
-            .Select(p => catalog.FindPool(p.PoolId)?.Name)
-            .Where(n => n is not null)
-            .Cast<string>()
-            .ToList(),
-        booking.BaseRevision,
-        journal.IsEffectivelyReversed(booking.Id));
-
-    private static BookingDetailDto ToDetail(
-        Booking booking,
-        MasterDataCatalog catalog,
-        BookingJournal journal) => new(
-        booking.Id,
-        booking.Type.ToString(),
-        booking.Date.ToString("yyyy-MM-dd"),
-        booking.Note,
-        booking.BaseRevision,
-        journal.IsEffectivelyReversed(booking.Id),
-        booking.FundingMonth?.ToString(),
-        booking.ReversesBookingId,
-        journal.ReversalsOf(booking.Id).Select(r => r.Id).ToList(),
-        booking.RefundsExpenseId,
-        booking.RelatedSettlementId,
-        booking.AccountPostings
-            .Select(p => new AccountPostingDto(
-                p.AccountId, catalog.FindAccount(p.AccountId)?.Name, p.Amount.Cents))
-            .ToList(),
-        booking.PoolPostings
-            .Select(p => new PoolPostingDto(
-                p.PoolId, catalog.FindPool(p.PoolId)?.Name, p.Amount.Cents))
-            .ToList(),
-        booking.Splits
-            .Select(s => new ExpenseSplitDto(
-                s.Id,
-                s.Amount.Cents,
-                s.PoolId,
-                catalog.FindPool(s.PoolId)?.Name,
-                s.CategoryId,
-                catalog.FindCategory(s.CategoryId)?.Name,
-                s.Tax is { } tax
-                    ? new TaxMarkingDto(
-                        tax.Relevant,
-                        tax.TaxCategoryId,
-                        tax.TaxCategoryId is { } taxId
-                            ? catalog.FindTaxCategory(taxId)?.Name
-                            : null,
-                        tax.MarkedAmount?.Cents,
-                        tax.Note)
-                    : null,
-                s.Note))
-            .ToList(),
-        booking.TransferPurposes
-            .Select(p => new PoolAllocationDto(
-                p.PoolId, catalog.FindPool(p.PoolId)?.Name, p.Amount.Cents))
-            .ToList(),
-        booking.ReassignmentAccounts
-            .Select(p => new AccountAllocationDto(
-                p.AccountId, catalog.FindAccount(p.AccountId)?.Name, p.Amount.Cents))
-            .ToList(),
-        ComputeTotal(booking));
-
-    private static BalancesDto ToDto(BalanceQueryService.Balances balances, MasterDataCatalog catalog) => new(
-        balances.Accounts
-            .Select(a => new AccountBalanceDto(
-                a.AccountId, a.Name, StatusToString(a.Status), a.Balance.Cents))
-            .ToList(),
-        balances.Pools
-            .Select(p => new PoolBalanceDto(
-                p.PoolId, p.Name, StatusToString(p.Status), p.Balance.Cents))
-            .ToList(),
-        balances.TotalAccountBalance.Cents,
-        balances.TotalPoolBalance.Cents,
-        balances.TotalIncome.Cents,
-        balances.AccountPoolGap.Cents,
-        balances.UnallocatedOpeningBalances
-            .Select(u => new UnallocatedOpeningBalanceDto(
-                u.OpeningBalanceId,
-                u.Date.ToString("yyyy-MM-dd"),
-                u.AccountId,
-                catalog.FindAccount(u.AccountId)?.Name,
-                u.Unallocated.Cents))
-            .ToList());
-
-    private static SettlementDto ToDto(SettlementQueryService.SettlementView view) => new(
-        view.Id,
-        view.SourceAccountId,
-        view.SourceAccountName,
-        view.TargetPoolId,
-        view.TargetPoolName,
-        view.Amount.Cents,
-        view.RestAmount.Cents,
-        view.Status == SettlementStatus.Beglichen ? "settled" : "open",
-        view.CreatedByBookingId,
-        view.CreatedDate.ToString("yyyy-MM-dd"),
-        view.SettledByBookingId,
-        view.SettledDate?.ToString("yyyy-MM-dd"));
-
-    // ---------- Anzeige-/Protokoll-Ableitungen (keine Fachlogik) ----------
-
-    /// <summary>
-    /// Gesamtbetrag einer Buchung in Cent (Anzeigewert): Income,
-    /// OpeningBalance, Refund = positiv; Expense = positiv (Ausgabe);
-    /// Transfers/Umverteilungen = Betrag der negativen Ausgangsposition;
-    /// Storno = Summe aller (negierten) Posten, signiert;
-    /// Kontokorrektur = signiert.
-    /// </summary>
-    private static long ComputeTotal(Booking b) => b.Type switch
-    {
-        BookingType.Income => b.AccountPostings[0].Amount.Cents,
-        BookingType.Expense => b.AccountPostings[0].Amount.Negate().Cents,
-        BookingType.OpeningBalance => b.AccountPostings[0].Amount.Cents,
-        BookingType.AccountTransfer =>
-            b.AccountPostings.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
-        BookingType.TransferReassignment =>
-            b.AccountPostings.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
-        BookingType.Reassignment =>
-            b.PoolPostings.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
-        BookingType.Reversal =>
-            b.AccountPostings.Sum(p => p.Amount.Cents)
-                + b.PoolPostings.Sum(p => p.Amount.Cents),
-        BookingType.Refund => b.AccountPostings[0].Amount.Cents,
-        BookingType.BalanceCorrection => b.AccountPostings[0].Amount.Cents,
-        _ => throw new LarioDomainException($"Unbekannter Buchungstyp '{b.Type}'.")
-    };
-
-    /// <summary>
-    /// Haupt-Konto für die Liste: bei Einzel-Posten das Konto, bei
-    /// Transfers/Transfer-Umverteilungen das Konto der negativen
-    /// Ausgangsposition (Quelle).
-    /// </summary>
-    private static (string? Id, string? Name) PrimaryAccount(
-        Booking b, MasterDataCatalog catalog)
-    {
-        if (b.AccountPostings.Count == 0)
-        {
-            return (null, null);
-        }
-
-        var posting = b.AccountPostings.Count == 1
-            ? b.AccountPostings[0]
-            : b.AccountPostings.First(p => p.Amount < Money.Zero);
-        return (posting.AccountId, catalog.FindAccount(posting.AccountId)?.Name);
-    }
+    // ---------- Filter-Prüfung (Transport-Validierung, keine Fachlogik) ----------
 
     private static BookingType? ParseBookingType(string? value)
     {
@@ -338,11 +174,4 @@ public static class JournalEndpoints
 
         return limit.Value;
     }
-
-    private static string StatusToString(EntityStatus status) => status switch
-    {
-        EntityStatus.Active => "active",
-        EntityStatus.Archived => "archived",
-        _ => throw new LarioDomainException($"Unbekannter Status '{status}'.")
-    };
 }

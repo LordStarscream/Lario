@@ -53,6 +53,28 @@
   Application-Services über Host-DI in dieselbe SQLite-DB gesamt; Storno-Szenario prüft
   effectivelyReversed + Verknüpfung + Poolbestände; Balances-Guthaben gegen
   BalanceQueryService; Settlements offen → beglichen per Ausgleichs-Transfer).
+- **T4 erledigt** (15. Okt. 2026): `src/Lario.Host/Api/Journal/JournalWriteEndpoints.cs` (alle 10
+  Schreib-Endpunkte: expenses, income, opening-balances, transfers, reassignments,
+  transfer-reassignments, corrections, reversals, refunds, balance-corrections) +
+  `JournalWriteDtos.cs` (Command-DTOs, Cent als long, Datums-/Monats-Strings mit
+  Transport-Validierung → 400) + gemeinsamer `JournalDtoMapper` (Read- und
+  Write-Endpunkte mappen identisch; Schreibantwort = Detail + Idempotenz-Flag).
+  17 Integrationstests in `JournalWriteApiTests.cs`: Validierung (Split-Summe ≠
+  Gesamt 400, unbekanntes Konto 400, ungültiges Datum/Betrag 400), Idempotenz
+  (Ausgabe- und Korrektur-Wiederholung → Flag, keine zweite Buchung), 409
+  (gleiche Id anderer Inhalt, falsche Revision mit expected/actual, doppeltes
+  Storno, Erstattung über Deckel), Referenzfälle A3 (Korrektur 85→80, Teil-
+  rückzahlung 10 €, Korrektur nach beglichem Ausgleich → neuer Bedarf,
+  Kontostandskorrektur ≠ Einnahme). 407/407 Tests, 0 Warnungen.
+- **Reihenfolgen-Bug gefixt (15. Okt. 2026, Teil von T4):** SQLite lieferte
+  Kindkollektionen (PoolPostings, Splits, …) in nicht garantierter Reihenfolge →
+  instabile API-Antworten (beobachteter Flaky: Detail-Ausgabe vertauschte die
+  Pool-Posten). Fix: `BookingRepository.NormalizeOrder` (kanonische Id-Ordnung an
+  den drei Lese-Pfaden, inkl. ReversalDeltas) + `MasterDataRepository.LoadCatalogAsync`
+  (Id-Ordnung, fließt u. a. in Balances ein). Test `Detail_Ausgabe_…` prüft jetzt
+  per Pool-Id statt Index. `tests/Lario.Api.Tests/AssemblyInfo.cs` deaktiviert
+  xUnit-Parallelisierung (WebApplicationFactory-Konkurrenz machte den Lauf
+  instabil; serialisiert ist er deterministisch).
 
 ## Notizen
 
