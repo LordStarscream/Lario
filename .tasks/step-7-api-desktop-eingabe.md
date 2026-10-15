@@ -53,7 +53,7 @@
   Application-Services über Host-DI in dieselbe SQLite-DB gesamt; Storno-Szenario prüft
   effectivelyReversed + Verknüpfung + Poolbestände; Balances-Guthaben gegen
   BalanceQueryService; Settlements offen → beglichen per Ausgleichs-Transfer).
-- **T4 erledigt** (15. Okt. 2026): `src/Lario.Host/Api/Journal/JournalWriteEndpoints.cs` (alle 10
+- **T4 erledigt** (15. Okt. 2026, Commit `0400451`): `src/Lario.Host/Api/Journal/JournalWriteEndpoints.cs` (alle 10
   Schreib-Endpunkte: expenses, income, opening-balances, transfers, reassignments,
   transfer-reassignments, corrections, reversals, refunds, balance-corrections) +
   `JournalWriteDtos.cs` (Command-DTOs, Cent als long, Datums-/Monats-Strings mit
