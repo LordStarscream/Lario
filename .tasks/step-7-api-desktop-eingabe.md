@@ -40,12 +40,12 @@
   **nicht wahr** — keine dieser Dateien/Änderungen existierte auf dem Branch (verifiziert per
   `git status`, `git log`, Datei-Suche). Tatsächlicher Stand war nur T1 (uncommitted).
   Ab hier gilt: nur disk-verifizierbare Arbeit wird als erledigt markiert.
-- **T2 erledigt** (15. Okt. 2026, Commit `fe8ef72`): `src/Lario.Host/Api/MasterData/` (CRUD-Endpunkte für
+- **T2 erledigt** (15. Okt. 2026, Commit `f23b7b3`; früherer Hash `fe8ef72` durch Rebase ersetzt): `src/Lario.Host/Api/MasterData/` (CRUD-Endpunkte für
   Konten/Pool/Kategorien/Steuerkategorien + Steuer-Voreinstellung, DTOs, Idempotente
   Erstellung, Inactive → 400 invalid_reference) + 18 Integrationstests in
   `MasterDataApiTests.cs` (CRUD-Lauf, Idempotenz, Name-Duplikat 400,
   inaktive Referenz 400, ungültige Typen 400, OpenAPI-Vertrag).
-- **T3 erledigt** (15. Okt. 2026, Commit `fe8ef72`): `src/Lario.Host/Api/Journal/` (Buchungsliste mit
+- **T3 erledigt** (15. Okt. 2026, Commit `f23b7b3`): `src/Lario.Host/Api/Journal/` (Buchungsliste mit
   Filtern type/from/to/limit + (Datum, Id) absteigend, Buchungsdetail mit Posten/Splits/
   Steuer/Finanzierungsmonat/Storno-Verknüpfung, Balances mit Kontoständen/Poolbeständen/
   Lücke/ungeordneter Rest, Ausgleichspositionen gesamt/offen; keine Fachlogik, nur
@@ -91,6 +91,12 @@
   bei idempotenter Wiederholung (davor: immer 200); `.Produces`-Deklarationen und
   die zwei Idempotenz-Tests von T4 entsprechend aktualisiert.
   409/409 Tests pro Projekt (197 Domain + 146 Infrastructure + 66 Api), 0 Warnungen.
+- **Gepusht + PR #9** (15. Okt. 2026): Branch `step/7-api-desktop-eingabe` mit
+  Upstream auf `origin` gepusht; PR #9 gegen `main` angelegt (enthält T1–T5,
+  Stand `d1f6bf1`, 409/409 Tests, 0 Warnungen). Die T6-Frontend-Arbeit liegt
+  noch uncommitted im Working Tree und folgt als Folgecommits in diesem
+  Branch. Abnahme (T7/T8) bleibt offen; Merge in `main` nur auf
+  Nutzerfreigabe.
 
 ## Notizen
 
