@@ -120,12 +120,12 @@ public class JournalWriteApiTests : IDisposable
         };
 
         var erste = await _client.PostAsJsonAsync("/api/v1/expenses", payload);
-        erste.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Created, erste.StatusCode);
         Assert.False((await erste.Content.ReadFromJsonAsync<JsonElement>())!
             .GetProperty("idempotent").GetBoolean());
 
         var zweite = await _client.PostAsJsonAsync("/api/v1/expenses", payload);
-        zweite.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.OK, zweite.StatusCode);
         var second = (await zweite.Content.ReadFromJsonAsync<JsonElement>())!;
         Assert.True(second.GetProperty("idempotent").GetBoolean());
         Assert.Equal("exp-1", second.GetProperty("booking").GetProperty("id").GetString());
@@ -537,10 +537,10 @@ public class JournalWriteApiTests : IDisposable
 
         var erste = await _client.PostAsJsonAsync(
             "/api/v1/bookings/exp-1/corrections", command);
-        erste.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Created, erste.StatusCode);
         var zweite = await _client.PostAsJsonAsync(
             "/api/v1/bookings/exp-1/corrections", command);
-        zweite.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.OK, zweite.StatusCode);
         Assert.True((await zweite.Content.ReadFromJsonAsync<JsonElement>())!
             .GetProperty("idempotent").GetBoolean());
     }

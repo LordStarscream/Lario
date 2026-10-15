@@ -33,60 +33,70 @@ public static class JournalWriteEndpoints
     {
         endpoints.MapPost("/api/v1/expenses", CreateExpense)
             .WithName("createExpense")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
 
         endpoints.MapPost("/api/v1/income", CreateIncome)
             .WithName("createIncome")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
 
         endpoints.MapPost("/api/v1/opening-balances", CreateOpeningBalance)
             .WithName("createOpeningBalance")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
 
         endpoints.MapPost("/api/v1/transfers", CreateTransfer)
             .WithName("createTransfer")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
 
         endpoints.MapPost("/api/v1/reassignments", CreateReassignment)
             .WithName("createReassignment")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
 
         endpoints.MapPost("/api/v1/transfer-reassignments", CreateTransferReassignment)
             .WithName("createTransferReassignment")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
 
         endpoints.MapPost("/api/v1/bookings/{id}/corrections", CorrectBooking)
             .WithName("correctBooking")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
 
         endpoints.MapPost("/api/v1/bookings/{id}/reversals", CreateReversal)
             .WithName("createReversal")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
 
         endpoints.MapPost("/api/v1/bookings/{id}/refunds", CreateRefund)
             .WithName("createRefund")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
 
         endpoints.MapPost("/api/v1/balance-corrections", CreateBalanceCorrection)
             .WithName("createBalanceCorrection")
+            .Produces<BookingCreatedDto>(StatusCodes.Status201Created)
             .Produces<BookingCreatedDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status409Conflict);
@@ -334,7 +344,8 @@ public static class JournalWriteEndpoints
     /// Lädt nach dem Service-Aufruf den Journal-Snapshot plus Katalog
     /// (die neue Buchung ist bereits persistent) und antwortet mit dem
     /// Buchungsdetail plus Idempotenz-Flag (true = Wiederholung mit
-    /// gleicher Id, keine zweite Buchung).
+    /// gleicher Id, keine zweite Buchung). Status: 201 bei Anlage,
+    /// 200 bei idempotenter Wiederholung.
     /// </summary>
     private static async Task<IResult> CreatedAsync(
         bool created,
@@ -347,9 +358,13 @@ public static class JournalWriteEndpoints
         var catalog = await masterData.LoadCatalogAsync(cancellationToken);
         var journal = new BookingJournal(all);
         var latest = all.FirstOrDefault(b => b.Id == booking.Id) ?? booking;
-        return Results.Ok(new BookingCreatedDto(
+        var dto = new BookingCreatedDto(
             JournalDtoMapper.ToDetail(latest, catalog, journal),
-            !created));
+            !created);
+
+        return created
+            ? Results.Created($"/api/v1/bookings/{booking.Id}", dto)
+            : Results.Ok(dto);
     }
 
     // ---------- Transport-Formate ----------

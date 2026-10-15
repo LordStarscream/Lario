@@ -22,8 +22,8 @@
 - [x] T1: API-Grundgerüst — Auth (Login/Logout/Token, credentials-Datei), Exception→HTTP-Mapping, Fehlerformat, `partial Program` + Test-Projekt `Lario.Api.Tests` (WebApplicationFactory, echte SQLite), OpenAPI-Dokument `/openapi/v1.json`
 - [x] T2: Stammdaten-Endpunkte (accounts/pools/categories/tax-categories: CRUD + tax-preset) mit DTOs + Integrationstests
 - [x] T3: Journal-Read-Endpunkte (bookings list/detail, balances, settlements) mit DTOs (Namen, Tax, effectivelyReversed) + Integrationstests
-- [ ] T4: Journal-Write-Endpunkte (expenses, income, opening-balances, transfers, reassignments, transfer-reassignments, corrections, reversals, refunds, balance-corrections) + DTOs + Integrationstests (Validierung, Idempotenz, 409, Referenzfälle A3)
-- [ ] T5: Persistenz-/Neustart-Tests (A4) + API-Referenzzfälle komplett (A3) + „keine Salden als Input" (A5)
+- [x] T4: Journal-Write-Endpunkte (expenses, income, opening-balances, transfers, reassignments, transfer-reassignments, corrections, reversals, refunds, balance-corrections) + DTOs + Integrationstests (Validierung, Idempotenz, 409, Referenzfälle A3)
+- [x] T5: Persistenz-/Neustart-Tests (A4) + API-Referenzzfälle komplett (A3) + „keine Salden als Input" (A5)
 - [ ] T6: Frontend — Login/Token, Ausgabeformular, Liste, Anfangsbestände, Stammdaten-minimal, Korrektur/Storno/Erstattung-Aktionen, Fehleranzeige; API-Client neu generieren (A6/A7/A8)
 - [ ] T7: UI-Tests (vitest) + Build-/Lint-Verifikation (npm) + Abnahmedoku `docs/step-7/step7-api-desktop-eingabe.md` + README-Befehle
 - [ ] T8: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR
@@ -76,6 +76,21 @@
   per Pool-Id statt Index. `tests/Lario.Api.Tests/AssemblyInfo.cs` deaktiviert
   xUnit-Parallelisierung (WebApplicationFactory-Konkurrenz machte den Lauf
   instabil; serialisiert ist er deterministisch).
+- **T5 erledigt** (15. Okt. 2026): `tests/Lario.Api.Tests/PersistenceApiTests.cs` mit
+  2 Tests: **A4** — Ausgabe per API anlegen, Host neu starten (zweite
+  WebApplicationFactory-Instanz, dieselbe SQLite-Ablage) → Buchung, Detail,
+  abgeleitete Salden (Konto -100 €, Pool -100 €, Lücke 0) und offene
+  Ausgleichsposition persistiert; Idempotenz-Aufzeichnung überlebt den
+  Neustart (gleiche Id + Inhalt → 200, `idempotent: true`, keine zweite
+  Buchung). **A5** — OpenAPI-Vertragstest: alle JSON-Body-Eigenschaften aller
+  POST/PUT/PATCH-Endpunkte (inkl. `$ref`-Auflösung) dürfen keine Saldo-Eigenschaft
+  enthalten (keine `balance`/`saldo`); ≥ 14 Schreibendpunkte geprüft.
+  A3 (Referenzfälle) ist komplett in `JournalWriteApiTests.cs` (T4) abgedeckt.
+  **Vertragsverbesserung dabei:** Journal-Schreibendpunkte antworten jetzt
+  **201 Created** (mit `Location: /api/v1/bookings/{id}`) bei Anlage und **200 OK**
+  bei idempotenter Wiederholung (davor: immer 200); `.Produces`-Deklarationen und
+  die zwei Idempotenz-Tests von T4 entsprechend aktualisiert.
+  409/409 Tests pro Projekt (197 Domain + 146 Infrastructure + 66 Api), 0 Warnungen.
 
 ## Notizen
 
@@ -86,7 +101,7 @@
   (beide Runtimes). Folge: `dotnet test` auf Solution-Ebene schlägt beim
   Api.Tests-TestHost fehl ("No frameworks were found"), obwohl alle Tests
   grün sind; pro Projekt gestartet (`dotnet test tests/<P>`) läuft alles
-  deterministisch grün (197/146/64 = 407). `dotnet build-server shutdown`
+  deterministisch grün (Stand T5: 197/146/66 = 409). `dotnet build-server shutdown`
   hilft nicht.
 - Geld: JSON-`long` (Cent), Client validiert sichere Ganzzahl (D6).
 - UI-Scope laut D5: Ausgabe + Liste + Anfangsbestände + Stammdaten-minimal + Korrekturaktionen; Einnahme/Transfer/Umwidmung/Kontostandskorrektur nur API+Tests.
