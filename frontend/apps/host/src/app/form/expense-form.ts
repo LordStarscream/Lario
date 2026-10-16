@@ -10,7 +10,9 @@ import { ActivatedRoute, Router } from '@angular/router';
 import type { ApiErrorInfo } from '../../api/api-error';
 import { ApiErrorHandler } from '../../api/error-handler';
 import { CatalogService } from '../../api/catalogs';
+import { PendingOperation } from '../../api/pending-operation';
 import { cents, formatCents, parseEuroToCents, todayIso } from '../../api/money';
+import { ApiError as ApiErrorClass } from '../../generated/core/ApiError';
 import { JournalEndpointsService } from '../../generated/services/JournalEndpointsService';
 import { JournalWriteEndpointsService } from '../../generated/services/JournalWriteEndpointsService';
 import type { BookingDetailDto } from '../../generated/models/BookingDetailDto';
@@ -20,6 +22,9 @@ import type { ExpenseSplitCommand } from '../../generated/models/ExpenseSplitCom
 import type { TaxPresetDto } from '../../generated/models/TaxPresetDto';
 
 export type TaxMode = 'inherit' | 'relevant' | 'irrelevant';
+
+/** Max. Länge der Steuerkennzeichnungs-Notiz (API-Vertrag: 500 Zeichen). */
+export const MAX_TAX_NOTE_LENGTH = 500;
 
 export interface SplitRowState {
   key: number;
@@ -33,6 +38,8 @@ export interface SplitRowState {
   partialCapture: boolean;
   markedText: string;
   note: string;
+  /** Steuerkennzeichnungs-Notiz (Review R4 F5). */
+  taxNote: string;
 }
 
 function toEuroText(centsValue: number | string | null): string {
@@ -42,13 +49,19 @@ function toEuroText(centsValue: number | string | null): string {
   return (cents(centsValue) / 100).toFixed(2).replace('.', ',');
 }
 
-function newSplitRow(index: number, keyBase: number): SplitRowState {
+/**
+ * Neue Split-Zeile mit eindeutigem Formular-`key` (Review R4 F6): der
+ * Key kommt zentral aus {@link ExpenseForm.nextKey} — eine Index-
+ * basierte Zuordnung würde nach Löschen von Zeilen Kollisionen erzeugen
+ * (doppelte [id] im Template).
+ */
+function newSplitRow(key: number): SplitRowState {
   const random =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2);
   return {
-    key: keyBase + index,
+    key,
     id: `split-${random}`,
     amountText: '',
     poolId: '',
@@ -58,6 +71,7 @@ function newSplitRow(index: number, keyBase: number): SplitRowState {
     partialCapture: false,
     markedText: '',
     note: '',
+    taxNote: '',
   };
 }
 
@@ -88,7 +102,7 @@ export class ExpenseForm implements OnInit {
   accountId = '';
   note = '';
   totalText = '';
-  splits: SplitRowState[] = [newSplitRow(0, 1)];
+  splits: SplitRowState[] = [newSplitRow(this.nextKey())];
   expectedBaseRevision: number | null = null;
 
   readonly loading = signal(false);
@@ -142,8 +156,8 @@ export class ExpenseForm implements OnInit {
     this.accountId = detail.accountPostings[0]?.accountId ?? '';
     this.totalText = toEuroText(detail.totalAmount);
     this.expectedBaseRevision = Number(detail.baseRevision);
-    this.splits = detail.splits.map((split, index) => {
-      const row = newSplitRow(index, this.nextKey());
+    this.splits = detail.splits.map((split) => {
+      const row = newSplitRow(this.nextKey());
       // Stabile Split-Identität über Revisionen hinweg (Review R3 P2):
       // die Original-Id bleibt erhalten, damit eine Korrektur, die die
       // Aufteilung nicht ändert, die Splits (inkl. Steuerkennzeichnung
@@ -157,12 +171,13 @@ export class ExpenseForm implements OnInit {
         row.taxCategoryId = split.tax.taxCategoryId ?? '';
         row.partialCapture = split.tax.markedAmount !== null;
         row.markedText = toEuroText(split.tax.markedAmount);
+        row.taxNote = split.tax.note ?? '';
       }
       row.note = split.note ?? '';
       return row;
     });
     if (this.splits.length === 0) {
-      this.splits = [newSplitRow(0, this.nextKey())];
+      this.splits = [newSplitRow(this.nextKey())];
     }
     // Referenz-Zustand der Aufteilung für den Skalar-Korrektur-Pfad:
     // ändert sich nur die Buchungsnote (oder Datum/Konto), sendet die
@@ -193,6 +208,7 @@ export class ExpenseForm implements OnInit {
             this.effectiveTaxRelevant(row) === true && row.partialCapture
               ? parseEuroToCents(row.markedText)
               : null,
+          note: row.taxNote.trim() === '' ? null : row.taxNote.trim(),
         },
       })),
     });
@@ -240,7 +256,7 @@ export class ExpenseForm implements OnInit {
   // ---------- Zeilen-Verwaltung ----------
 
   addSplit(): void {
-    this.splits = [...this.splits, newSplitRow(this.splits.length, this.nextKey())];
+    this.splits = [...this.splits, newSplitRow(this.nextKey())];
     this.submitError.set(null);
   }
 
@@ -260,6 +276,12 @@ export class ExpenseForm implements OnInit {
       ) {
         row.taxCategoryId = preset.taxCategoryId;
       }
+    } else if (mode === 'inherit') {
+      // Review R4 F4: zurück auf die Kategorie-Voreinstellung — die
+      // explizit gewählte Steuerkategorie/Teilmenge ist wieder inaktiv.
+      row.taxCategoryId = '';
+      row.partialCapture = false;
+      row.markedText = '';
     }
     this.submitError.set(null);
   }
@@ -306,6 +328,9 @@ export class ExpenseForm implements OnInit {
         return 'Teilmenge größer als Betrag';
       }
     }
+    if (row.taxNote.length > MAX_TAX_NOTE_LENGTH) {
+      return `Steuer-Notiz zu lang (max. ${MAX_TAX_NOTE_LENGTH} Zeichen)`;
+    }
     return null;
   }
 
@@ -345,18 +370,31 @@ export class ExpenseForm implements OnInit {
 
   // ---------- Absenden ----------
 
-  private operationId: string | null = null;
+  /**
+   * Stabile Operation-Id (Review R3 P1 / R4 F1): nach verlorener Antwort
+   * sendet der nächste Klick mit unveränderten Daten dieselbe Operation
+   * (gleiche Id + Payload) — idempotente Quittung statt doppelte Buchung.
+   * Geänderte Daten bei unklarem Ausgang blockieren die Einreichung, bis
+   * die hängende Operation abgeglichen und manuell freigegeben ist.
+   */
+  private readonly pendingOperation = new PendingOperation();
+  readonly outcomeUncertain = this.pendingOperation.outcomeUncertain;
 
-  /** Stabile Identität der Operation: einmal erzeugt, bei Retries wiederverwendet. */
-  private stableOperationId(): string {
-    if (this.operationId === null) {
-      const random =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? crypto.randomUUID()
-          : Math.random().toString(36).slice(2);
-      this.operationId = this.isCorrection ? `corr-${random}` : `exp-${random}`;
-    }
-    return this.operationId;
+  /**
+   * Fingerprint der Payload ohne Operation-Id (Review R4 F1):
+   * unveränderte Daten → dieselbe Id (idempotentes Wiedersenden).
+   */
+  private payloadFingerprint(command: ExpenseCommand): string {
+    return JSON.stringify({
+      isCorrection: this.isCorrection,
+      correctionId: this.correctionId,
+      date: command.date,
+      totalAmount: command.totalAmount,
+      accountId: command.accountId,
+      note: command.note,
+      splits: command.splits,
+      expectedBaseRevision: command.expectedBaseRevision,
+    });
   }
 
   private buildCommand(): ExpenseCommand {
@@ -369,7 +407,7 @@ export class ExpenseForm implements OnInit {
           markedAmount: row.partialCapture
             ? (parseEuroToCents(row.markedText) as number)
             : null,
-          note: null,
+          note: row.taxNote.trim() === '' ? null : row.taxNote.trim(),
         };
       } else if (row.taxMode === 'irrelevant') {
         tax = {
@@ -391,7 +429,8 @@ export class ExpenseForm implements OnInit {
       };
     });
     return {
-      id: this.stableOperationId(),
+      // Review R4 F1: wird in submit() per PendingOperation vergeben.
+      id: '',
       date: this.date,
       totalAmount: this.totalCents() as number,
       accountId: this.accountId,
@@ -409,11 +448,31 @@ export class ExpenseForm implements OnInit {
     }
     this.busy.set(true);
     this.submitError.set(null);
+    const command = this.buildCommand();
+    // Review R4 F1: unklarer Ausgang + geänderte Daten → Blocken.
+    // Eine neue Id würde eine zweite Buchung erzeugen können, wenn die
+    // alte Operation bereits committet ist.
+    const id = this.pendingOperation.nextId(
+      this.isCorrection ? 'corr' : 'exp',
+      this.payloadFingerprint(command),
+    );
+    if (id === null) {
+      this.submitError.set({
+        code: 'uncertain_operation_blocked',
+        message:
+          'Einreichung blockiert: Der Ausgang des letzten Versuchs ist unklar und die Daten wurden seitdem geändert. Prüfe die Buchungsliste, ob der vorherige Eintrag gebucht wurde (ggf. korrigieren oder stornieren), und setze die Operation unten zurück, bevor du neue Daten einreichst.',
+        expectedBaseRevision: null,
+        actualBaseRevision: null,
+      });
+      this.busy.set(false);
+      return;
+    }
+    command.id = id;
     try {
-      const command = this.buildCommand();
       const created = this.isCorrection
         ? await this.submitCorrection(command)
         : await JournalWriteEndpointsService.createExpense(command);
+      this.pendingOperation.release();
       this.success.set(
         created.idempotent
           ? 'Die Buchung war bereits gebucht (identisch erneut eingereicht).'
@@ -424,8 +483,25 @@ export class ExpenseForm implements OnInit {
       await this.router.navigate(['/']);
     } catch (error) {
       this.submitError.set(this.errors.handle(error));
+      // Definitive Ablehnung (4xx): die Operation wurde sicher nicht
+      // committet → neue Id beim nächsten Versuch. Ansonsten (keine
+      // Antwort, 5xx): Ausgang unklar → dieselbe Id + Payload wiedersenden.
+      const definitive =
+        error instanceof ApiErrorClass &&
+        error.status >= 400 &&
+        error.status < 500;
+      if (definitive) {
+        this.pendingOperation.release();
+      } else {
+        this.pendingOperation.markOutcomeUncertain();
+      }
       this.busy.set(false);
     }
+  }
+
+  /** Rücksetzen: neue Operation-Id für die nächste Einreichung (Review R4 F1). */
+  resetPendingOperation(): void {
+    this.pendingOperation.release();
   }
 
   /**
@@ -478,6 +554,9 @@ export interface AllocationSplitState {
     relevant: boolean | null;
     taxCategoryId: string | null;
     markedAmountCents: number | null;
+    /** Steuer-Notiz (Review R4 F5) — Teil des Fingerprint: wird sie
+     * geändert, darf die Korrektur nicht den Skalar-Pfad nehmen. */
+    note: string | null;
   };
 }
 
@@ -487,9 +566,10 @@ export interface AllocationState {
 }
 
 /**
- * Fingerprint der Aufteilung (Review R3 P2): Gesamtbetrag + Splits mit
- * Id, Betrag, Pool, Kategorie, Notiz und wirksamer Steuerkenn-
- * zeichnung. Bleibt er vom Vorladen bis zum Absenden unverändert,
+ * Fingerprint der Aufteilung (Review R3 P2 / R4 F5): Gesamtbetrag +
+ * Splits mit Id, Betrag, Pool, Kategorie, Notiz und wirksamer
+ * Steuerkennzeichnung (inkl. Steuer-Notiz). Bleibt er vom Vorladen
+ * bis zum Absenden unverändert,
  * sendet die Korrektur `splits: null` / `totalAmount: null` und der
  * Server hält die Original-Splits.
  *

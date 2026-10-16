@@ -138,8 +138,23 @@ export class OpeningBalance implements OnInit {
         distribution,
         note,
       });
+      // Review R4 F1: unklarer Ausgang + geänderte Daten → Blocken.
+      // Eine neue Id würde eine zweite Buchung erzeugen können, wenn die
+      // alte Operation bereits committet ist.
+      const id = this.pendingOp.nextId('open', fingerprint);
+      if (id === null) {
+        this.error.set({
+          code: 'uncertain_operation_blocked',
+          message:
+            'Einreichung blockiert: Der Ausgang des letzten Versuchs ist unklar und die Daten wurden seitdem geändert. Prüfe die Buchungsliste, ob der vorherige Eintrag gebucht wurde (ggf. korrigieren oder stornieren), und setze die Operation unten zurück, bevor du neue Daten einreichst.',
+          expectedBaseRevision: null,
+          actualBaseRevision: null,
+        });
+        this.busy.set(false);
+        return;
+      }
       await JournalWriteEndpointsService.createOpeningBalance({
-        id: this.pendingOp.nextId('open', fingerprint),
+        id,
         date: this.date,
         total,
         accountId: this.accountId,

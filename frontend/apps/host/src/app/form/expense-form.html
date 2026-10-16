@@ -152,7 +152,7 @@
                     <select
                       [(ngModel)]="row.taxCategoryId"
                       [ngModelOptions]="{ name: 'splitTaxCategory' + row.key }"
-                      [disabled]="busy()"
+                      [disabled]="busy() || row.taxMode === 'inherit'"
                     >
                       <option value="" disabled>Bitte wählen …</option>
                       @for (tax of taxCategories(); track tax.id) {
@@ -165,7 +165,7 @@
                       type="checkbox"
                       [(ngModel)]="row.partialCapture"
                       [ngModelOptions]="{ name: 'splitPartial' + row.key }"
-                      [disabled]="busy()"
+                      [disabled]="busy() || row.taxMode === 'inherit'"
                     />
                     <span>Teilmengenerfassung</span>
                   </label>
@@ -179,10 +179,29 @@
                       class="money-input"
                       [(ngModel)]="row.markedText"
                       [ngModelOptions]="{ name: 'splitMarked' + row.key }"
-                      [disabled]="busy()"
+                      [disabled]="busy() || row.taxMode === 'inherit'"
                       placeholder="0,00"
                     />
                   </label>
+                }
+                @if (row.taxMode === 'relevant') {
+                  <label class="field">
+                    <span class="field-label">Steuer-Notiz (optional)</span>
+                    <input
+                      type="text"
+                      [(ngModel)]="row.taxNote"
+                      [ngModelOptions]="{ name: 'splitTaxNote' + row.key }"
+                      [disabled]="busy()"
+                      [maxlength]="500"
+                    />
+                  </label>
+                }
+                @if (row.taxMode === 'inherit') {
+                  <p class="form-hint">
+                    Steuerliche Erfassung folgt der Voreinstellung der
+                    Kategorie. Zum Ändern: „Steuerrelevant“ oder
+                    „Nicht steuerrelevant“ wählen.
+                  </p>
                 }
               }
             </div>
@@ -204,6 +223,24 @@
         + Aufteilung hinzufügen
       </button>
     </fieldset>
+
+    @if (outcomeUncertain()) {
+      <div class="banner banner-info" role="alert">
+        <strong>Hinweis:</strong> Der letzte Versuch wurde nicht bestätigt —
+        die Buchung kann möglicherweise schon gebucht sein. Nochmal senden
+        mit unveränderten Daten wiederholt dieselbe Operation (keine
+        doppelte Buchung). Prüfe die Buchungsliste, bevor du neue Daten
+        einreichst.
+        <button
+          type="button"
+          class="btn btn-small"
+          [disabled]="busy()"
+          (click)="resetPendingOperation()"
+        >
+          Zurücksetzen (neue Operation)
+        </button>
+      </div>
+    }
 
     @if (submitError(); as err) {
       <div class="banner banner-error" role="alert">

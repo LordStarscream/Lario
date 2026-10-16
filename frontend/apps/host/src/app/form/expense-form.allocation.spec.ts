@@ -17,6 +17,7 @@ function baseState(): AllocationState {
           relevant: true,
           taxCategoryId: 't1',
           markedAmountCents: 2000,
+          note: 'Kasse 3',
         },
       },
       {
@@ -25,7 +26,12 @@ function baseState(): AllocationState {
         poolId: 'urlaub',
         categoryId: 'c2',
         note: 'Gemeinsam bezahlt',
-        tax: { relevant: null, taxCategoryId: null, markedAmountCents: null },
+        tax: {
+          relevant: null,
+          taxCategoryId: null,
+          markedAmountCents: null,
+          note: null,
+        },
       },
     ],
   };
@@ -76,6 +82,7 @@ describe('allocationFingerprint (Review R3 P2: Skalar-Korrektur-Pfad)', () => {
       relevant: true,
       taxCategoryId: 't2',
       markedAmountCents: null,
+      note: null,
     };
     const afterMark = JSON.parse(JSON.stringify(before)) as AllocationState;
     afterMark.splits[0].tax.markedAmountCents = 1500;
@@ -84,6 +91,20 @@ describe('allocationFingerprint (Review R3 P2: Skalar-Korrektur-Pfad)', () => {
     expect(allocationFingerprint(afterRelevant)).not.toBe(allocationFingerprint(before));
     expect(allocationFingerprint(afterMark)).not.toBe(allocationFingerprint(before));
     expect(allocationFingerprint(afterCategory)).not.toBe(allocationFingerprint(before));
+  });
+
+  it('ändert sich, wenn die Steuer-Notiz geändert wird (Review R4 F5)', () => {
+    const before = baseState();
+    const afterNote = JSON.parse(JSON.stringify(before)) as AllocationState;
+    afterNote.splits[0].tax.note = 'Kasse 3 (korrigiert)';
+    const afterClear = JSON.parse(JSON.stringify(before)) as AllocationState;
+    afterClear.splits[0].tax.note = null;
+    expect(allocationFingerprint(afterNote)).not.toBe(
+      allocationFingerprint(before),
+    );
+    expect(allocationFingerprint(afterClear)).not.toBe(
+      allocationFingerprint(before),
+    );
   });
 
   it('ändert sich, wenn Split-Ids oder die Reihenfolge sich ändern', () => {

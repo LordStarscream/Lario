@@ -22,9 +22,11 @@ function randomId(): string {
  *   die Operation ist sicher nicht committet, bzw. die Id wird von
  *   einer anderen Buchung belegt) oder nach Erfolg wird die Id
  *   freigegeben; die nächste Einreichung erhält eine neue Id.
- * - Geändert die Daten nach unklarem Ausgang, erzeugt die nächste
- *   Einreichung eine neue Id (Fingerprint-Wechsel) — der Hinweis
- *   {@link PendingOperation.outcomeUncertain} warnt davor.
+ * - Geänderte Daten bei unklarem Ausgang (Review R4 F1): die Einreichung
+ *   wird blockiert (nextId liefert null) — eine neue Id würde eine
+ *   zweite Buchung erzeugen können, falls die alte Operation bereits
+ *   committet ist. Die alte Operation muss erst abgeglichen werden
+ *   (Buchungsliste), dann manuell {@link PendingOperation.release}.
  */
 export class PendingOperation {
   private id: string | null = null;
@@ -34,11 +36,24 @@ export class PendingOperation {
   readonly outcomeUncertain = signal(false);
 
   /**
-   * Id für die nächste Einreichung: wiederverwendet, wenn die Payload
-   * unverändert ist; andernfalls (oder am Anfang) wird eine neue
-   * erzeugt.
+   * Id für die nächste Einreichung:
+   * - unveränderte Payload → dieselbe Id (idempotentes Wiedersenden);
+   * - keine hängende Operation oder geänderte Payload nach definitivem
+   *   Ausgang → neue Id;
+   * - `null` (Einreichung blockieren, Review R4 F1): unklarer Ausgang
+   *   (keine Antwort/5xx) **und** geänderte Payload — eine neue Id
+   *   könnte eine zweite Buchung erzeugen (die alte Operation ist
+   *   möglicherweise bereits committet). Erst abgleichen, dann manuell
+   *   {@link PendingOperation.release}.
    */
-  nextId(prefix: string, payloadFingerprint: string): string {
+  nextId(prefix: string, payloadFingerprint: string): string | null {
+    if (
+      this.outcomeUncertain() &&
+      this.id !== null &&
+      this.fingerprint !== payloadFingerprint
+    ) {
+      return null;
+    }
     if (this.id === null || this.fingerprint !== payloadFingerprint) {
       this.id = `${prefix}-${randomId()}`;
       this.fingerprint = payloadFingerprint;

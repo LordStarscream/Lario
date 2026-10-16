@@ -68,11 +68,13 @@ export class MasterData implements OnInit {
   }
 
   async reload(): Promise<void> {
-    this.success.set(null);
+    // Erfolgsmeldung bleibt sichtbar (Review R4 F2): sie wird erst durch
+    // die nächste Aktion ersetzt (ok() löscht Fehler, fail() Erfolg).
     await this.catalog.refresh();
   }
 
   private fail(error: unknown): void {
+    this.success.set(null);
     this.error.set(this.errors.handle(error));
     this.busy.set(false);
   }
@@ -103,6 +105,8 @@ export class MasterData implements OnInit {
       await this.reload();
     } catch (error) {
       this.fail(error);
+    } finally {
+      this.busy.set(false);
     }
   }
 
@@ -120,6 +124,8 @@ export class MasterData implements OnInit {
       await this.reload();
     } catch (error) {
       this.fail(error);
+    } finally {
+      this.busy.set(false);
     }
   }
 
@@ -141,6 +147,8 @@ export class MasterData implements OnInit {
       await this.reload();
     } catch (error) {
       this.fail(error);
+    } finally {
+      this.busy.set(false);
     }
   }
 
@@ -163,6 +171,8 @@ export class MasterData implements OnInit {
       await this.reload();
     } catch (error) {
       this.fail(error);
+    } finally {
+      this.busy.set(false);
     }
   }
 
@@ -256,6 +266,8 @@ export class MasterData implements OnInit {
       await this.reload();
     } catch (error) {
       this.fail(error);
+    } finally {
+      this.busy.set(false);
     }
   }
 
@@ -302,6 +314,8 @@ export class MasterData implements OnInit {
       await this.reload();
     } catch (error) {
       this.fail(error);
+    } finally {
+      this.busy.set(false);
     }
   }
 
@@ -319,6 +333,8 @@ export class MasterData implements OnInit {
       await this.reload();
     } catch (error) {
       this.fail(error);
+    } finally {
+      this.busy.set(false);
     }
   }
 

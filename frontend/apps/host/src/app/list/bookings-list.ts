@@ -296,13 +296,28 @@ export class BookingsList implements OnInit {
     if (!dialog || !dialog.detail || !dialog.accountId || !dialog.date) {
       return false;
     }
-    if (dialog.lines.length === 0) {
-      return false;
-    }
-    return dialog.lines.every((line) => {
+    // Review R4 F3: leer/0-Zeilen sind nicht ausgewählt (keine
+    // Teil-Erstattung blockieren); mindestens eine Zeile mit positivem
+    // Betrag erforderlich; ungültige nicht-leere Einträge und
+    // Überschreitung des Deckels bleiben abgelehnt.
+    let hasPositive = false;
+    for (const line of dialog.lines) {
       const amount = parseEuroToCents(line.amountText);
-      return amount !== null && amount > 0 && amount <= line.maxCents;
-    });
+      if (amount === null) {
+        if (line.amountText.trim() !== '') {
+          return false; // ungültiger Eintrag
+        }
+        continue; // leer = nicht ausgewählt
+      }
+      if (amount === 0) {
+        continue; // 0 = nicht ausgewählt
+      }
+      if (amount > line.maxCents) {
+        return false;
+      }
+      hasPositive = true;
+    }
+    return hasPositive;
   }
 
   async submitRefund(): Promise<void> {
@@ -316,12 +331,13 @@ export class BookingsList implements OnInit {
         id: dialog.operationId,
         accountId: dialog.accountId,
         date: dialog.date,
-        lines: dialog.lines.map((line) => ({
-          poolId: line.poolId,
-          // isRefundComplete() garantiert gültige Zeilen; 0 wäre ein Client-Bug
-          // und wird vom Server mit 400 abgelehnt.
-          amount: parseEuroToCents(line.amountText) ?? 0,
-        })),
+        lines: dialog.lines
+          .map((line) => ({
+            poolId: line.poolId,
+            // Review R4 F3: leer/0 = nicht ausgewählt → nicht übertragen.
+            amount: parseEuroToCents(line.amountText) ?? 0,
+          }))
+          .filter((line) => line.amount > 0),
         note: null,
       });
       this.refund.set(null);
