@@ -6,6 +6,7 @@
     <Project Path="src/Lario.Infrastructure/Lario.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Lario.Api.Tests/Lario.Api.Tests.csproj" />
     <Project Path="tests/Lario.Domain.Tests/Lario.Domain.Tests.csproj" />
     <Project Path="tests/Lario.Infrastructure.Tests/Lario.Infrastructure.Tests.csproj" />
   </Folder>

@@ -14,11 +14,20 @@ public sealed class MasterDataRepository(LarioDbContext db) : IMasterDataReposit
 {
     public async Task<MasterDataCatalog> LoadCatalogAsync(CancellationToken cancellationToken = default)
     {
-        var accounts = await db.Accounts.AsNoTracking().ToListAsync(cancellationToken);
-        var pools = await db.Pools.AsNoTracking().ToListAsync(cancellationToken);
-        var categories = await db.Categories.AsNoTracking().ToListAsync(cancellationToken);
-        var taxCategories = await db.TaxCategories.AsNoTracking().ToListAsync(cancellationToken);
-        var presets = await db.TaxPresets.AsNoTracking().ToListAsync(cancellationToken);
+        // SQLite garantiert keine Zeilenreihenfolge — der Catalog trägt die
+        // kanonische Id-Ordnung (Ordinal), damit alle Konsumenten (u. a.
+        // Balances, Setzungspositionen) deterministisch iterieren. Die
+        // Anzeigenamen-Sortierung der Leseendpunkte bleibt unverändert.
+        var accounts = await db.Accounts.AsNoTracking()
+            .OrderBy(a => a.Id).ToListAsync(cancellationToken);
+        var pools = await db.Pools.AsNoTracking()
+            .OrderBy(p => p.Id).ToListAsync(cancellationToken);
+        var categories = await db.Categories.AsNoTracking()
+            .OrderBy(c => c.Id).ToListAsync(cancellationToken);
+        var taxCategories = await db.TaxCategories.AsNoTracking()
+            .OrderBy(t => t.Id).ToListAsync(cancellationToken);
+        var presets = await db.TaxPresets.AsNoTracking()
+            .OrderBy(p => p.CategoryId).ToListAsync(cancellationToken);
 
         // Steuer-Voreinstellungen an ihre Kategorien hängen (1:1).
         foreach (var preset in presets)
