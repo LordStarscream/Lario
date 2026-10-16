@@ -94,7 +94,27 @@ public static class JournalDtoMapper
             .Select(p => new AccountAllocationDto(
                 p.AccountId, catalog.FindAccount(p.AccountId)?.Name, p.Amount.Cents))
             .ToList(),
-        ComputeTotal(booking, journal));
+        ComputeTotal(booking, journal),
+        RefundedByPool(booking, journal));
+
+    /// <summary>
+    /// Bereits gewährte Erstattungen je Ursprungs-Pool (Review R3 P2):
+    /// Summe der Pool-Postings aller Erstattungs-Buchungen mit
+    /// <c>RefundsExpenseId</c> = diese Buchung. Dieselbe Quelle wie die
+    /// Deckelprüfung in <c>RefundService</c> — Erstattungen sind nicht
+    /// stornierbar (B2), eine einfache Summe ist damit korrekt. Für
+    /// Nicht-Ausgaben (und Ausgaben ohne Erstattungen) leer.
+    /// </summary>
+    private static IReadOnlyList<RefundedPoolDto> RefundedByPool(
+        Booking booking, BookingJournal journal) =>
+        journal.Bookings
+            .Where(b => b.Type == BookingType.Refund
+                        && b.RefundsExpenseId == booking.Id)
+            .SelectMany(b => b.PoolPostings)
+            .GroupBy(p => p.PoolId)
+            .Select(g => new RefundedPoolDto(g.Key, g.Sum(p => p.Amount.Cents)))
+            .OrderBy(r => r.PoolId, StringComparer.Ordinal)
+            .ToList();
 
     public static BalancesDto ToBalancesDto(
         BalanceQueryService.Balances balances,
