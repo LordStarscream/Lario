@@ -139,52 +139,103 @@ public static class JournalDtoMapper
     /// Gesamtbetrag einer Buchung in Cent (Anzeigewert): Income,
     /// OpeningBalance, Refund = positiv; Expense = positiv (Ausgabe);
     /// Transfers/Umverteilungen = Betrag der negativen Ausgangsposition;
-    /// Storno = Negation des Original-Anzeigetotals (s. <see cref="ReversalTotal"/>);
+    /// Storno = eigene historische Postings (s. <see cref="ReversalTotal"/>);
+    /// Kontokorrektur = signiert. Nicht-Storno-Typen hängen nur von den
+    /// eigenen (unveränderlichen) Postings ab — kein Journal-Kontext.
+    /// </summary>
+    public static long ComputeTotal(Booking b, BookingJournal journal) =>
+        b.Type == BookingType.Reversal
+            ? ReversalTotal(b, journal)
+            : OriginalDisplayTotal(b.Type, b.AccountPostings, b.PoolPostings);
+
+    /// <summary>
+    /// Anzeigetotal eines Nicht-Storno-Typs aus den eigenen Postings
+    /// (reine Transport-Konvention, keine Fachlogik): Income,
+    /// OpeningBalance, Refund = positiv; Expense = positiv (Ausgabe);
+    /// Transfers/Transfer-Umverteilungen = Betrag der negativen
+    /// Ausgangsposition; Umwidmung = Betrag der negativen Poolposition;
     /// Kontokorrektur = signiert.
     /// </summary>
-    public static long ComputeTotal(Booking b, BookingJournal journal) => b.Type switch
+    private static long OriginalDisplayTotal(
+        BookingType type,
+        IReadOnlyList<AccountPosting> accounts,
+        IReadOnlyList<PoolPosting> pools) => type switch
     {
-        BookingType.Income => b.AccountPostings[0].Amount.Cents,
-        BookingType.Expense => b.AccountPostings[0].Amount.Negate().Cents,
-        BookingType.OpeningBalance => b.AccountPostings[0].Amount.Cents,
+        BookingType.Income => accounts[0].Amount.Cents,
+        BookingType.Expense => accounts[0].Amount.Negate().Cents,
+        BookingType.OpeningBalance => accounts[0].Amount.Cents,
         BookingType.AccountTransfer =>
-            b.AccountPostings.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
+            accounts.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
         BookingType.TransferReassignment =>
-            b.AccountPostings.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
+            accounts.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
         BookingType.Reassignment =>
-            b.PoolPostings.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
-        BookingType.Reversal => ReversalTotal(b, journal),
-        BookingType.Refund => b.AccountPostings[0].Amount.Cents,
-        BookingType.BalanceCorrection => b.AccountPostings[0].Amount.Cents,
-        _ => throw new LarioDomainException($"Unbekannter Buchungstyp '{b.Type}'.")
+            pools.Single(p => p.Amount < Money.Zero).Amount.Negate().Cents,
+        BookingType.Refund => accounts[0].Amount.Cents,
+        BookingType.BalanceCorrection => accounts[0].Amount.Cents,
+        _ => throw new LarioDomainException($"Unbekannter Buchungstyp '{type}'.")
     };
 
     /// <summary>
-    /// Storno-Total (Review R1 P2): das Storno ist die exakte Negation
-    /// seines Originals — die Anzeigesumme ist die Negation des
-    /// Original-Anzeigetotals, aufgelöst über
-    /// <see cref="Booking.ReversesBookingId"/>. Damit ist die Konvention
-    /// eindeutig und typabhängig, und das Storno des Stornos (Widerruf)
-    /// ist wieder positiv. Konto- und Poolachse werden nicht mehr
-    /// separat aufaddiert (doppelte Zählung).
+    /// Storno-Total (Review R1 P2 / R2 P2): die <b>Höhe</b> kommt aus den
+    /// eigenen, unveränderlichen Storno-Postings — nicht aus dem Ist-Zustand
+    /// des Originals, das nach dem Storno noch per In-place-Korrektur
+    /// geändert werden darf. Eine solche Korrektur darf die historischen
+    /// Anzeigewerte des Stornos nicht rückwirkend umschreiben (der
+    /// Storno spiegelt die Bewegung zum Stornozeitpunkt). Die
+    /// <b>Konvention</b> (Vorzeichen) bestimmt der Typ der Kettenspitze:
+    /// <list type="number">
+    /// <item>Die Kette wird über <see cref="Booking.ReversesBookingId"/>
+    ///   bis zum ersten Nicht-Storno hochgelaufen (die Typen der
+    ///   Kettenglieder sind unveränderlich); Abbrüche sind
+    ///   Journalintegritätsfehler.</item>
+    /// <item>Jedes Storno negiert exakt die Postings des Vorgängerglieds
+    ///   (<c>ReversalSpec.ToBooking</c>) — die eigenen Postings des
+    ///   Stornos sind also (−1)<sup>k</sup> · Postings der Kettenspitze
+    ///   <i>zum Stornozeitpunkt</i> (k = Kettentiefe).</item>
+    /// <item>Virtuelle Kettenspitze = diese rekonstruierten Postings; auf
+    ///   sie wird die Anzeigekonvention des Spitzentyps angewendet
+    ///   (<see cref="OriginalDisplayTotal"/>) und das Ergebnis je
+    ///   Kettentiefe vorzeichengekehrt. Das Storno des Stornos
+    ///   (Widerruf) ist damit wieder positiv.</item>
+    /// </list>
+    /// Konto- und Poolachse werden dabei nicht addiert — dieselbe Bewegung
+    /// erscheint auf beiden Achsen, die Konvention wählt genau eine.
     /// </summary>
     private static long ReversalTotal(Booking reversal, BookingJournal journal)
     {
-        if (reversal.ReversesBookingId is not { } originalId)
+        var byId = journal.Bookings.ToDictionary(b => b.Id);
+        var current = reversal;
+        var links = 0;
+        while (current.Type == BookingType.Reversal
+               && current.ReversesBookingId is { } parentId)
         {
-            throw new LarioDomainException(
-                $"Storno '{reversal.Id}' verweist auf kein Original.");
+            if (!byId.TryGetValue(parentId, out var parent))
+            {
+                throw new LarioDomainException(
+                    $"Storno '{reversal.Id}': die Storno-Kette ist unterbrochen — " +
+                    $"das Original '{parentId}' fehlt im Journal (Journalintegrität).");
+            }
+
+            current = parent;
+            links++;
         }
 
-        var original = journal.Bookings.FirstOrDefault(b => b.Id == originalId);
-        if (original is null)
-        {
-            throw new LarioDomainException(
-                $"Storno '{reversal.Id}': Original '{originalId}' fehlt im Journal — " +
-                "Journalintegrität verletzt.");
-        }
+        // (−1)^links: gerade Tiefe → eigene Postings sind die der Spitze
+        // zum Stornozeitpunkt; ungerade → Negation davon.
+        var negate = links % 2 == 1;
+        var virtualAccounts = reversal.AccountPostings
+            .Select(p => negate
+                ? new AccountPosting { AccountId = p.AccountId, Amount = p.Amount.Negate() }
+                : p)
+            .ToList();
+        var virtualPools = reversal.PoolPostings
+            .Select(p => negate
+                ? new PoolPosting { PoolId = p.PoolId, Amount = p.Amount.Negate() }
+                : p)
+            .ToList();
 
-        return -ComputeTotal(original, journal);
+        var rootTotal = OriginalDisplayTotal(current.Type, virtualAccounts, virtualPools);
+        return negate ? -rootTotal : rootTotal;
     }
 
     /// <summary>
