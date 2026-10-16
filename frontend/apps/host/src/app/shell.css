@@ -1,0 +1,57 @@
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 0.6rem 1.5rem;
+}
+
+.topbar-brand {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.topbar-nav {
+  display: flex;
+  gap: 0.25rem;
+  flex: 1;
+}
+
+.topbar-nav a {
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.topbar-nav a:hover {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.topbar-nav a.active {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary-strong);
+  font-weight: 600;
+}
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.topbar-username {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.content {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}

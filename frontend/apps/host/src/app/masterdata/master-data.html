@@ -1,0 +1,308 @@
+<section>
+  <h2>Stammdaten</h2>
+
+  @if (loading()) {
+    <p class="empty">Lade Stammdaten …</p>
+  } @else {
+    @if (error(); as err) {
+      <div class="banner banner-error" role="alert">
+        <strong>Fehler:</strong> {{ err.message }}
+      </div>
+    }
+
+    @if (success(); as msg) {
+      <div class="banner banner-success" role="status">{{ msg }}</div>
+    }
+
+    <div class="md-grid">
+      <!-- Konten -->
+      <section class="md-card">
+        <h3>Konten</h3>
+        <ul class="md-list">
+          @for (account of allAccounts(); track account.id) {
+            <li [class.archived]="account.status === 'archived'">
+              <span class="md-name">
+                {{ account.name }}
+                <em class="muted">({{ account.type === 'Savings' ? 'Sparkonto' : 'Bank' }})</em>
+                @if (account.status === 'archived') {
+                  <span class="badge badge-muted">archiviert</span>
+                }
+              </span>
+              <span class="md-actions">
+                <button type="button" class="btn btn-small" [disabled]="busy()"
+                  (click)="openRename({ kind: 'account', id: account.id, currentName: account.name })">
+                  Umbenennen
+                </button>
+                @if (account.status === 'active') {
+                  <button type="button" class="btn btn-small" [disabled]="busy()"
+                    (click)="archive('account', account.id, account.name)">
+                    Archivieren
+                  </button>
+                } @else {
+                  <button type="button" class="btn btn-small" [disabled]="busy()"
+                    (click)="unarchive('account', account.id, account.name)">
+                    Reaktivieren
+                  </button>
+                }
+              </span>
+            </li>
+            @if (allAccounts().length === 0) {
+              <li class="muted">Keine Konten vorhanden.</li>
+            }
+          }
+        </ul>
+        <form class="md-create" (ngSubmit)="createAccount()" novalidate>
+          <div class="grid-3">
+            <label class="field">
+              <span class="field-label">Name</span>
+              <input type="text" [(ngModel)]="newAccountName" name="newAccountName" [disabled]="busy()" required />
+            </label>
+            <label class="field">
+              <span class="field-label">Typ</span>
+              <select [(ngModel)]="newAccountType" name="newAccountType" [disabled]="busy()">
+                <option value="Bank">Bank</option>
+                <option value="Savings">Sparkonto</option>
+              </select>
+            </label>
+            <label class="field field-check">
+              <input type="checkbox" [(ngModel)]="newAccountInterestBearing" name="newAccountInterestBearing" [disabled]="busy()" />
+              <span>verzinst</span>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-small btn-primary" [disabled]="busy() || newAccountName.trim() === ''">
+            + Konto anlegen
+          </button>
+        </form>
+      </section>
+
+      <!-- Pools -->
+      <section class="md-card">
+        <h3>Pools</h3>
+        <ul class="md-list">
+          @for (pool of allPools(); track pool.id) {
+            <li [class.archived]="pool.status === 'archived'">
+              <span class="md-name">
+                {{ pool.name }}
+                @if (pool.status === 'archived') {
+                  <span class="badge badge-muted">archiviert</span>
+                }
+              </span>
+              <span class="md-actions">
+                <button type="button" class="btn btn-small" [disabled]="busy()"
+                  (click)="openRename({ kind: 'pool', id: pool.id, currentName: pool.name })">
+                  Umbenennen
+                </button>
+                @if (pool.status === 'active') {
+                  <button type="button" class="btn btn-small" [disabled]="busy()"
+                    (click)="archive('pool', pool.id, pool.name)">
+                    Archivieren
+                  </button>
+                } @else {
+                  <button type="button" class="btn btn-small" [disabled]="busy()"
+                    (click)="unarchive('pool', pool.id, pool.name)">
+                    Reaktivieren
+                  </button>
+                }
+              </span>
+            </li>
+            @if (allPools().length === 0) {
+              <li class="muted">Keine Pools vorhanden.</li>
+            }
+          }
+        </ul>
+        <form class="md-create" (ngSubmit)="createPool()" novalidate>
+          <label class="field">
+            <span class="field-label">Name</span>
+            <input type="text" [(ngModel)]="newPoolName" name="newPoolName" [disabled]="busy()" required />
+          </label>
+          <button type="submit" class="btn btn-small btn-primary" [disabled]="busy() || newPoolName.trim() === ''">
+            + Pool anlegen
+          </button>
+        </form>
+      </section>
+
+      <!-- Kategorien -->
+      <section class="md-card">
+        <h3>Kategorien</h3>
+        <ul class="md-list">
+          @for (category of allCategories(); track category.id) {
+            <li [class.archived]="category.status === 'archived'">
+              <span class="md-name">
+                {{ category.name }}
+                @if (category.taxPreset) {
+                  <span class="tax-hint">St.: {{ presetLabel(category.taxPreset) }}</span>
+                }
+                @if (category.status === 'archived') {
+                  <span class="badge badge-muted">archiviert</span>
+                }
+              </span>
+              <span class="md-actions">
+                <button type="button" class="btn btn-small" [disabled]="busy()"
+                  (click)="openRename({ kind: 'category', id: category.id, currentName: category.name })">
+                  Umbenennen
+                </button>
+                <button type="button" class="btn btn-small" [disabled]="busy()"
+                  (click)="openPreset(category.id, category.name)">
+                  St.-Voreinstellung
+                </button>
+                @if (category.status === 'active') {
+                  <button type="button" class="btn btn-small" [disabled]="busy()"
+                    (click)="archive('category', category.id, category.name)">
+                    Archivieren
+                  </button>
+                } @else {
+                  <button type="button" class="btn btn-small" [disabled]="busy()"
+                    (click)="unarchive('category', category.id, category.name)">
+                    Reaktivieren
+                  </button>
+                }
+              </span>
+            </li>
+            @if (allCategories().length === 0) {
+              <li class="muted">Keine Kategorien vorhanden.</li>
+            }
+          }
+        </ul>
+        <form class="md-create" (ngSubmit)="createCategory()" novalidate>
+          <div class="grid-2">
+            <label class="field">
+              <span class="field-label">Name</span>
+              <input type="text" [(ngModel)]="newCategoryName" name="newCategoryName" [disabled]="busy()" required />
+            </label>
+            <label class="field">
+              <span class="field-label">Elternkategorie (optional)</span>
+              <select [(ngModel)]="newCategoryParent" name="newCategoryParent" [disabled]="busy()">
+                <option value="">— keine —</option>
+                @for (category of categories(); track category.id) {
+                  <option [value]="category.id">{{ category.name }}</option>
+                }
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-small btn-primary" [disabled]="busy() || newCategoryName.trim() === ''">
+            + Kategorie anlegen
+          </button>
+        </form>
+      </section>
+
+      <!-- Steuerkategorien -->
+      <section class="md-card">
+        <h3>Steuerkategorien</h3>
+        <ul class="md-list">
+          @for (tax of allTaxCategories(); track tax.id) {
+            <li [class.archived]="tax.status === 'archived'">
+              <span class="md-name">
+                {{ tax.name }}
+                @if (tax.status === 'archived') {
+                  <span class="badge badge-muted">archiviert</span>
+                }
+              </span>
+              <span class="md-actions">
+                <button type="button" class="btn btn-small" [disabled]="busy()"
+                  (click)="openRename({ kind: 'taxCategory', id: tax.id, currentName: tax.name })">
+                  Umbenennen
+                </button>
+                @if (tax.status === 'active') {
+                  <button type="button" class="btn btn-small" [disabled]="busy()"
+                    (click)="archive('taxCategory', tax.id, tax.name)">
+                    Archivieren
+                  </button>
+                } @else {
+                  <button type="button" class="btn btn-small" [disabled]="busy()"
+                    (click)="unarchive('taxCategory', tax.id, tax.name)">
+                    Reaktivieren
+                  </button>
+                }
+              </span>
+            </li>
+            @if (allTaxCategories().length === 0) {
+              <li class="muted">Keine Steuerkategorien vorhanden.</li>
+            }
+          }
+        </ul>
+        <form class="md-create" (ngSubmit)="createTaxCategory()" novalidate>
+          <div class="grid-2">
+            <label class="field">
+              <span class="field-label">Name</span>
+              <input type="text" [(ngModel)]="newTaxCategoryName" name="newTaxCategoryName" [disabled]="busy()" required />
+            </label>
+            <label class="field">
+              <span class="field-label">Elternkategorie (optional)</span>
+              <select [(ngModel)]="newTaxCategoryParent" name="newTaxCategoryParent" [disabled]="busy()">
+                <option value="">— keine —</option>
+                @for (tax of taxCategories(); track tax.id) {
+                  <option [value]="tax.id">{{ tax.name }}</option>
+                }
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-small btn-primary" [disabled]="busy() || newTaxCategoryName.trim() === ''">
+            + Steuerkategorie anlegen
+          </button>
+        </form>
+      </section>
+    </div>
+  }
+</section>
+
+<!-- Umbenennen-Dialog -->
+@if (rename(); as row) {
+  <div class="dialog-overlay" (click.self)="closeRename()">
+    <div class="dialog" role="dialog" aria-label="Umbenennen">
+      <h3>Umbenennen</h3>
+      <label class="field">
+        <span class="field-label">Neuer Name</span>
+        <input type="text" [(ngModel)]="renameText" [disabled]="busy()" (keyup.enter)="submitRename()" />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn" (click)="closeRename()" [disabled]="busy()">Abbrechen</button>
+        <button type="button" class="btn btn-primary" [disabled]="busy() || renameText.trim() === ''"
+          (click)="submitRename()">
+          Speichern
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Steuer-Voreinstellungs-Dialog -->
+@if (presetTarget(); as target) {
+  <div class="dialog-overlay" (click.self)="closePreset()">
+    <div class="dialog" role="dialog" aria-label="Steuer-Voreinstellung">
+      <h3>St.-Voreinstellung für {{ target.name }}</h3>
+
+      <label class="field field-check">
+        <input type="checkbox" [(ngModel)]="presetRelevant" [disabled]="busy()" />
+        <span>Steuerrelevant</span>
+      </label>
+
+      @if (presetRelevant) {
+        <label class="field">
+          <span class="field-label">Steuerkategorie</span>
+          <select [(ngModel)]="presetTaxCategoryId" [disabled]="busy()">
+            <option value="">— keine —</option>
+            @for (tax of taxCategories(); track tax.id) {
+              <option [value]="tax.id">{{ tax.name }}</option>
+            }
+          </select>
+        </label>
+      }
+
+      <label class="field field-check">
+        <input type="checkbox" [(ngModel)]="presetInherit" [disabled]="busy()" />
+        <span>Auf Unterkategorien vererben</span>
+      </label>
+
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-danger" (click)="removePreset()" [disabled]="busy()">
+          Voreinstellung entfernen
+        </button>
+        <span class="flex-spacer"></span>
+        <button type="button" class="btn" (click)="closePreset()" [disabled]="busy()">Abbrechen</button>
+        <button type="button" class="btn btn-primary" (click)="submitPreset()" [disabled]="busy()">
+          Speichern
+        </button>
+      </div>
+    </div>
+  </div>
+}

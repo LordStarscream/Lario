@@ -1,0 +1,255 @@
+<section class="list-header">
+  <h2>Buchungen</h2>
+  <form class="filters" (ngSubmit)="load()" novalidate>
+    <label class="field field-inline">
+      <span class="field-label">Typ</span>
+      <select name="type" [(ngModel)]="typeFilter">
+        @for (t of filterTypes; track t.value) {
+          <option [value]="t.value">{{ t.label }}</option>
+        }
+      </select>
+    </label>
+    <label class="field field-inline">
+      <span class="field-label">Von</span>
+      <input type="date" name="from" [(ngModel)]="fromFilter" />
+    </label>
+    <label class="field field-inline">
+      <span class="field-label">Bis</span>
+      <input type="date" name="to" [(ngModel)]="toFilter" />
+    </label>
+    <button type="submit" class="btn">Filtern</button>
+  </form>
+</section>
+
+@if (loadError(); as err) {
+  <div class="banner banner-error" role="alert">
+    <strong>Fehler beim Laden:</strong> {{ err.message }}
+    <button type="button" class="btn btn-small" (click)="load()">Erneut versuchen</button>
+  </div>
+}
+
+@if (success(); as msg) {
+  <div class="banner banner-success" role="status">{{ msg }}</div>
+}
+
+@if (loading() && items().length === 0) {
+  <p class="empty">Lade Buchungen …</p>
+} @else if (!loading() && items().length === 0) {
+  <p class="empty">Keine Buchungen für den gewählten Filter.</p>
+} @else {
+  <table class="table bookings">
+    <thead>
+      <tr>
+        <th>Datum</th>
+        <th>Typ</th>
+        <th>Konto</th>
+        <th>Aufteilung</th>
+        <th class="num">Betrag</th>
+        <th>Aktionen</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (item of items(); track item.id) {
+        <tr [class.reversed]="item.effectivelyReversed">
+          <td>{{ formatDate(item.date) }}</td>
+          <td>
+            <span class="badge">{{ typeLabel(item.type) }}</span>
+            @if (item.effectivelyReversed) {
+              <span class="badge badge-muted">gestornt</span>
+            }
+          </td>
+          <td>{{ item.accountName ?? '—' }}</td>
+          <td class="splits">
+            @for (split of item.splits; track $index) {
+              <span class="split-chip">
+                {{ split.poolName ?? 'Konto' }}
+                @if (split.categoryName) {
+                  <em>/ {{ split.categoryName }}</em>
+                }
+                @if (split.taxRelevant === true) {
+                  <span class="tax-badge">St.</span>
+                }
+              </span>
+            }
+            @if (item.splits.length === 0) {
+              <span class="muted">—</span>
+            }
+          </td>
+          <td class="num">{{ formatCents(item.totalAmount) }}</td>
+          <td class="actions">
+            <button
+              type="button"
+              class="btn btn-small"
+              [disabled]="item.effectivelyReversed"
+              (click)="goCorrection(item.id)"
+            >
+              Korrektur
+            </button>
+            <button
+              type="button"
+              class="btn btn-small"
+              [disabled]="item.effectivelyReversed || item.type === 'Reversal'"
+              (click)="openReversal(item)"
+            >
+              Storno
+            </button>
+            @if (item.type === 'Expense' && !item.effectivelyReversed) {
+              <button type="button" class="btn btn-small" (click)="openRefund(item)">
+                Erstattung
+              </button>
+            }
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+}
+
+<!-- Storno-Dialog -->
+@if (reversal(); as rev) {
+  <div class="dialog-overlay" (click.self)="closeReversal()">
+    <div class="dialog" role="dialog" aria-label="Storno">
+      <h3>Storno buchen</h3>
+      <p class="dialog-sub">
+        Storno zu {{ formatDate(rev.booking.date) }}
+        ({{ typeLabel(rev.booking.type) }}, {{ formatCents(rev.booking.totalAmount) }}).
+        Das Storno wird als neue Buchung angehängt; die Ursprungsbuchung bleibt
+        als gestört markiert erhalten.
+      </p>
+
+      <label class="field">
+        <span class="field-label">Datum des Stornos</span>
+        <input type="date" [(ngModel)]="rev.date" [disabled]="rev.busy" />
+      </label>
+
+      <label class="field">
+        <span class="field-label">Notiz (optional)</span>
+        <input
+          type="text"
+          [(ngModel)]="rev.note"
+          [disabled]="rev.busy"
+          placeholder="z. B. falsch gebucht"
+        />
+      </label>
+
+      @if (rev.error; as err) {
+        <div class="banner banner-error" role="alert">
+          <strong>{{ err.code === 'domain_conflict' ? 'Revisionskonflikt' : 'Fehler' }}:</strong>
+          {{ err.message }}
+          @if (err.expectedBaseRevision !== null) {
+            <span class="revision-hint">
+              (Erwartete Revision {{ err.expectedBaseRevision }}, aktuelle Revision
+              {{ err.actualBaseRevision ?? '?' }} — bitte Liste neu laden.)
+            </span>
+          }
+        </div>
+      }
+
+      <div class="dialog-actions">
+        <button type="button" class="btn" (click)="closeReversal()" [disabled]="rev.busy">
+          Abbrechen
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          [disabled]="rev.busy || !rev.date"
+          (click)="submitReversal()"
+        >
+          {{ rev.busy ? 'Wird gebucht …' : 'Storno buchen' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Erstattungs-Dialog -->
+@if (refund(); as rf) {
+  <div class="dialog-overlay" (click.self)="closeRefund()">
+    <div class="dialog" role="dialog" aria-label="Erstattung">
+      <h3>Erstattung buchen</h3>
+      <p class="dialog-sub">
+        Erstattung zu {{ formatDate(rf.booking.date) }}
+        ({{ typeLabel(rf.booking.type) }}, {{ formatCents(rf.booking.totalAmount) }}).
+        Beträge fließen an die Ursprungspools zurück, höchstens bis zur
+        ursprünglichen Aufteilung.
+      </p>
+
+      @if (rf.loading) {
+        <p class="muted">Lade Buchungsdaten …</p>
+      } @else if (rf.error; as err) {
+        <div class="banner banner-error" role="alert">
+          <strong>Fehler:</strong> {{ err.message }}
+        </div>
+      } @else {
+        <label class="field">
+          <span class="field-label">Konto</span>
+          <select [(ngModel)]="rf.accountId" [disabled]="rf.busy">
+            <option value="" disabled>Bitte wählen …</option>
+            @for (account of catalog.accounts(); track account.id) {
+              <option [value]="account.id">{{ account.name }}</option>
+            }
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Datum</span>
+          <input type="date" [(ngModel)]="rf.date" [disabled]="rf.busy" />
+        </label>
+
+        <table class="table table-small">
+          <thead>
+            <tr>
+              <th>Pool</th>
+              <th>Max.</th>
+              <th class="num">Erstattung (€)</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (line of rf.lines; track line.poolId) {
+              <tr>
+                <td>{{ line.poolName ?? line.poolId }}</td>
+                <td class="num muted">{{ formatCents(line.maxCents) }}</td>
+                <td class="num">
+                  <input
+                    type="text"
+                    inputmode="decimal"
+                    class="money-input"
+                    [ngModel]="line.amountText"
+                    (ngModelChange)="line.amountText = $event"
+                    [disabled]="rf.busy"
+                    placeholder="0,00"
+                  />
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+
+        @if (refundValid()) {
+          <p class="refund-total">Erstattung gesamt: {{ formatCents(refundSumCents()) }}</p>
+        }
+
+        @if (rf.error; as err) {
+          <div class="banner banner-error" role="alert">
+            <strong>{{ err.code === 'domain_conflict' ? 'Revisionskonflikt' : 'Fehler' }}:</strong>
+            {{ err.message }}
+          </div>
+        }
+      }
+
+      <div class="dialog-actions">
+        <button type="button" class="btn" (click)="closeRefund()" [disabled]="rf.busy || rf.loading">
+          Abbrechen
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          [disabled]="rf.busy || rf.loading || !refundValid()"
+          (click)="submitRefund()"
+        >
+          {{ rf.busy ? 'Wird gebucht …' : 'Erstattung buchen' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

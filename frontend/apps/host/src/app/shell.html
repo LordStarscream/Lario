@@ -1,0 +1,17 @@
+<header class="topbar">
+  <div class="topbar-brand">Lario</div>
+  <nav class="topbar-nav">
+    <a routerLink="/" routerLinkActive="active">Buchungen</a>
+    <a routerLink="/ausgaben/neu" routerLinkActive="active">Neue Ausgabe</a>
+    <a routerLink="/anfangsbestaende" routerLinkActive="active">Anfangsbestände</a>
+    <a routerLink="/stammdaten" routerLinkActive="active">Stammdaten</a>
+  </nav>
+  <div class="topbar-user">
+    <span class="topbar-username">{{ auth.user() ?? '—' }}</span>
+    <button type="button" class="btn btn-ghost" (click)="logout()">Abmelden</button>
+  </div>
+</header>
+
+<main class="content">
+  <router-outlet />
+</main>
