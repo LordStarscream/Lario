@@ -7,6 +7,7 @@ import type { AccountPostingDto } from './AccountPostingDto';
 import type { ExpenseSplitDto } from './ExpenseSplitDto';
 import type { PoolAllocationDto } from './PoolAllocationDto';
 import type { PoolPostingDto } from './PoolPostingDto';
+import type { RefundedPoolDto } from './RefundedPoolDto';
 export type BookingDetailDto = {
     id: string;
     type: string;
@@ -25,5 +26,6 @@ export type BookingDetailDto = {
     transferPurposes: Array<PoolAllocationDto>;
     reassignmentAccounts: Array<AccountAllocationDto>;
     totalAmount: number | string;
+    refundedByPool: Array<RefundedPoolDto>;
 };
 

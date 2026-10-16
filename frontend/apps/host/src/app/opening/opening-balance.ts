@@ -1,9 +1,11 @@
 import { ChangeDetectionStrategy, Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
+import { ApiError as ApiErrorClass } from '../../generated/core/ApiError';
 import type { ApiErrorInfo } from '../../api/api-error';
 import { ApiErrorHandler } from '../../api/error-handler';
 import { CatalogService } from '../../api/catalogs';
+import { PendingOperation } from '../../api/pending-operation';
 import { formatCents, parseEuroToCents, todayIso } from '../../api/money';
 import { JournalWriteEndpointsService } from '../../generated/services/JournalWriteEndpointsService';
 import type { PoolAllocationCommand } from '../../generated/models/PoolAllocationCommand';
@@ -29,6 +31,12 @@ export class OpeningBalance implements OnInit {
   private readonly router = inject(Router);
   private readonly catalog = inject(CatalogService);
   private readonly errors = inject(ApiErrorHandler);
+  /**
+   * Stabile Operation-Id (Review R3 P1): nach verlorener Antwort sendet
+   * der nächste Klick mit unveränderter Daten dieselbe Operation (gleiche
+   * Id + Payload) — idempotente Quittung statt doppeltem Anfangsbestand.
+   */
+  private readonly pendingOp = new PendingOperation();
   private keyBase = 1;
 
   readonly accounts = this.catalog.accounts;
@@ -42,6 +50,7 @@ export class OpeningBalance implements OnInit {
 
   readonly busy = signal(false);
   readonly error = signal<ApiErrorInfo | null>(null);
+  readonly outcomeUncertain = this.pendingOp.outcomeUncertain;
 
   ngOnInit(): void {
     void this.catalog.load();
@@ -118,23 +127,46 @@ export class OpeningBalance implements OnInit {
           amount: parseEuroToCents(row.amountText) as number,
         }),
       );
-      const random =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? crypto.randomUUID()
-          : Math.random().toString(36).slice(2);
-      await JournalWriteEndpointsService.createOpeningBalance({
-        id: `open-${random}`,
+      const note = this.note.trim() === '' ? null : this.note.trim();
+      const total = parseEuroToCents(this.totalText) as number;
+      // Fingerprint ohne die Operation-Id: unveränderte Daten →
+      // dieselbe Id (Idempotenz bei verlorener Antwort).
+      const fingerprint = JSON.stringify({
         date: this.date,
-        total: parseEuroToCents(this.totalText) as number,
+        total,
         accountId: this.accountId,
         distribution,
-        note: this.note.trim() === '' ? null : this.note.trim(),
+        note,
       });
+      await JournalWriteEndpointsService.createOpeningBalance({
+        id: this.pendingOp.nextId('open', fingerprint),
+        date: this.date,
+        total,
+        accountId: this.accountId,
+        distribution,
+        note,
+      });
+      this.pendingOp.release();
       await this.router.navigate(['/']);
     } catch (err) {
       this.error.set(this.errors.handle(err));
+      // Definitive Ablehnung (4xx): die Operation wurde sicher nicht
+      // committet → neue Id beim nächsten Versuch. Ansonsten (keine
+      // Antwort, 5xx): Ausgang unklar → dieselbe Id + Payload wiedersenden.
+      const definitive =
+        err instanceof ApiErrorClass && err.status >= 400 && err.status < 500;
+      if (definitive) {
+        this.pendingOp.release();
+      } else {
+        this.pendingOp.markOutcomeUncertain();
+      }
       this.busy.set(false);
     }
+  }
+
+  /** Rücksetzen: neue Operation-Id für die nächste Einreichung. */
+  resetPendingOperation(): void {
+    this.pendingOp.release();
   }
 
   formatCents = formatCents;

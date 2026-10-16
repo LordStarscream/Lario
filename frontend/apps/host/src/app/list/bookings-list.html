@@ -196,34 +196,43 @@
           <input type="date" [(ngModel)]="rf.date" [disabled]="rf.busy" />
         </label>
 
-        <table class="table table-small">
-          <thead>
-            <tr>
-              <th>Pool</th>
-              <th>Max.</th>
-              <th class="num">Erstattung (€)</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (line of rf.lines; track line.poolId) {
+        @if (rf.fullyRefunded) {
+          <div class="banner banner-info" role="status">
+            Diese Ausgabe ist vollständig erstattet — es bleibt nichts
+            mehr zu erstatten.
+          </div>
+        } @else {
+          <table class="table table-small">
+            <thead>
               <tr>
-                <td>{{ line.poolName ?? line.poolId }}</td>
-                <td class="num muted">{{ formatCents(line.maxCents) }}</td>
-                <td class="num">
-                  <input
-                    type="text"
-                    inputmode="decimal"
-                    class="money-input"
-                    [ngModel]="line.amountText"
-                    (ngModelChange)="line.amountText = $event"
-                    [disabled]="rf.busy"
-                    placeholder="0,00"
-                  />
-                </td>
+                <th>Pool</th>
+                <th>Erstattet</th>
+                <th>Verbleibend (Max.)</th>
+                <th class="num">Erstattung (€)</th>
               </tr>
-            }
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              @for (line of rf.lines; track line.poolId) {
+                <tr>
+                  <td>{{ line.poolName ?? line.poolId }}</td>
+                  <td class="num muted">{{ formatCents(line.refundedCents) }}</td>
+                  <td class="num muted">{{ formatCents(line.maxCents) }}</td>
+                  <td class="num">
+                    <input
+                      type="text"
+                      inputmode="decimal"
+                      class="money-input"
+                      [ngModel]="line.amountText"
+                      (ngModelChange)="line.amountText = $event"
+                      [disabled]="rf.busy"
+                      placeholder="0,00"
+                    />
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
 
         @if (refundValid()) {
           <p class="refund-total">Erstattung gesamt: {{ formatCents(refundSumCents()) }}</p>

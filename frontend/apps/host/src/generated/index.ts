@@ -43,6 +43,7 @@ export type { PoolDto } from './models/PoolDto';
 export type { PoolPostingDto } from './models/PoolPostingDto';
 export type { ReassignmentCommand } from './models/ReassignmentCommand';
 export type { RefundCommand } from './models/RefundCommand';
+export type { RefundedPoolDto } from './models/RefundedPoolDto';
 export type { RefundLineCommand } from './models/RefundLineCommand';
 export type { RenameRequest } from './models/RenameRequest';
 export type { ReversalCommand } from './models/ReversalCommand';

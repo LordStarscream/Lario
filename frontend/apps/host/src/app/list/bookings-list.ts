@@ -23,8 +23,10 @@ export interface ReversalDialogState {
 export interface RefundLineState {
   poolId: string;
   poolName: string | null;
-  /** Deckel: Aufteilung des Ursprungspools in Zenten. */
+  /** Verbleibender Deckel in Zenten: Split-Position des Pools minus bereits erstattet. */
   maxCents: number;
+  /** Bereits gewährte Erstattungen an diesen Pool in Zenten (Info-Anzeige). */
+  refundedCents: number;
   amountText: string;
 }
 
@@ -37,6 +39,8 @@ export interface RefundDialogState {
   accountId: string;
   date: string;
   lines: RefundLineState[];
+  /** true, wenn alle Ursprungspools vollständig erstattet sind. */
+  fullyRefunded: boolean;
   error: ApiErrorInfo | null;
 }
 
@@ -73,6 +77,64 @@ function newOperationId(prefix: string): string {
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2);
   return `${prefix}-${random}`;
+}
+
+/**
+ * Erstattungszeilen aus dem Buchungsdetail ableiten (Review R3 P2):
+ *
+ * - Aggregation pro Pool: eine Erstattung fasst einen Pool in einer
+ *   Zeile auf (serverseitige Regel); mehrere Splits desselben Pools
+ *   zählen zusammen zur Ursprungs-Position.
+ * - Verbleibender Deckel pro Pool = Split-Position minus bereits
+ *   gewährter Erstattungen ({@link BookingDetailDto.refundedByPool}) —
+ *   nach einer Teilerstattung ist nur noch der Rest erstattungsfähig.
+ * - Vollständig erstattete Pools fallen aus den Zeilen heraus;
+ *   sind alle Pools vollständig erstattet, ist die Ausgabe
+ *   {@link fullyRefunded}.
+ */
+export function refundLinesFromDetail(detail: BookingDetailDto): {
+  lines: RefundLineState[];
+  fullyRefunded: boolean;
+} {
+  const positionByPool = new Map<string, number>();
+  const nameByPool = new Map<string, string | null>();
+  for (const split of detail.splits) {
+    if (!split.poolId) {
+      continue;
+    }
+    positionByPool.set(
+      split.poolId,
+      (positionByPool.get(split.poolId) ?? 0) + Number(split.amount),
+    );
+    if (!nameByPool.has(split.poolId)) {
+      nameByPool.set(split.poolId, split.poolName);
+    }
+  }
+
+  const refundedByPool = new Map<string, number>();
+  for (const entry of detail.refundedByPool) {
+    refundedByPool.set(
+      entry.poolId,
+      (refundedByPool.get(entry.poolId) ?? 0) + Number(entry.amount),
+    );
+  }
+
+  const lines: RefundLineState[] = [];
+  for (const [poolId, position] of positionByPool) {
+    const refunded = Math.min(refundedByPool.get(poolId) ?? 0, position);
+    const remaining = position - refunded;
+    if (remaining > 0) {
+      lines.push({
+        poolId,
+        poolName: nameByPool.get(poolId) ?? null,
+        maxCents: remaining,
+        refundedCents: refunded,
+        amountText: '',
+      });
+    }
+  }
+
+  return { lines, fullyRefunded: positionByPool.size > 0 && lines.length === 0 };
 }
 
 @Component({
@@ -193,6 +255,7 @@ export class BookingsList implements OnInit {
       accountId: booking.accountId ?? '',
       date: todayIso(),
       lines: [],
+      fullyRefunded: false,
       error: null,
     };
     this.refund.set(state);
@@ -202,18 +265,13 @@ export class BookingsList implements OnInit {
   private async loadRefundDetail(state: RefundDialogState): Promise<void> {
     try {
       const detail = await JournalEndpointsService.getBooking(state.booking.id);
+      const { lines, fullyRefunded } = refundLinesFromDetail(detail);
       this.patchRefund(state, {
         loading: false,
         detail,
         accountId: state.accountId || detail.accountPostings[0]?.accountId || '',
-        lines: detail.splits
-          .filter((s) => s.poolId)
-          .map((s) => ({
-            poolId: s.poolId,
-            poolName: s.poolName,
-            maxCents: Number(s.amount),
-            amountText: '',
-          })),
+        lines,
+        fullyRefunded,
       });
     } catch (error) {
       this.patchRefund(state, { loading: false, error: this.errors.handle(error) });

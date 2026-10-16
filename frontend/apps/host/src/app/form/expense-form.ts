@@ -77,6 +77,12 @@ export class ExpenseForm implements OnInit {
   readonly correctionId: string | null;
   readonly isCorrection: boolean;
   private keyBase = 1;
+  /**
+   * Aufteilungs-Zustand beim Laden der Ursprungsbuchung (Review R3 P2):
+   * bleibt er unverändert, sendet die Korrektur `splits: null` — der
+   * Server hält die Original-Splits (keine stillen Id-/Notizen-Wechsel).
+   */
+  private allocationSnapshot: string | null = null;
 
   date = todayIso();
   accountId = '';
@@ -117,6 +123,10 @@ export class ExpenseForm implements OnInit {
     this.loading.set(true);
     this.loadError.set(null);
     try {
+      // Erst Katalog, dann Detail: die wirksame Steuerkennzeichnung der
+      // Vorbelegung (und damit der Aufteilungs-Fingerprint) hängt vom
+      // Kategorie-Katalog ab (Review R3 P2).
+      await this.catalog.load();
       const detail = await JournalEndpointsService.getBooking(id);
       this.prefillFromDetail(detail);
     } catch (error) {
@@ -134,6 +144,11 @@ export class ExpenseForm implements OnInit {
     this.expectedBaseRevision = Number(detail.baseRevision);
     this.splits = detail.splits.map((split, index) => {
       const row = newSplitRow(index, this.nextKey());
+      // Stabile Split-Identität über Revisionen hinweg (Review R3 P2):
+      // die Original-Id bleibt erhalten, damit eine Korrektur, die die
+      // Aufteilung nicht ändert, die Splits (inkl. Steuerkennzeichnung
+      // und -Notizen) nicht still ersetzt.
+      row.id = split.id;
       row.amountText = toEuroText(split.amount);
       row.poolId = split.poolId;
       row.categoryId = split.categoryId;
@@ -149,6 +164,38 @@ export class ExpenseForm implements OnInit {
     if (this.splits.length === 0) {
       this.splits = [newSplitRow(0, this.nextKey())];
     }
+    // Referenz-Zustand der Aufteilung für den Skalar-Korrektur-Pfad:
+    // ändert sich nur die Buchungsnote (oder Datum/Konto), sendet die
+    // Korrektur splits: null — der Server hält die Original-Splits.
+    this.allocationSnapshot = this.allocationFingerprint();
+  }
+
+  /**
+   * Fingerprint der aktuellen Aufteilung (Gesamtbetrag + Splits) —
+   * identisch, wenn der Nutzer die Aufteilung nicht geändert hat.
+   */
+  private allocationFingerprint(): string {
+    return allocationFingerprint({
+      totalCents: this.totalCents(),
+      splits: this.splits.map((row) => ({
+        id: row.id,
+        amountCents: parseEuroToCents(row.amountText),
+        poolId: row.poolId,
+        categoryId: row.categoryId,
+        note: row.note.trim(),
+        tax: {
+          relevant: this.effectiveTaxRelevant(row),
+          taxCategoryId:
+            this.effectiveTaxRelevant(row) === true
+              ? row.taxCategoryId
+              : null,
+          markedAmountCents:
+            this.effectiveTaxRelevant(row) === true && row.partialCapture
+              ? parseEuroToCents(row.markedText)
+              : null,
+        },
+      })),
+    });
   }
 
   private nextKey(): number {
@@ -365,19 +412,7 @@ export class ExpenseForm implements OnInit {
     try {
       const command = this.buildCommand();
       const created = this.isCorrection
-        ? await JournalWriteEndpointsService.correctBooking(
-            this.correctionId as string,
-            {
-              operationId: command.id,
-              expectedBaseRevision: command.expectedBaseRevision as number,
-              date: command.date,
-              note: command.note,
-              accountId: command.accountId,
-              totalAmount: command.totalAmount,
-              splits: command.splits,
-              allocations: null,
-            },
-          )
+        ? await this.submitCorrection(command)
         : await JournalWriteEndpointsService.createExpense(command);
       this.success.set(
         created.idempotent
@@ -393,6 +428,36 @@ export class ExpenseForm implements OnInit {
     }
   }
 
+  /**
+   * Korrektur absenden (Review R3 P2): bleibt die Aufteilung (Gesamt-
+   * betrag + Splits) unverändert, werden `splits` und `totalAmount`
+   * als null gesendet — der Server hält die Original-Splits mit ihren
+   * Ids, Steuerkennzeichnungen und -Notizen; Datum, Notiz und Konto
+   * sind unabhängig und werden immer gesendet. (Domain-Regel: Splits
+   * nur zusammen mit neuem Gesamtbetrag, Gesamtbetrag ohne Splits nur
+   * wenn er dem Original entspricht — beides gilt hier exakt.)
+   */
+  private async submitCorrection(
+    command: ExpenseCommand,
+  ): Promise<{ idempotent: boolean }> {
+    const allocationUnchanged =
+      this.allocationSnapshot !== null &&
+      this.allocationFingerprint() === this.allocationSnapshot;
+    return JournalWriteEndpointsService.correctBooking(
+      this.correctionId as string,
+      {
+        operationId: command.id,
+        expectedBaseRevision: command.expectedBaseRevision as number,
+        date: command.date,
+        note: command.note,
+        accountId: command.accountId,
+        totalAmount: allocationUnchanged ? null : command.totalAmount,
+        splits: allocationUnchanged ? null : command.splits,
+        allocations: null,
+      },
+    );
+  }
+
   async goBack(): Promise<void> {
     await this.router.navigate(['/']);
   }
@@ -400,4 +465,38 @@ export class ExpenseForm implements OnInit {
   // ---------- Anzeige für das Template ----------
 
   formatCents = formatCents;
+}
+
+export interface AllocationSplitState {
+  id: string;
+  amountCents: number | null;
+  poolId: string;
+  categoryId: string;
+  note: string;
+  /** Wirksame Steuerkennzeichnung (nach Kategorie-Voreinstellung aufgelöst). */
+  tax: {
+    relevant: boolean | null;
+    taxCategoryId: string | null;
+    markedAmountCents: number | null;
+  };
+}
+
+export interface AllocationState {
+  totalCents: number | null;
+  splits: AllocationSplitState[];
+}
+
+/**
+ * Fingerprint der Aufteilung (Review R3 P2): Gesamtbetrag + Splits mit
+ * Id, Betrag, Pool, Kategorie, Notiz und wirksamer Steuerkenn-
+ * zeichnung. Bleibt er vom Vorladen bis zum Absenden unverändert,
+ * sendet die Korrektur `splits: null` / `totalAmount: null` und der
+ * Server hält die Original-Splits.
+ *
+ * Bewusst enthalten ist die Split-Notiz: wird sie geändert, darf die
+ * Korrektur nicht den Skalar-Pfad nehmen, sonst ginge die Änderung
+ * still verloren.
+ */
+export function allocationFingerprint(state: AllocationState): string {
+  return JSON.stringify(state);
 }

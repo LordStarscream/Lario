@@ -105,6 +105,19 @@
       </div>
     }
 
+    @if (outcomeUncertain()) {
+      <div class="banner banner-info" role="alert">
+        <strong>Hinweis:</strong> Der letzte Versuch wurde nicht bestätigt —
+        die Buchung kann möglicherweise schon gebucht sein. Nochmal
+        senden mit unveränderten Daten wiederholt dieselbe Operation
+        (keine doppelte Buchung). Prüfe die Buchungsliste, bevor du neue
+        Daten einreichst.
+        <button type="button" class="btn btn-small" [disabled]="busy()" (click)="resetPendingOperation()">
+          Zurücksetzen (neue Operation)
+        </button>
+      </div>
+    }
+
     @if (issueText) {
       <p class="form-hint issue-hint">{{ issueText }}</p>
     }

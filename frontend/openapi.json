@@ -2307,7 +2307,8 @@
           "splits",
           "transferPurposes",
           "reassignmentAccounts",
-          "totalAmount"
+          "totalAmount",
+          "refundedByPool"
         ],
         "type": "object",
         "properties": {
@@ -2404,6 +2405,12 @@
               "string"
             ],
             "format": "int64"
+          },
+          "refundedByPool": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefundedPoolDto"
+            }
           }
         }
       },
@@ -3318,6 +3325,26 @@
               "null",
               "string"
             ]
+          }
+        }
+      },
+      "RefundedPoolDto": {
+        "required": [
+          "poolId",
+          "amount"
+        ],
+        "type": "object",
+        "properties": {
+          "poolId": {
+            "type": "string"
+          },
+          "amount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
           }
         }
       },
