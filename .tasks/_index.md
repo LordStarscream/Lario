@@ -33,7 +33,7 @@ _Last updated: 16. Okt. 2026_
 | 4 | `step-4-einnahmen-ausgaben` | Kernbuchungen: Einnahmen/Ausgaben/Splits, Postings, Steuerkennzeichnung je Teilposten | 3 | **abgenommen (12. Okt. 2026)** — Merge `375b2ca`, PR #5 |
 | 5 | `step-5-transfers-ausgleiche` | Transfers, Umwidmung, interne Ausgleiche, signierte Konto-Pool-Zuordnung | 4 | **abgenommen und gemerged (13. Okt. 2026)** — Merge `a004d10`, PR #6 (12. Okt. 2026 implementiert; sechs Review-Runden 13./14. Okt. 2026, alle Befunde behoben, 291/291 Tests; dokumentierte Abweichung: Umwidmung darf sichtbare negative Poolbestände erzeugen, §3.6) |
 | 6 | — | Korrekturen/Storno, Erstattungen, Kontostandsabgleich, Revisionskonflikte | 5 | **abgenommen und gemerged (15. Okt. 2026)** — Merge `140446d`, PR #8 (drei Review-Runden, alle Befunde behoben; 343/343 Tests) |
-| 7 | — | Produktive REST-API (Auth, DTOs, Validierung), Desktop-Ausgabeformular | 3–6 | **aktiv** (T1–T6 + Review R1/R2 behoben; PR #9 gemerged `479cf93`; T6 `b7623fc` gepusht, **PR #10** offen; T7 UI-Tests/Abnahmedoku + T8 Review offen) |
+| 7 | — | Produktive REST-API (Auth, DTOs, Validierung), Desktop-Ausgabeformular | 3–6 | **aktiv** (T1–T6 + Review R1–R4 behoben; PR #9 gemerged `479cf93`; T6 `b7623fc` gepusht, **PR #10** offen; R4: `3ff15a8` Server-Fix, `f8bf24a` Client F1–F6, `9ba83c1` Ablauf-Specs — 7 host-Test-Files/39 Tests grün; T7 UI-Tests/Abnahmedoku + T8 Review offen) |
 | 7a | — | PDF-/Bildnachweise in der Hauptanwendung (Upload, Ablage, Zuordnung) | 7 | geplant |
 | 8 | — | Produktive mobile Offline-Erfassung: Formular, Outbox, lokale Transaktion | 2, 7 | geplant |
 | 9 | — | Sync neuer Ausgaben: Kopplung, Snapshot/Cursor, Idempotenz, Quittung | 7–8 | geplant |

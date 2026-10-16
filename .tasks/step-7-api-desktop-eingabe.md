@@ -26,7 +26,7 @@
 - [x] T5: Persistenz-/Neustart-Tests (A4) + API-Referenzzfälle komplett (A3) + „keine Salden als Input" (A5)
 - [x] T6: Frontend — Login/Token, Ausgabeformular, Liste, Anfangsbestände, Stammdaten-minimal, Korrektur/Storno/Erstattung-Aktionen, Fehleranzeige; API-Client neu generieren (A6/A7/A8)
 - [ ] T7: UI-Tests (vitest) + Build-/Lint-Verifikation (npm) + Abnahmedoku `docs/step-7/step7-api-desktop-eingabe.md` + README-Befehle
-- [ ] T8: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR (R1 `ad7d19e`, R2 `25657ef` und R3 `183babc`+`3b34ab7` erledigt — jeweils gepusht; auf weitere Runden des externen Reviews warten)
+- [ ] T8: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR (R1 `ad7d19e`, R2 `25657ef`, R3 `183babc`+`3b34ab7` und R4 `3ff15a8` Server + `f8bf24a` Client + `9ba83c1` Ablauf-Specs erledigt — jeweils gepusht; auf weitere Runden des externen Reviews warten; Details: `step-7-r4-befunde.md`)
 
 ## Status
 
