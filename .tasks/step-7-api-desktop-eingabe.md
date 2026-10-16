@@ -130,6 +130,36 @@
     T6-Commit neu generiert werden (der uncommittede Client im Working
     Tree trägt noch den alten Namen).
 
+- **Review R2 erledigt** (16. Okt. 2026, Commit `25657ef`, gepusht; PR #9
+  aktualisiert): Review von `dbc2c3d` (1 Befund: P2; bestätigt, behoben).
+  - **P2 (P2):** Das R1-Fix für das Storno-Total (P3) berechnete das Storno
+    rekursiv über den <i>aktuellen</i> Original-Anzeigetotal. Nach Widerruf
+    (Storno des Stornos) und anschließender In-place-Korrektur des Originals
+    würden historische Storno-Anzeigewerte rückwirkend umgeschrieben
+    (E(85)→R→W→Korrektur E(80): R −8500 → −8000, W +8500 → +8000) und
+    widersprächen den eigenen Storno-Postings und dem identischen
+    Storno-Replay. Fix in `JournalDtoMapper`: Höhe aus den eigenen,
+    unveränderlichen Storno-Postings — die Kette (ReversesBookingId bis zum
+    ersten Nicht-Storno) rekonstruiert die Kettenspitze zum Stornozeitpunkt
+    ((−1)^k · Spitzenvorlage, k = Kettentiefe; Kettenglieder/Typen sind
+    unveränderlich, Abbruch = Journalintegritätsfehler); die Konvention
+    (Vorzeichen) bestimmt der Typ der Kettenspitze über
+    `OriginalDisplayTotal`, das Ergebnis wird je Kettentiefe
+    vorzeichengekehrt. Nicht-Storno-Typen hängen nur von den eigenen
+    Postings ab; Konto-/Poolachse werden nicht addiert.
+  - **Regressionstests:** `tests/Lario.Api.Tests/Step7ReviewR2Tests.cs` —
+    2 Tests (E(85)→R→W→Korrektur E(80): R −8.500 / W +8.500 / E 8.000 in
+    Liste, Detail und identischem Storno-Replay; dieselbe Sequenz überlebt
+    den Hostneustart). Beide Tests rot gegen die alte rekursive
+    Implementierung, grün gegen die neue. 428/428 Tests
+    (197 Domain + 146 Infrastructure + 85 Api), 0 Build-Warnungen.
+  - **Nebenbefund (kein Fix in diesem Commit):** Stammdaten-Endpunkte
+    generieren serverseitig Ids (`NewId("acc")` …, MasterDataEndpoints)
+    und ignorieren das Client-`id`-Feld — die Antwort-Ids sind maßgeblich.
+    Für Schritt 7 (Desktop) etabliertes Verhalten; für die mobile
+    Synchronisation (Schritt 9+) gilt stattdessen „gerätegenerierte
+    stabile Ids“ — dort ggf. erneut prüfen.
+
 ## Notizen
 
 - **Umgebung (15. Okt. 2026):** `.NET`-Befehle immer mit `/home/mario/.dotnet/dotnet` ausführen —
