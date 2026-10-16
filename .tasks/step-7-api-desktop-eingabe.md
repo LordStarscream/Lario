@@ -26,10 +26,17 @@
 - [x] T5: Persistenz-/Neustart-Tests (A4) + API-Referenzzfälle komplett (A3) + „keine Salden als Input" (A5)
 - [x] T6: Frontend — Login/Token, Ausgabeformular, Liste, Anfangsbestände, Stammdaten-minimal, Korrektur/Storno/Erstattung-Aktionen, Fehleranzeige; API-Client neu generieren (A6/A7/A8)
 - [ ] T7: UI-Tests (vitest) + Build-/Lint-Verifikation (npm) + Abnahmedoku `docs/step-7/step7-api-desktop-eingabe.md` + README-Befehle
-- [ ] T8: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR (R1 `ad7d19e`, R2 `25657ef`, R3 `183babc`+`3b34ab7` und R4 `3ff15a8` Server + `f8bf24a` Client + `9ba83c1` Ablauf-Specs erledigt — jeweils gepusht; auf weitere Runden des externen Reviews warten; Details: `step-7-r4-befunde.md`)
+- [ ] T8: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR (R1 `ad7d19e`, R2 `25657ef`, R3 `183babc`+`3b34ab7`, R4 `3ff15a8` Server + `f8bf24a` Client + `9ba83c1` Ablauf-Specs, R5 `63d5ae3` erledigt — jeweils gepusht; PR #10 aktualisiert; auf weitere Runden des externen Reviews warten; Details: `step-7-r4-befunde.md`)
 
 ## Status
 
+- **Review R5 erledigt** (17. Okt. 2026, Commit `63d5ae3` gepusht, PR #10 aktualisiert) — alle 5 Befunde behoben:
+  - **R5-1:** Idempotenz-Zustand ging beim 401-Redirect verloren (Zustand lag in der Komponenteninstanz). Fix: `PendingOperation` jetzt Root-Service mit sessionStorage-Persistenz (überlebt Redirect); 4xx gibt eine Operation nur noch ohne vorher unklaren Versuch frei (Commit möglich → Wiedersenden); Split-Ids bei Neuanlagen deterministisch aus Zeileninhalt (FNV-1a, `stableSplitHash`), damit das Wiedersenden dieselbe Payload trägt.
+  - **R5-2:** Korrekturzeile „Wie Voreinstellung“ sendete `tax: null` (alt Kennzeichnung still behalten, z. B. nach Kategorie-Wechsel). Fix: wirksame Voreinstellung der aktuellen Kategorie explizit materialisieren; ohne Preset explizit „nicht relevant“.
+  - **R5-3:** Steuer-Notiz bei „nicht relevant“ wurde verworfen. Fix: Notiz bleibt erhalten (Domain-Regel: Notiz unabhängig vom Relevanz-Flag).
+  - **R5-4:** Mobile-App nicht betroffen (kein 401-Login-Redirect, kein ApiErrorHandler); geteilter Code enthält das Fix.
+  - **R5-5:** Doku: Beispiel deterministische Split-Ids (Konzept, Ausgabenerfassung) + Client-Idempotenz-Zustand (Architekturplan §6).
+  - Tests: 7 neue Host-Komponententests; host 46/46, mobile 23/23, Lint + Build grün. .NET unverändert (435/435).
 - **T1 erledigt** (15. Okt. 2026, Commit `d959a64`): Token-Auth (Login/Logout, 12 h, in-memory,
   widerrufbar), credentials.json (PBKDF2-SHA256 100.000 Iterationen, 0600, einmalige
   Konsolenanzeige), Fehlerformat + Exception-Mapping (400/409/500), ApiExceptionMiddleware,
