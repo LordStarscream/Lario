@@ -37,6 +37,7 @@ function httpError(
 function createForm(
   routeId: string | null = null,
   withPreset = false,
+  extraCategories: CategoryDto[] = [],
 ): ExpenseForm {
   TestBed.resetTestingModule();
   TestBed.configureTestingModule({
@@ -44,7 +45,10 @@ function createForm(
     providers: [
       {
         provide: Router,
-        useValue: { navigate: vi.fn().mockResolvedValue(true) },
+        useValue: {
+          navigate: vi.fn().mockResolvedValue(true),
+          navigateByUrl: vi.fn().mockResolvedValue(true),
+        },
       },
       {
         provide: ActivatedRoute,
@@ -62,25 +66,27 @@ function createForm(
           accounts: () => [],
           pools: () => [],
           categories: () =>
-            (withPreset
-              ? [
-                  {
-                    id: 'cat-1',
-                    name: 'Lebensmittel',
-                    parentId: null,
-                    status: 'active',
-                    baseRevision: 1,
-                    taxPreset: {
-                      taxRelevant: true,
-                      taxCategoryId: 'tax-1',
-                      taxCategoryName: 'Kasse 3',
-                      inheritToChildren: true,
+            ([
+              ...(withPreset
+                ? [
+                    {
+                      id: 'cat-1',
+                      name: 'Lebensmittel',
+                      parentId: null,
+                      status: 'active',
                       baseRevision: 1,
+                      taxPreset: {
+                        taxRelevant: true,
+                        taxCategoryId: 'tax-1',
+                        taxCategoryName: 'Kasse 3',
+                        inheritToChildren: true,
+                        baseRevision: 1,
+                      },
                     },
-                  },
-                ]
-              : []
-            ) as unknown as CategoryDto[],
+                  ]
+                : []),
+              ...extraCategories,
+            ] as unknown as CategoryDto[]),
           taxCategories: () => [],
           load: vi.fn().mockResolvedValue(undefined),
         },
@@ -100,6 +106,9 @@ function fillValidForm(component: ExpenseForm): void {
 }
 
 beforeEach(() => {
+  // Review R5-1: der PendingOperation-Zustand ist pro Root-Service-
+  // Instanz und in sessionStorage persistiert — Testisolierung.
+  sessionStorage.clear();
   // Standard: unerwartete API-Calls werden sichtbar abgelehnt;
   // jeder Test setzt das für seine Calls erwartete Verhalten.
   vi
@@ -340,6 +349,217 @@ describe('ExpenseForm (Review R4: F1 Stable-Operation-Id, F4 Inherit, F5 Steuer-
   });
 });
 
+describe('ExpenseForm (Review R5: Idempotenz über 401, Preset-Wechsel, Notiz)', () => {
+  describe('R5-1: Idempotenz-Zustand überlebt den 401-Login-Redirect', () => {
+    it('gibt eine 4xx nach unklarem Versuch die Operation nicht frei', async () => {
+      const component = createForm();
+      fillValidForm(component);
+      vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mockRejectedValueOnce(httpError(0)) // Antwort verloren → unklar
+        .mockRejectedValueOnce(httpError(401)); // z. B. Session abgelaufen
+
+      await component.submit();
+      expect(component.outcomeUncertain()).toBe(true);
+      await component.submit();
+      // 4xx auf unklaren Versuch: Commit möglich → Operation bleibt
+      // gehalten, statt eine neue Id zu erlauben.
+      expect(component.outcomeUncertain()).toBe(true);
+
+      // Wiederholung mit unveränderten Daten: dieselbe Operation.
+      vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mockResolvedValueOnce(created);
+      await component.submit();
+
+      const calls = vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mock.calls;
+      expect(calls).toHaveLength(3);
+      expect(calls[2][0].id).toBe(calls[0][0].id);
+      expect(JSON.stringify(calls[2][0])).toBe(JSON.stringify(calls[0][0]));
+    });
+
+    it('behält die Operation über eine neue Formularinstanz (Redirect-Szenario)', async () => {
+      const first = createForm();
+      fillValidForm(first);
+      vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mockRejectedValueOnce(httpError(0)); // Commit möglich, Antwort weg
+      await first.submit();
+      expect(first.outcomeUncertain()).toBe(true);
+
+      // Neue Instanz: 401 → Login → zurück zum Formular (die alte
+      // Komponente ist zerstört, der Zustand muss erhalten sein).
+      const second = createForm();
+      fillValidForm(second);
+      vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mockResolvedValueOnce(created);
+      await second.submit();
+
+      const calls = vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mock.calls;
+      expect(calls).toHaveLength(2);
+      // Dieselbe Operation: gleiche Id und exakt dieselbe Payload
+      // (Split-Ids deterministisch aus dem Zeileninhalt).
+      expect(calls[1][0].id).toBe(calls[0][0].id);
+      expect(JSON.stringify(calls[1][0])).toBe(JSON.stringify(calls[0][0]));
+    });
+
+    it('setzt ohne vorher unklaren Versuch nach 4xx weiterhin eine neue Id', async () => {
+      const component = createForm();
+      fillValidForm(component);
+      vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mockRejectedValueOnce(httpError(400, 'Ungültig'))
+        .mockResolvedValueOnce(created);
+
+      await component.submit();
+      await component.submit();
+
+      const calls = vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mock.calls;
+      expect(calls[1][0].id).not.toBe(calls[0][0].id);
+      expect(component.outcomeUncertain()).toBe(false);
+    });
+  });
+
+  describe('R5-2: Kategorie-Wechsel belässt die Kennzeichnung nicht still', () => {
+    it('materialisiert die neue Voreinstellung explizit („Wie Voreinstellung“)', async () => {
+      vi
+        .mocked(JournalEndpointsService.getBooking)
+        .mockResolvedValueOnce(detailForPresetTest());
+      vi
+        .mocked(JournalWriteEndpointsService.correctBooking)
+        .mockResolvedValue(created);
+      const component = createForm('b-1', true, [noPresetCategory('cat-2')]);
+      await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+      // Zeile A (s1): unmarkiert, „Wie Voreinstellung“; Kategorie auf
+      // cat-1 (Preset: relevant, tax-1) wechseln und belassen.
+      expect(component.splits[0].taxMode).toBe('inherit');
+      component.splits[0].categoryId = 'cat-1';
+      await component.submit();
+
+      const [, command] = vi
+        .mocked(JournalWriteEndpointsService.correctBooking)
+        .mock.calls[0] as [string, CorrectionCommand];
+      expect(command.splits).not.toBeNull();
+      const s1 = command.splits!.find((s) => s.id === 's1')!;
+      // A: Voreinstellung der neuen Kategorie explizit materialisiert.
+      expect(s1.tax).toEqual({
+        relevant: true,
+        taxCategoryId: 'tax-1',
+        markedAmount: null,
+        note: null,
+      });
+      const s2 = command.splits!.find((s) => s.id === 's2')!;
+      // B: unverändert (gleiche Werte wie original).
+      expect(s2.tax).toEqual({
+        relevant: true,
+        taxCategoryId: 'tax-1',
+        markedAmount: null,
+        note: null,
+      });
+    });
+
+    it('sendet ohne Voreinstellung explizit „nicht relevant“', async () => {
+      vi
+        .mocked(JournalEndpointsService.getBooking)
+        .mockResolvedValueOnce(detailForPresetTest());
+      vi
+        .mocked(JournalWriteEndpointsService.correctBooking)
+        .mockResolvedValue(created);
+      const component = createForm('b-1', true, [noPresetCategory('cat-2')]);
+      await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+      // Zeile A: Kategorie auf cat-2 (ohne Preset) wechseln.
+      component.splits[0].categoryId = 'cat-2';
+      await component.submit();
+
+      const [, command] = vi
+        .mocked(JournalWriteEndpointsService.correctBooking)
+        .mock.calls[0] as [string, CorrectionCommand];
+      const s1 = command.splits!.find((s) => s.id === 's1')!;
+      expect(s1.tax).toEqual({
+        relevant: false,
+        taxCategoryId: null,
+        markedAmount: null,
+        note: null,
+      });
+    });
+  });
+
+  describe('R5-3: Steuer-Notiz bleibt bei „nicht relevant“ erhalten', () => {
+    it('sendet die Notiz mit der expliziten Kennzeichnung (Korrektur)', async () => {
+      vi
+        .mocked(JournalEndpointsService.getBooking)
+        .mockResolvedValueOnce(detailWithIrrelevantNote());
+      vi
+        .mocked(JournalWriteEndpointsService.correctBooking)
+        .mockResolvedValue(created);
+      const component = createForm('b-1');
+      await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+      expect(component.splits[0].taxMode).toBe('irrelevant');
+      expect(component.splits[0].taxNote).toBe('Bewusst privat');
+      // Aufteilung ändern, damit die Splits explizit gesendet werden
+      // (Skalar-Pfad würde die Original-Splits halten).
+      component.totalText = '80,00';
+      component.splits[0].amountText = '80,00';
+      await component.submit();
+
+      const [, command] = vi
+        .mocked(JournalWriteEndpointsService.correctBooking)
+        .mock.calls[0] as [string, CorrectionCommand];
+      expect(command.splits).not.toBeNull();
+      expect(command.splits![0].tax).toEqual({
+        relevant: false,
+        taxCategoryId: null,
+        markedAmount: null,
+        note: 'Bewusst privat',
+      });
+    });
+
+    it('sendet die Notiz bei Neuanlage mit „nicht relevant“', async () => {
+      const component = createForm();
+      fillValidForm(component);
+      const row = component.splits[0];
+      row.taxMode = 'irrelevant';
+      row.taxNote = 'Privat';
+      vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mockResolvedValue(created);
+
+      await component.submit();
+
+      const command = vi
+        .mocked(JournalWriteEndpointsService.createExpense)
+        .mock.calls[0][0];
+      expect(command.splits[0].tax).toEqual({
+        relevant: false,
+        taxCategoryId: null,
+        markedAmount: null,
+        note: 'Privat',
+      });
+    });
+  });
+});
+
+function noPresetCategory(id: string): CategoryDto {
+  return {
+    id,
+    name: 'Ohne Preset',
+    parentId: null,
+    status: 'active',
+    baseRevision: 1,
+    taxPreset: null,
+  } as unknown as CategoryDto;
+}
+
 function detailWithTaxNote(): BookingDetailDto {
   return {
     id: 'b-1',
@@ -372,6 +592,102 @@ function detailWithTaxNote(): BookingDetailDto {
           taxCategoryName: 'Kasse 3',
           markedAmount: 3000,
           note: 'Kasse 3',
+        },
+      },
+    ],
+    transferPurposes: [],
+    reassignmentAccounts: [],
+    totalAmount: 10000,
+    refundedByPool: [],
+  };
+}
+
+/** R5-2: zwei Splits — s1 unmarkiert (tax: null), s2 relevant markiert. */
+function detailForPresetTest(): BookingDetailDto {
+  return {
+    id: 'b-1',
+    type: 'expense',
+    date: '2026-10-01',
+    note: null,
+    baseRevision: 5,
+    effectivelyReversed: false,
+    fundingMonth: null,
+    reversesBookingId: null,
+    reversalBookingIds: [],
+    refundsExpenseId: null,
+    relatedSettlementId: null,
+    accountPostings: [
+      { accountId: 'acc-1', accountName: 'Giro', amount: -10000 },
+    ],
+    poolPostings: [],
+    splits: [
+      {
+        id: 's1',
+        amount: 6000,
+        poolId: 'pool-1',
+        poolName: 'Flex',
+        categoryId: 'cat-0',
+        categoryName: 'Ohne Preset',
+        note: null,
+        tax: null,
+      },
+      {
+        id: 's2',
+        amount: 4000,
+        poolId: 'pool-2',
+        poolName: 'Haushalt',
+        categoryId: 'cat-1',
+        categoryName: 'Lebensmittel',
+        note: null,
+        tax: {
+          relevant: true,
+          taxCategoryId: 'tax-1',
+          taxCategoryName: 'Kasse 3',
+          markedAmount: null,
+          note: null,
+        },
+      },
+    ],
+    transferPurposes: [],
+    reassignmentAccounts: [],
+    totalAmount: 10000,
+    refundedByPool: [],
+  };
+}
+
+/** R5-3: Split mit expliziter „nicht relevant“-Kennzeichnung + Notiz. */
+function detailWithIrrelevantNote(): BookingDetailDto {
+  return {
+    id: 'b-1',
+    type: 'expense',
+    date: '2026-10-01',
+    note: null,
+    baseRevision: 5,
+    effectivelyReversed: false,
+    fundingMonth: null,
+    reversesBookingId: null,
+    reversalBookingIds: [],
+    refundsExpenseId: null,
+    relatedSettlementId: null,
+    accountPostings: [
+      { accountId: 'acc-1', accountName: 'Giro', amount: -10000 },
+    ],
+    poolPostings: [],
+    splits: [
+      {
+        id: 's1',
+        amount: 10000,
+        poolId: 'pool-1',
+        poolName: 'Flex',
+        categoryId: 'cat-1',
+        categoryName: 'Lebensmittel',
+        note: null,
+        tax: {
+          relevant: false,
+          taxCategoryId: null,
+          taxCategoryName: null,
+          markedAmount: null,
+          note: 'Bewusst privat',
         },
       },
     ],

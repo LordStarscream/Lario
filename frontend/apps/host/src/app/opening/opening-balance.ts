@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, inject, OnInit, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  inject,
+  OnInit,
+  signal,
+  type Signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ApiError as ApiErrorClass } from '../../generated/core/ApiError';
@@ -32,11 +39,17 @@ export class OpeningBalance implements OnInit {
   private readonly catalog = inject(CatalogService);
   private readonly errors = inject(ApiErrorHandler);
   /**
-   * Stabile Operation-Id (Review R3 P1): nach verlorener Antwort sendet
-   * der nächste Klick mit unveränderter Daten dieselbe Operation (gleiche
-   * Id + Payload) — idempotente Quittung statt doppeltem Anfangsbestand.
+   * Stabile Operation-Id (Review R3 P1 / R5-1): nach verlorener Antwort
+   * sendet der nächste Klick mit unveränderter Daten dieselbe Operation
+   * (gleiche Id + Payload) — idempotente Quittung statt doppeltem
+   * Anfangsbestand. Der Zustand liegt im Root-Service: der 401-Login-
+   * Redirect zerstört das Formular, behält aber die gehaltene Operation.
    */
-  private readonly pendingOp = new PendingOperation();
+  private readonly pendingOp = inject(PendingOperation);
+  private readonly opPrefix = 'open';
+  readonly outcomeUncertain: Signal<boolean> = this.pendingOp.outcomeUncertain(
+    this.opPrefix,
+  );
   private keyBase = 1;
 
   readonly accounts = this.catalog.accounts;
@@ -50,7 +63,6 @@ export class OpeningBalance implements OnInit {
 
   readonly busy = signal(false);
   readonly error = signal<ApiErrorInfo | null>(null);
-  readonly outcomeUncertain = this.pendingOp.outcomeUncertain;
 
   ngOnInit(): void {
     void this.catalog.load();
@@ -141,7 +153,7 @@ export class OpeningBalance implements OnInit {
       // Review R4 F1: unklarer Ausgang + geänderte Daten → Blocken.
       // Eine neue Id würde eine zweite Buchung erzeugen können, wenn die
       // alte Operation bereits committet ist.
-      const id = this.pendingOp.nextId('open', fingerprint);
+      const id = this.pendingOp.nextId(this.opPrefix, fingerprint);
       if (id === null) {
         this.error.set({
           code: 'uncertain_operation_blocked',
@@ -161,19 +173,22 @@ export class OpeningBalance implements OnInit {
         distribution,
         note,
       });
-      this.pendingOp.release();
+      this.pendingOp.release(this.opPrefix);
       await this.router.navigate(['/']);
     } catch (err) {
       this.error.set(this.errors.handle(err));
-      // Definitive Ablehnung (4xx): die Operation wurde sicher nicht
-      // committet → neue Id beim nächsten Versuch. Ansonsten (keine
-      // Antwort, 5xx): Ausgang unklar → dieselbe Id + Payload wiedersenden.
+      // Definitive Ablehnung (4xx): neue Id beim nächsten Versuch —
+      // aber nur ohne vorher unklaren Versuch: ein unklarer
+      // Vorversuch kann bereits committet sein (Review R5-1); dann
+      // bleibt die Operation gehalten und wird idempotent wiedergesendet.
       const definitive =
         err instanceof ApiErrorClass && err.status >= 400 && err.status < 500;
       if (definitive) {
-        this.pendingOp.release();
+        if (!this.outcomeUncertain()) {
+          this.pendingOp.release(this.opPrefix);
+        }
       } else {
-        this.pendingOp.markOutcomeUncertain();
+        this.pendingOp.markOutcomeUncertain(this.opPrefix);
       }
       this.busy.set(false);
     }
@@ -181,7 +196,7 @@ export class OpeningBalance implements OnInit {
 
   /** Rücksetzen: neue Operation-Id für die nächste Einreichung. */
   resetPendingOperation(): void {
-    this.pendingOp.release();
+    this.pendingOp.release(this.opPrefix);
   }
 
   formatCents = formatCents;

@@ -120,6 +120,8 @@ Synchronisation wird zunächst explizit per Schaltfläche gestartet. Automatik b
 
 Jede Operation besitzt eine global eindeutige ID und einen Payload-Nachweis. Wiederholung derselben ID mit identischem Inhalt liefert dieselbe Bestätigung; dieselbe ID mit anderem Inhalt ist ein Fehler. Unique Constraints sichern diese Regel auch bei konkurrierenden Requests.
 
+Der Client hält den letzten Idempotenz-Zustand pro Formular auch über kurzlebige UI-Instanzen: Die Operation-ID und die Teilposten-Identifikatoren werden deterministisch aus dem Payload abgeleitet, und die letzte Operation mit unklarem Ergebnis (Antwort nach möglichem Commit verloren) bleibt gehalten, bis eine definitive Ablehnung, ein Erfolg oder ein manueller Reset die nächste Einreichung auf eine neue Operation setzt. So erzeugt ein 401 mit Login-Redirect und anschließender erneuter Einreichung derselben Daten dieselbe Operation statt einer neuen.
+
 Korrekturen setzen die erwartete Basisrevision voraus. Änderungen derselben Ausgabe an beiden Geräten erzeugen einen sichtbaren Konflikt; keine pauschale Last-write-wins-Regel. Archivierte Kategorien bleiben für historische/offline erfasste Vorgänge referenzierbar. Löschungen/Stornos werden im Änderungsstrom übertragen. Veraltete Protokolle werden erkennbar abgewiesen; lokale Eingaben bleiben erhalten.
 
 API-Ausgangspunkt: /api/v1/expenses, /transactions, /accounts, /funds, /categories, /tax-categories, /planning, /projects, /attachments und /reports einschließlich Steuerauswertung; /sync/bootstrap, /sync/changes sowie /sync/push für die mobile Schnittstelle. Es werden Datensätze synchronisiert, keine SQLite-Dateien kopiert.

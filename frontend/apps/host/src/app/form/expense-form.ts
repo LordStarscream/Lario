@@ -4,6 +4,7 @@ import {
   inject,
   OnInit,
   signal,
+  type Signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -40,6 +41,11 @@ export interface SplitRowState {
   note: string;
   /** Steuerkennzeichnungs-Notiz (Review R4 F5). */
   taxNote: string;
+  /**
+   * Zeile wurde aus dem Ursprungs-Detail vorgefüllt (Korrektur);
+   * nur solche Zeilen tragen die originale Split-Id (Review R5-2).
+   */
+  prefilled: boolean;
 }
 
 function toEuroText(centsValue: number | string | null): string {
@@ -72,6 +78,7 @@ function newSplitRow(key: number): SplitRowState {
     markedText: '',
     note: '',
     taxNote: '',
+    prefilled: false,
   };
 }
 
@@ -115,6 +122,11 @@ export class ExpenseForm implements OnInit {
     const id = this.route.snapshot.paramMap.get('id');
     this.correctionId = id;
     this.isCorrection = id !== null;
+    this.pendingOperation = inject(PendingOperation);
+    this.opPrefix = this.isCorrection ? 'corr' : 'exp';
+    this.outcomeUncertain = this.pendingOperation.outcomeUncertain(
+      this.opPrefix,
+    );
     if (id) {
       void this.loadCorrection(id);
     }
@@ -163,6 +175,7 @@ export class ExpenseForm implements OnInit {
       // Aufteilung nicht ändert, die Splits (inkl. Steuerkennzeichnung
       // und -Notizen) nicht still ersetzt.
       row.id = split.id;
+      row.prefilled = true;
       row.amountText = toEuroText(split.amount);
       row.poolId = split.poolId;
       row.categoryId = split.categoryId;
@@ -371,14 +384,23 @@ export class ExpenseForm implements OnInit {
   // ---------- Absenden ----------
 
   /**
-   * Stabile Operation-Id (Review R3 P1 / R4 F1): nach verlorener Antwort
-   * sendet der nächste Klick mit unveränderten Daten dieselbe Operation
-   * (gleiche Id + Payload) — idempotente Quittung statt doppelte Buchung.
-   * Geänderte Daten bei unklarem Ausgang blockieren die Einreichung, bis
-   * die hängende Operation abgeglichen und manuell freigegeben ist.
+   * Stabile Operation-Id (Review R3 P1 / R4 F1 / R5-1): nach verlorener
+   * Antwort sendet der nächste Klick mit unveränderten Daten dieselbe
+   * Operation (gleiche Id + Payload) — idempotente Quittung statt
+   * doppelte Buchung. Geänderte Daten bei unklarem Ausgang blockieren
+   * die Einreichung, bis die hängende Operation abgeglichen und manuell
+   * freigegeben ist.
+   *
+   * Der Zustand liegt im Root-Service (nicht in der Komponenteninstanz):
+   * der 401-Login-Redirect zerstört das Formular, behält aber die
+   * gehaltene Operation (Review R5-1).
+   *
+   * Initialisierung im Konstruktor: hängt von `isCorrection` ab, das
+   * erst im Konstruktor gesetzt ist (Feld-Initialisierer laufen vorher).
    */
-  private readonly pendingOperation = new PendingOperation();
-  readonly outcomeUncertain = this.pendingOperation.outcomeUncertain;
+  private readonly pendingOperation: PendingOperation;
+  private readonly opPrefix: string;
+  readonly outcomeUncertain: Signal<boolean>;
 
   /**
    * Fingerprint der Payload ohne Operation-Id (Review R4 F1):
@@ -392,42 +414,73 @@ export class ExpenseForm implements OnInit {
       totalAmount: command.totalAmount,
       accountId: command.accountId,
       note: command.note,
-      splits: command.splits,
+      // Review R5-1: bei Neuanlagen sind die Split-Ids
+      // Formularinstanz-spezifisch; nach einem 401-Redirect erzeugt
+      // die erneute Erfassung derselben Daten neue Ids. Ohne die Ids
+      // im Fingerprint bleibt die Operation als identisch erkennbar —
+      // und buildCommand() leitet die Ids deterministisch aus dem
+      // Zeileninhalt ab, sodass das Wiedersenden wirklich dieselbe
+      // Payload trägt (gleiche Operation-Id mit anderem Inhalt
+      // würde der Server ablehnen).
+      splits: this.isCorrection
+        ? command.splits
+        : command.splits?.map((split) => ({
+            amount: split.amount,
+            poolId: split.poolId,
+            categoryId: split.categoryId,
+            note: split.note,
+            tax: split.tax,
+          })),
       expectedBaseRevision: command.expectedBaseRevision,
     });
   }
 
   private buildCommand(): ExpenseCommand {
-    const splits: ExpenseSplitCommand[] = this.splits.map((row) => {
-      let tax: ExpenseSplitCommand['tax'] = null;
-      if (row.taxMode === 'relevant') {
-        tax = {
-          relevant: true,
-          taxCategoryId: row.taxCategoryId,
-          markedAmount: row.partialCapture
-            ? (parseEuroToCents(row.markedText) as number)
-            : null,
-          note: row.taxNote.trim() === '' ? null : row.taxNote.trim(),
+    const splits: ExpenseSplitCommand[] = this.splits.map(
+      (row, index) => {
+        let tax: ExpenseSplitCommand['tax'] = null;
+        if (row.taxMode === 'relevant') {
+          tax = {
+            relevant: true,
+            taxCategoryId: row.taxCategoryId,
+            markedAmount: row.partialCapture
+              ? (parseEuroToCents(row.markedText) as number)
+              : null,
+            note: row.taxNote.trim() === '' ? null : row.taxNote.trim(),
+          };
+        } else if (row.taxMode === 'irrelevant') {
+          tax = {
+            relevant: false,
+            taxCategoryId: null,
+            markedAmount: null,
+            // Review R5-3: die Notiz bleibt auch bei „nicht
+            // relevant“ erhalten (Domain-Regel: Notiz unabhängig
+            // vom Relevanz-Flag).
+            note: row.taxNote.trim() === '' ? null : row.taxNote.trim(),
+          };
+        } else if (row.prefilled) {
+          // Review R5-2: eine bestehende Zeile, die auf „Wie
+          // Voreinstellung“ belassen wurde, darf in der Korrektur
+          // nicht tax: null senden — null heißt dort „Original-
+          // Kennzeichnung behalten“ und würde z. B. nach einer
+          // Kategorienänderung die Kennzeichnung der alten Kategorie
+          // still halten. Statt dessen wird die wirksame Voreinstellung
+          // der aktuellen Kategorie explizit materialisiert (gleiche
+          // Semantik wie bei der Neuanlage).
+          tax = this.materializePresetTax(row);
+        }
+        // Beträge wurden zuvor in splitIssue() validiert.
+        const amount = parseEuroToCents(row.amountText) as number;
+        return {
+          id: this.splitIdFor(row, index),
+          amount,
+          poolId: row.poolId,
+          categoryId: row.categoryId,
+          note: row.note.trim() === '' ? null : row.note.trim(),
+          tax,
         };
-      } else if (row.taxMode === 'irrelevant') {
-        tax = {
-          relevant: false,
-          taxCategoryId: null,
-          markedAmount: null,
-          note: null,
-        };
-      }
-      // Beträge wurden zuvor in splitIssue() validiert.
-      const amount = parseEuroToCents(row.amountText) as number;
-      return {
-        id: row.id,
-        amount,
-        poolId: row.poolId,
-        categoryId: row.categoryId,
-        note: row.note.trim() === '' ? null : row.note.trim(),
-        tax,
-      };
-    });
+      },
+    );
     return {
       // Review R4 F1: wird in submit() per PendingOperation vergeben.
       id: '',
@@ -442,6 +495,47 @@ export class ExpenseForm implements OnInit {
     };
   }
 
+  /**
+   * Split-Id für die Payload (Review R5-1):
+   * - vorgefüllte Zeilen (Korrektur): die originale Split-Id — stabile
+   *   Identität über Revisionen hinweg;
+   * - alle anderen (Neuanlage, neu hinzugefügte Zeilen): deterministisch
+   *   aus dem Zeileninhalt abgeleitet. Nach einem 401-Redirect erzeugt
+   *   die erneute Erfassung derselben Daten in einer neuen Formular-
+   *   instanz dieselben Ids — die wiedergesendete Payload ist damit
+   *   identisch, statt „gleiche Operation-Id mit anderem Inhalt“ zu
+   *   sein, was der Server ablehnt.
+   */
+  private splitIdFor(row: SplitRowState, index: number): string {
+    if (this.isCorrection && row.prefilled) {
+      return row.id;
+    }
+    return `split-${index}-${stableSplitHash(row)}`;
+  }
+
+  /**
+   * Explizite Materialisierung der wirksamen Kategorie-Voreinstellung
+   * als Steuerkennzeichnung (Review R5-2) — gleiche Werte wie die
+   * Server-Materialisierung (MaterializeEffectivePreset) für neue
+   * Teilposten: keine Voreinstellung oder „nicht festgelegt“ →
+   * explizit nicht relevant (die einzige explizit darstellbare
+   * „keine Kennzeichnung“ in der Korrektur — tax: null würde die
+   * ursprüngliche Kennzeichnung behalten); sonst Relevanz +
+   * Steuerkategorie der Voreinstellung, ohne Teilbetrag und ohne Notiz.
+   */
+  private materializePresetTax(row: SplitRowState): ExpenseSplitCommand['tax'] {
+    const preset = this.effectivePreset(row);
+    if (preset !== null && preset.taxRelevant === true) {
+      return {
+        relevant: true,
+        taxCategoryId: preset.taxCategoryId,
+        markedAmount: null,
+        note: null,
+      };
+    }
+    return { relevant: false, taxCategoryId: null, markedAmount: null, note: null };
+  }
+
   async submit(): Promise<void> {
     if (this.busy() || this.formIssue() !== null) {
       return;
@@ -453,7 +547,7 @@ export class ExpenseForm implements OnInit {
     // Eine neue Id würde eine zweite Buchung erzeugen können, wenn die
     // alte Operation bereits committet ist.
     const id = this.pendingOperation.nextId(
-      this.isCorrection ? 'corr' : 'exp',
+      this.opPrefix,
       this.payloadFingerprint(command),
     );
     if (id === null) {
@@ -472,7 +566,7 @@ export class ExpenseForm implements OnInit {
       const created = this.isCorrection
         ? await this.submitCorrection(command)
         : await JournalWriteEndpointsService.createExpense(command);
-      this.pendingOperation.release();
+      this.pendingOperation.release(this.opPrefix);
       this.success.set(
         created.idempotent
           ? 'Die Buchung war bereits gebucht (identisch erneut eingereicht).'
@@ -483,17 +577,25 @@ export class ExpenseForm implements OnInit {
       await this.router.navigate(['/']);
     } catch (error) {
       this.submitError.set(this.errors.handle(error));
-      // Definitive Ablehnung (4xx): die Operation wurde sicher nicht
-      // committet → neue Id beim nächsten Versuch. Ansonsten (keine
-      // Antwort, 5xx): Ausgang unklar → dieselbe Id + Payload wiedersenden.
+      // Definitive Ablehnung (4xx): neue Id beim nächsten Versuch —
+      // aber nur, wenn dieser Versuch nicht bereits unklaren Ausgang
+      // hatte: ein unklarer Vorversuch kann bereits committet sein
+      // (Commit, dann Antwortverlust, dann z. B. 401 wegen
+      // abgelaufener Session). In dem Fall bleibt die Operation
+      // gehalten; der nächste Klick mit unveränderter Payload sendet
+      // dieselbe Operation und erhält die idempotente Quittung
+      // (Review R5-1). Ansonsten (keine Antwort, 5xx): Ausgang unklar
+      // → dieselbe Id + Payload wiedersenden.
       const definitive =
         error instanceof ApiErrorClass &&
         error.status >= 400 &&
         error.status < 500;
       if (definitive) {
-        this.pendingOperation.release();
+        if (!this.outcomeUncertain()) {
+          this.pendingOperation.release(this.opPrefix);
+        }
       } else {
-        this.pendingOperation.markOutcomeUncertain();
+        this.pendingOperation.markOutcomeUncertain(this.opPrefix);
       }
       this.busy.set(false);
     }
@@ -501,7 +603,7 @@ export class ExpenseForm implements OnInit {
 
   /** Rücksetzen: neue Operation-Id für die nächste Einreichung (Review R4 F1). */
   resetPendingOperation(): void {
-    this.pendingOperation.release();
+    this.pendingOperation.release(this.opPrefix);
   }
 
   /**
@@ -579,4 +681,33 @@ export interface AllocationState {
  */
 export function allocationFingerprint(state: AllocationState): string {
   return JSON.stringify(state);
+}
+
+/**
+ * Deterministische Kurzsignatur des Zeileninhalts (Review R5-1): bei
+ * Neuanlagen wird die Split-Id daraus abgeleitet, sodass die erneute
+ * Erfassung derselben Daten (z. B. nach einem 401-Login-Redirect in
+ * einer neuen Formularinstanz) dieselbe Payload erzeugt. Beträge sind
+ * normalisiert (Cent), damit „100,00“ und „100.00“ dieselbe Signatur
+ * liefern. FNV-1a genügt hier (Unterscheidbarkeit, kein Security-Aspekt);
+ * der Zeilenindex trennt zwei identische Zeilen.
+ */
+export function stableSplitHash(row: SplitRowState): string {
+  const content = JSON.stringify({
+    amountCents: parseEuroToCents(row.amountText),
+    poolId: row.poolId,
+    categoryId: row.categoryId,
+    note: row.note.trim(),
+    taxMode: row.taxMode,
+    taxCategoryId: row.taxCategoryId,
+    partialCapture: row.partialCapture,
+    markedCents: row.partialCapture ? parseEuroToCents(row.markedText) : null,
+    taxNote: row.taxNote.trim(),
+  });
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < content.length; i++) {
+    hash ^= content.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
 }
