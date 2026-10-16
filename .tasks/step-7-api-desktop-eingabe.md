@@ -24,7 +24,7 @@
 - [x] T3: Journal-Read-Endpunkte (bookings list/detail, balances, settlements) mit DTOs (Namen, Tax, effectivelyReversed) + Integrationstests
 - [x] T4: Journal-Write-Endpunkte (expenses, income, opening-balances, transfers, reassignments, transfer-reassignments, corrections, reversals, refunds, balance-corrections) + DTOs + Integrationstests (Validierung, Idempotenz, 409, Referenzfälle A3)
 - [x] T5: Persistenz-/Neustart-Tests (A4) + API-Referenzzfälle komplett (A3) + „keine Salden als Input" (A5)
-- [ ] T6: Frontend — Login/Token, Ausgabeformular, Liste, Anfangsbestände, Stammdaten-minimal, Korrektur/Storno/Erstattung-Aktionen, Fehleranzeige; API-Client neu generieren (A6/A7/A8)
+- [x] T6: Frontend — Login/Token, Ausgabeformular, Liste, Anfangsbestände, Stammdaten-minimal, Korrektur/Storno/Erstattung-Aktionen, Fehleranzeige; API-Client neu generieren (A6/A7/A8)
 - [ ] T7: UI-Tests (vitest) + Build-/Lint-Verifikation (npm) + Abnahmedoku `docs/step-7/step7-api-desktop-eingabe.md` + README-Befehle
 - [ ] T8: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR
 
@@ -159,6 +159,32 @@
     Für Schritt 7 (Desktop) etabliertes Verhalten; für die mobile
     Synchronisation (Schritt 9+) gilt stattdessen „gerätegenerierte
     stabile Ids“ — dort ggf. erneut prüfen.
+
+- **T6 erledigt** (16. Okt. 2026, Commit `b7623fc`, gepusht): Desktop-UI
+  (Angular 22, App `host`) aus uncommittedem Arbeitsstand der letzten
+  Session verifiziert und committet. Umfang: Login (D1: Token in
+  localStorage, Bearer vom generierten Fetch-Client, authGuard,
+  401-Redirect), Ausgabeformular (Splits mit Pool/Kategorie/Steuer-
+  kennzeichnung inkl. Voreinstellung/Teilmenge, Client-Validierung,
+  Idempotenz-Id, Korrektur-Modus mit baseRevision), Buchungsliste
+  (Filter Typ/Zeitraum, Aktionen Korrektur/Storno/Erstattung als
+  Dialoge), Anfangsbestände (Verteilung auf Pools, Rest unverteilt),
+  Stammdaten-minimal (Konten/Pools/Kategorien/Steuerkategorien:
+  anlegen, umbenennen, archivieren/reaktivieren, Steuer-Voreinstellung),
+  zentrale Fehleranzeige (ApiErrorHandler: 401/400/409 mit
+  actualBaseRevision/500 mit RequestId). Generierter Client (fetch,
+  Union-Typen) neu erzeugt; `OpenAPI.BASE=''` (gleicher Origin).
+  **Verifikation (16. Okt. 2026):** Lint 0 Fehler/0 Warnungen host +
+  mobile (dabei: Selector-Konvention `app-*` statt `lario-*`,
+  Constructor-DI → `inject()`, `OnInit`-Interfaces, Unused-Variablen);
+  `ng build` host+mobile grün; `ng test` host 1/1, mobile 23/23;
+  OpenAPI-Doku 1:1 mit laufendem Backend (nur Server-URL-Host);
+  Client-Regeneration erzeugt keinen Diff (Client ist aktuell, inkl.
+  `ApiErrorBody` aus R1); .NET-Suite 428/428 (197 Domain + 146
+  Infrastructure + 85 Api).
+  **Noch offen für T7:** gezielte UI-Tests (vitest) für den geänderten
+  Ablauf + Browser-Abnahme A6/A7/A8 + Abnahmedoku `docs/step-7/` +
+  README-Befehle.
 
 ## Notizen
 
