@@ -30,23 +30,28 @@ namespace Lario.Domain.Journal;
 /// </summary>
 public sealed class TaxMarking
 {
-    /// <summary>Steuerlich relevant (ja/nein).</summary>
-    public bool Relevant { get; init; }
+    /// <summary>
+    /// Steuerlich relevant (ja/nein). Setbar, damit das Repository die
+    /// Kennzeichnung einer In-place-Korrektur in der vorhandenen Zeile
+    /// aktualisieren kann (fachliche Invarianten gelten an der
+    /// Service-Grenze, nicht in der Eigenschaft).
+    /// </summary>
+    public bool Relevant { get; set; }
 
     /// <summary>
     /// Gewählte (Unter-)Steuerkategorie; null = keine gewählt.
     /// Nur bei <see cref="Relevant"/> = true zulässig.
     /// </summary>
-    public string? TaxCategoryId { get; init; }
+    public string? TaxCategoryId { get; set; }
 
     /// <summary>
     /// Gekennzeichneter Teilbetrag in Cent; null = gesamter Splitbetrag
     /// markiert. Ist er gesetzt, muss 0 ≤ Teilbetrag ≤ Splitbetrag gelten.
     /// </summary>
-    public Money? MarkedAmount { get; init; }
+    public Money? MarkedAmount { get; set; }
 
     /// <summary>Freitext, optional.</summary>
-    public string? Note { get; init; }
+    public string? Note { get; set; }
 
     /// <summary>
     /// True, wenn die Kennzeichnung bei der Erstellung nicht explizit
@@ -61,7 +66,7 @@ public sealed class TaxMarking
     /// sind verschiedene Eingaben — auch wenn das Ergebnis gleich sein
     /// kann (Voreinstellung ≙ explizite Kennzeichnung).
     /// </summary>
-    public bool InheritedFromPreset { get; init; }
+    public bool InheritedFromPreset { get; set; }
 
     /// <summary>
     /// Prüfungen der Kennzeichnung selbst (ohne Kontext):

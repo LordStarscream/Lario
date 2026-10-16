@@ -29,7 +29,14 @@ public sealed record CorrectionSpec(
     string? AccountId = null,
     /// <summary>Neuer Gesamtbetrag (positiv); null = bleibt unverändert.</summary>
     Money? TotalAmount = null,
-    /// <summary>Neue Teilposten der Ausgabe (ersetzen die alten); null = unverändert.</summary>
+    /// <summary>
+    /// Neue Teilposten der Ausgabe (ersetzen die alten); null = unverändert.
+    /// <c>tax = null</c> bei einem Teilposten bedeutet „unverändert": ein
+    /// bestehender Teilposten (gleiche Id) behält seine ursprüngliche
+    /// Steuerkennzeichnung (inkl. Steuer-Notiz und bisheriger
+    /// Nichtmarkierung), ein neuer Teilposten wird wie bei der Neuanlage
+    /// aus der Kategorie-Voreinstellung materialisiert (Review Runde 2 P2).
+    /// </summary>
     IReadOnlyList<ExpenseSplitSpec>? Splits = null,
     /// <summary>Neue Verteilung der Einnahme (ersetzt die alte); null = unverändert.</summary>
     IReadOnlyList<IncomeAllocationSpec>? Allocations = null)
@@ -146,6 +153,16 @@ public sealed record CorrectionSpec(
     /// Katalog bleiben solche Teilposten unmarkiert; explizite
     /// Kennzeichnungen sind davon unberührt.
     /// </para>
+    /// <para>
+    /// <c>tax = null</c> bei einem Teilposten heißt „unverändert" (dieselbe
+    /// Konvention wie die übrigen Korrekturfelder): ein bestehender
+    /// Teilposten behält seine ursprüngliche Steuerkennzeichnung vollständig
+    /// (inkl. Steuer-Notiz und einer bisherigen Nichtmarkierung — die
+    /// aktuelle Kategorie-Voreinstellung wird <i>nicht</i> still neu
+    /// angewendet); ein neuer Teilposten wird aus der Voreinstellung
+    /// materialisiert (Review Runde 2 P2). Eine Steueränderung muss
+    /// daher als explizite Kennzeichnung gesendet werden.
+    /// </para>
     /// </summary>
     public Booking BuildUpdatedBooking(Booking original, MasterDataCatalog? catalog = null)
     {
@@ -194,17 +211,46 @@ public sealed record CorrectionSpec(
                     .Select(p => new PoolPosting { PoolId = p.Key, Amount = p.Value.Negate() })
                     .ToList();
 
+                // tax = null bedeutet „unverändert" (dieselbe Konvention wie
+                // die übrigen Korrekturfelder, Review Runde 2 P2): ein
+                // bestehender Teilposten (gleiche Id) behält seine
+                // ursprüngliche Steuerkennzeichnung — auch eine bisherige
+                // Nichtmarkierung und eine Steuer-Notiz; nur ein neuer
+                // Teilposten wird aus der Kategorie-Voreinstellung
+                // materialisiert wie bei der Neuanlage.
+                var originalSplitById = original.Splits is { } originalSplits
+                    ? originalSplits.ToDictionary(s => s.Id, StringComparer.Ordinal)
+                    : null;
+
                 splits = Splits
-                    .Select(s => new ExpenseSplit
+                    .Select(s =>
                     {
-                        Id = s.Id,
-                        Amount = s.Amount,
-                        PoolId = s.PoolId,
-                        CategoryId = s.CategoryId,
-                        Note = s.Note,
-                        Tax = s.Tax ?? (catalog is null
-                            ? null
-                            : ExpenseSpec.MaterializeEffectivePreset(catalog, s.CategoryId)),
+                        TaxMarking? tax;
+                        if (s.Tax is { } explicitTax)
+                        {
+                            tax = explicitTax;
+                        }
+                        else if (originalSplitById is not null
+                                 && originalSplitById.TryGetValue(s.Id, out var originalSplit))
+                        {
+                            tax = originalSplit.Tax;
+                        }
+                        else
+                        {
+                            tax = catalog is null
+                                ? null
+                                : ExpenseSpec.MaterializeEffectivePreset(catalog, s.CategoryId);
+                        }
+
+                        return new ExpenseSplit
+                        {
+                            Id = s.Id,
+                            Amount = s.Amount,
+                            PoolId = s.PoolId,
+                            CategoryId = s.CategoryId,
+                            Note = s.Note,
+                            Tax = tax,
+                        };
                     })
                     .ToList();
             }

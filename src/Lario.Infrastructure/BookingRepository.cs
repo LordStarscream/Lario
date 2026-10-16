@@ -222,6 +222,7 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
             .Include(b => b.AccountPostings)
             .Include(b => b.PoolPostings)
             .Include(b => b.Splits)
+            .ThenInclude(s => s.Tax)
             .Include(b => b.TransferPurposes)
             .Include(b => b.ReassignmentAccounts)
             .FirstOrDefaultAsync(b => b.Id == updated.Id, cancellationToken)
@@ -350,9 +351,86 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
     {
         ReplaceChildCollection(db.AccountPostings, tracked.AccountPostings, updated.AccountPostings);
         ReplaceChildCollection(db.PoolPostings, tracked.PoolPostings, updated.PoolPostings);
-        ReplaceChildCollection(db.ExpenseSplits, tracked.Splits, updated.Splits);
+        ReplaceSplits(tracked, updated);
         ReplaceChildCollection(db.TransferPurposes, tracked.TransferPurposes, updated.TransferPurposes);
         ReplaceChildCollection(db.ReassignmentAccounts, tracked.ReassignmentAccounts, updated.ReassignmentAccounts);
+    }
+
+    /// <summary>
+    /// Zeilen-Ersatz der Teilposten mit In-Place-Update: Zeilen mit
+    /// bestehender Teilposten-Id werden in der vorhandenen Zeile
+    /// geändert, neue Zeilen werden angelegt, entfallene gelöscht.
+    ///
+    /// Das generische <see cref="ReplaceChildCollection"/> (löschen +
+    /// neu anlegen) ist für Teilposten ungeeignet: die 1:1-
+    /// Steuerkennzeichnung-Zeile würde per Datenbank-Cascade mit der
+    /// gelöschten Teilposten-Zeile verschwinden, während die
+    /// weitergeführte Kennzeichnungs-Instanz (Schlüssel bereits durch
+    /// das Laden gesetzt) vom Kontext als „geändert“ statt „neu“
+    /// erkannt und als UPDATE geschrieben wird — die Kennzeichnung
+    /// verschwände dabei still (Schritt-7-Review R3 P2: In-place-
+    /// Korrektur einer Ausgabe mit Steuerkennzeichnung).
+    /// </summary>
+    private void ReplaceSplits(Booking tracked, Booking updated)
+    {
+        var current = tracked.Splits;
+        var byId = current.ToDictionary(s => s.Id, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var incoming in updated.Splits)
+        {
+            seen.Add(incoming.Id);
+
+            if (!byId.TryGetValue(incoming.Id, out var existing))
+            {
+                // Neuer Teilposten: die Zeile wird vollständig angelegt;
+                // eine mitgebrachte Kennzeichnung ist dabei stets eine
+                // neue Instanz ohne Schlüssel (Service-Grenze).
+                current.Add(incoming);
+                continue;
+            }
+
+            // Vorhandener Teilposten: die Zeile wird in-place aktualisiert.
+            existing.Amount = incoming.Amount;
+            existing.PoolId = incoming.PoolId;
+            existing.CategoryId = incoming.CategoryId;
+            existing.Note = incoming.Note;
+            ReconcileSplitTax(existing, incoming.Tax);
+        }
+
+        // Entfallene Teilposten (mit Kennzeichnung) werden gelöscht.
+        foreach (var stale in current.Where(s => !seen.Contains(s.Id)).ToList())
+        {
+            db.Remove(stale);
+        }
+    }
+
+    /// <summary>
+    /// Steuerkennzeichnung eines in-place aktualisierten Teilpostens:
+    /// vorhanden → die vorhandene Zeile wird in-place aktualisiert, neu
+    /// → die Zeile wird angelegt, entfällt → die Zeile wird gelöscht.
+    /// </summary>
+    private void ReconcileSplitTax(ExpenseSplit split, TaxMarking? incoming)
+    {
+        if (split.Tax is null)
+        {
+            // null oder neue Instanz ohne Schlüssel — beides korrekt.
+            split.Tax = incoming;
+            return;
+        }
+
+        if (incoming is null)
+        {
+            db.Remove(split.Tax);
+            split.Tax = null;
+            return;
+        }
+
+        split.Tax.Relevant = incoming.Relevant;
+        split.Tax.TaxCategoryId = incoming.TaxCategoryId;
+        split.Tax.MarkedAmount = incoming.MarkedAmount;
+        split.Tax.Note = incoming.Note;
+        split.Tax.InheritedFromPreset = incoming.InheritedFromPreset;
     }
 
     /// <summary>
