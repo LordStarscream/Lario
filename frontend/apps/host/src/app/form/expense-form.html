@@ -1,0 +1,271 @@
+<section class="form-header">
+  <button type="button" class="btn btn-ghost" (click)="goBack()">← Zurück</button>
+  <h2>{{ isCorrection ? 'Korrektur buchen' : 'Neue Ausgabe' }}</h2>
+</section>
+
+@if (loading()) {
+  <p class="empty">Lade Buchung …</p>
+} @else if (loadError(); as err) {
+  <div class="banner banner-error" role="alert">
+    <strong>Fehler beim Laden der Buchung:</strong> {{ err.message }}
+  </div>
+} @else {
+  @if (isCorrection) {
+    <div class="banner banner-info">
+      Eine Korrektur wird als neue Buchung angehängt; die Ursprungsbuchung
+      bleibt unverändert erhalten.
+    </div>
+  }
+
+  <form class="expense-form" (ngSubmit)="submit()" novalidate>
+    <div class="grid-2">
+      <label class="field">
+        <span class="field-label">Datum</span>
+        <input type="date" name="date" [(ngModel)]="date" [disabled]="busy()" />
+      </label>
+      <label class="field">
+        <span class="field-label">Konto</span>
+        <select name="accountId" [(ngModel)]="accountId" [disabled]="busy()">
+          <option value="" disabled>Bitte wählen …</option>
+          @for (account of accounts(); track account.id) {
+            <option [value]="account.id">{{ account.name }}</option>
+          }
+        </select>
+      </label>
+    </div>
+
+    <label class="field">
+      <span class="field-label">Notiz (optional)</span>
+      <input
+        type="text"
+        name="note"
+        [(ngModel)]="note"
+        [disabled]="busy()"
+        placeholder="z. B. Supermarkt"
+      />
+    </label>
+
+    <div class="grid-2">
+      <label class="field">
+        <span class="field-label">Gesamtbetrag (€)</span>
+        <input
+          type="text"
+          inputmode="decimal"
+          name="total"
+          class="money-input"
+          [(ngModel)]="totalText"
+          [disabled]="busy()"
+          placeholder="0,00"
+        />
+      </label>
+      <div class="field">
+        <span class="field-label">Summe der Aufteilung</span>
+        <span class="sum-indicator" [class.mismatch]="sumMismatch()">{{ formatCents(splitsSumCents()) }}</span>
+      </div>
+    </div>
+
+    <fieldset class="splits-fieldset">
+      <legend>Aufteilung in Pools</legend>
+
+      @for (row of splits; track row.key; let i = $index) {
+        <div class="split-row">
+          <div class="split-row-header">
+            <span class="split-row-index">Zeile {{ i + 1 }}</span>
+            @if (splits.length > 1) {
+              <button
+                type="button"
+                class="btn btn-small btn-danger"
+                [disabled]="busy()"
+                (click)="removeSplit(row.key)"
+              >
+                Entfernen
+              </button>
+            }
+          </div>
+
+          <div class="grid-3">
+            <label class="field">
+              <span class="field-label">Betrag (€)</span>
+              <input
+                type="text"
+                inputmode="decimal"
+                class="money-input"
+                [(ngModel)]="row.amountText"
+                [ngModelOptions]="{ name: 'splitAmount' + row.key }"
+                [disabled]="busy()"
+                placeholder="0,00"
+                (input)="submitError.set(null)"
+              />
+            </label>
+            <label class="field">
+              <span class="field-label">Pool</span>
+              <select
+                [(ngModel)]="row.poolId"
+                [ngModelOptions]="{ name: 'splitPool' + row.key }"
+                [disabled]="busy()"
+              >
+                <option value="" disabled>Bitte wählen …</option>
+                @for (pool of pools(); track pool.id) {
+                  <option [value]="pool.id">{{ pool.name }}</option>
+                }
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">Kategorie</span>
+              <select
+                [(ngModel)]="row.categoryId"
+                [ngModelOptions]="{ name: 'splitCategory' + row.key }"
+                [disabled]="busy()"
+                (change)="submitError.set(null)"
+              >
+                <option value="" disabled>Bitte wählen …</option>
+                @for (category of categories(); track category.id) {
+                  <option [value]="category.id">{{ category.name }}</option>
+                }
+              </select>
+            </label>
+          </div>
+
+          @if (row.categoryId !== '') {
+            <div class="tax-block">
+              <div class="tax-preset">
+                St.-Voreinstellung: <strong>{{ presetLabel(row) }}</strong>
+              </div>
+              <label class="field field-inline">
+                <span class="field-label">Steuerliche Erfassung</span>
+                <select
+                  [ngModel]="row.taxMode"
+                  (ngModelChange)="onTaxModeChange(row, $event)"
+                  [ngModelOptions]="{ name: 'splitTaxMode' + row.key }"
+                  [disabled]="busy()"
+                >
+                  <option value="inherit">Wie Voreinstellung</option>
+                  <option value="relevant">Steuerrelevant</option>
+                  <option value="irrelevant">Nicht steuerrelevant</option>
+                </select>
+              </label>
+
+              @if (effectiveTaxRelevant(row) === true) {
+                <div class="grid-2">
+                  <label class="field">
+                    <span class="field-label">Steuerkategorie</span>
+                    <select
+                      [(ngModel)]="row.taxCategoryId"
+                      [ngModelOptions]="{ name: 'splitTaxCategory' + row.key }"
+                      [disabled]="busy() || row.taxMode === 'inherit'"
+                    >
+                      <option value="" disabled>Bitte wählen …</option>
+                      @for (tax of taxCategories(); track tax.id) {
+                        <option [value]="tax.id">{{ tax.name }}</option>
+                      }
+                    </select>
+                  </label>
+                  <label class="field field-check">
+                    <input
+                      type="checkbox"
+                      [(ngModel)]="row.partialCapture"
+                      [ngModelOptions]="{ name: 'splitPartial' + row.key }"
+                      [disabled]="busy() || row.taxMode === 'inherit'"
+                    />
+                    <span>Teilmengenerfassung</span>
+                  </label>
+                </div>
+                @if (row.partialCapture) {
+                  <label class="field">
+                    <span class="field-label">Markierte Teilmenge (€)</span>
+                    <input
+                      type="text"
+                      inputmode="decimal"
+                      class="money-input"
+                      [(ngModel)]="row.markedText"
+                      [ngModelOptions]="{ name: 'splitMarked' + row.key }"
+                      [disabled]="busy() || row.taxMode === 'inherit'"
+                      placeholder="0,00"
+                    />
+                  </label>
+                }
+                @if (row.taxMode === 'relevant') {
+                  <label class="field">
+                    <span class="field-label">Steuer-Notiz (optional)</span>
+                    <input
+                      type="text"
+                      [(ngModel)]="row.taxNote"
+                      [ngModelOptions]="{ name: 'splitTaxNote' + row.key }"
+                      [disabled]="busy()"
+                      [maxlength]="500"
+                    />
+                  </label>
+                }
+                @if (row.taxMode === 'inherit') {
+                  <p class="form-hint">
+                    Steuerliche Erfassung folgt der Voreinstellung der
+                    Kategorie. Zum Ändern: „Steuerrelevant“ oder
+                    „Nicht steuerrelevant“ wählen.
+                  </p>
+                }
+              }
+            </div>
+          }
+
+          <label class="field">
+            <span class="field-label">Notiz (optional)</span>
+            <input
+              type="text"
+              [(ngModel)]="row.note"
+              [ngModelOptions]="{ name: 'splitNote' + row.key }"
+              [disabled]="busy()"
+            />
+          </label>
+        </div>
+      }
+
+      <button type="button" class="btn" [disabled]="busy()" (click)="addSplit()">
+        + Aufteilung hinzufügen
+      </button>
+    </fieldset>
+
+    @if (outcomeUncertain()) {
+      <div class="banner banner-info" role="alert">
+        <strong>Hinweis:</strong> Der letzte Versuch wurde nicht bestätigt —
+        die Buchung kann möglicherweise schon gebucht sein. Nochmal senden
+        mit unveränderten Daten wiederholt dieselbe Operation (keine
+        doppelte Buchung). Prüfe die Buchungsliste, bevor du neue Daten
+        einreichst.
+        <button
+          type="button"
+          class="btn btn-small"
+          [disabled]="busy()"
+          (click)="resetPendingOperation()"
+        >
+          Zurücksetzen (neue Operation)
+        </button>
+      </div>
+    }
+
+    @if (submitError(); as err) {
+      <div class="banner banner-error" role="alert">
+        <strong>{{ err.code === 'domain_conflict' ? 'Revisionskonflikt' : 'Fehler' }}:</strong>
+        {{ err.message }}
+        @if (err.expectedBaseRevision !== null) {
+          <span class="revision-hint">
+            (Erwartete Revision {{ err.expectedBaseRevision }}, aktuelle Revision
+            {{ err.actualBaseRevision ?? '?' }}.)
+          </span>
+        }
+      </div>
+    }
+
+    @if (issue) {
+      <p class="form-hint issue-hint">{{ issue }}</p>
+    }
+
+    <div class="form-actions">
+      <button type="button" class="btn" [disabled]="busy()" (click)="goBack()">
+        Abbrechen
+      </button>
+      <button type="submit" class="btn btn-primary" [disabled]="busy() || issue !== null">
+        {{ busy() ? 'Wird gebucht …' : (isCorrection ? 'Korrektur buchen' : 'Ausgabe buchen') }}
+      </button>
+    </div>
+  </form>
+}

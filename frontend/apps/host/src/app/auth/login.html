@@ -1,0 +1,44 @@
+<main class="login-page">
+  <form class="login-card" (ngSubmit)="submit()" novalidate>
+    <h1 class="login-logo">Lario</h1>
+    <p class="login-subtitle">Haushaltsbuch für gemeinsame Haushalte</p>
+
+    <label class="field">
+      <span class="field-label">Benutzername</span>
+      <input
+        type="text"
+        name="username"
+        [(ngModel)]="username"
+        autocomplete="username"
+        required
+        (keyup.enter)="submit()"
+      />
+    </label>
+
+    <label class="field">
+      <span class="field-label">Passwort</span>
+      <input
+        type="password"
+        name="password"
+        [(ngModel)]="password"
+        autocomplete="current-password"
+        required
+        (keyup.enter)="submit()"
+      />
+    </label>
+
+    @if (error; as err) {
+      <div class="banner banner-error" role="alert">
+        <strong>Anmeldung fehlgeschlagen:</strong> {{ err.message }}
+      </div>
+    }
+
+    <button
+      type="submit"
+      class="btn btn-primary"
+      [disabled]="busy || username.trim() === '' || password === ''"
+    >
+      {{ busy ? 'Anmeldung läuft …' : 'Anmelden' }}
+    </button>
+  </form>
+</main>

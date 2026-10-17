@@ -1,0 +1,161 @@
+.list-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.list-header h2 {
+  margin: 0;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.bookings td,
+.bookings th {
+  padding: 0.5rem 0.75rem;
+}
+
+.bookings tr.reversed {
+  color: var(--muted);
+}
+
+.bookings tr.reversed .split-chip {
+  opacity: 0.6;
+}
+
+.splits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  max-width: 22rem;
+}
+
+.split-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.5rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.split-chip em {
+  font-style: normal;
+  color: var(--muted);
+}
+
+.tax-badge {
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  padding: 0 0.3rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.badge {
+  display: inline-block;
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.badge-muted {
+  background: transparent;
+  border: 1px solid var(--line);
+  margin-left: 0.35rem;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 2rem 0;
+  text-align: center;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ---------- Dialoge ---------- */
+
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+  padding: 1rem;
+}
+
+.dialog {
+  width: 100%;
+  max-width: 34rem;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 25%);
+}
+
+.dialog h3 {
+  margin: 0;
+}
+
+.dialog-sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.revision-hint {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.table-small th,
+.table-small td {
+  padding: 0.35rem 0.5rem;
+}
+
+.money-input {
+  width: 7rem;
+  text-align: right;
+}
+
+.refund-total {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}

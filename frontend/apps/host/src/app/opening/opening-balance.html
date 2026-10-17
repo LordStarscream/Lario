@@ -1,0 +1,131 @@
+<section>
+  <h2>Anfangsbestände erfassen</h2>
+  <p class="page-intro">
+    Erfasse den aktuellen Kontostand. Optional kannst du den Betrag auf Pools
+    verteilen; nicht verteilte Beträge bleiben als unverteilt im
+    Abgleich-Kontostand erhalten.
+  </p>
+
+  <form class="opening-form" (ngSubmit)="submit()" novalidate>
+    <div class="grid-2">
+      <label class="field">
+        <span class="field-label">Konto</span>
+        <select name="accountId" [(ngModel)]="accountId" [disabled]="busy()">
+          <option value="" disabled>Bitte wählen …</option>
+          @for (account of accounts(); track account.id) {
+            <option [value]="account.id">{{ account.name }}</option>
+          }
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">Datum</span>
+        <input type="date" name="date" [(ngModel)]="date" [disabled]="busy()" />
+      </label>
+    </div>
+
+    <label class="field">
+      <span class="field-label">Kontostand (€)</span>
+      <input
+        type="text"
+        inputmode="decimal"
+        name="total"
+        class="money-input"
+        [(ngModel)]="totalText"
+        [disabled]="busy()"
+        placeholder="0,00"
+      />
+    </label>
+
+    <fieldset class="dist-fieldset">
+      <legend>Verteilung auf Pools (optional)</legend>
+      @for (row of distribution; track row.key) {
+        <div class="dist-row grid-3">
+          <label class="field">
+            <span class="field-label">Pool</span>
+            <select
+              [(ngModel)]="row.poolId"
+              [ngModelOptions]="{ name: 'distPool' + row.key }"
+              [disabled]="busy()"
+            >
+              <option value="" disabled>Bitte wählen …</option>
+              @for (pool of pools(); track pool.id) {
+                <option [value]="pool.id">{{ pool.name }}</option>
+              }
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Betrag (€)</span>
+            <input
+              type="text"
+              inputmode="decimal"
+              class="money-input"
+              [(ngModel)]="row.amountText"
+              [ngModelOptions]="{ name: 'distAmount' + row.key }"
+              [disabled]="busy()"
+              placeholder="0,00"
+            />
+          </label>
+          <div class="dist-remove">
+            <button
+              type="button"
+              class="btn btn-small btn-danger"
+              [disabled]="busy()"
+              (click)="removeRow(row.key)"
+            >
+              Entfernen
+            </button>
+          </div>
+        </div>
+      }
+      <button type="button" class="btn" [disabled]="busy()" (click)="addRow()">
+        + Pool hinzufügen
+      </button>
+    </fieldset>
+
+    <p class="unallocated">
+      Verteilt: <strong>{{ formatCents(distributionSumCents()) }}</strong>
+      &nbsp;·&nbsp; Unverteilt:
+      <strong>{{ formatCents(unallocatedCents()) }}</strong>
+    </p>
+
+    <label class="field">
+      <span class="field-label">Notiz (optional)</span>
+      <input
+        type="text"
+        name="note"
+        [(ngModel)]="note"
+        [disabled]="busy()"
+        placeholder="z. B. Stand zum Umzug in den gemeinsamen Haushalt"
+      />
+    </label>
+
+    @if (error(); as err) {
+      <div class="banner banner-error" role="alert">
+        <strong>Fehler:</strong> {{ err.message }}
+      </div>
+    }
+
+    @if (outcomeUncertain()) {
+      <div class="banner banner-info" role="alert">
+        <strong>Hinweis:</strong> Der letzte Versuch wurde nicht bestätigt —
+        die Buchung kann möglicherweise schon gebucht sein. Nochmal
+        senden mit unveränderten Daten wiederholt dieselbe Operation
+        (keine doppelte Buchung). Prüfe die Buchungsliste, bevor du neue
+        Daten einreichst.
+        <button type="button" class="btn btn-small" [disabled]="busy()" (click)="resetPendingOperation()">
+          Zurücksetzen (neue Operation)
+        </button>
+      </div>
+    }
+
+    @if (issueText) {
+      <p class="form-hint issue-hint">{{ issueText }}</p>
+    }
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary" [disabled]="busy() || issueText !== null">
+        {{ busy() ? 'Wird gebucht …' : 'Anfangsbestand buchen' }}
+      </button>
+    </div>
+  </form>
+</section>

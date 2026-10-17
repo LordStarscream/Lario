@@ -24,12 +24,23 @@
 - [x] T3: Journal-Read-Endpunkte (bookings list/detail, balances, settlements) mit DTOs (Namen, Tax, effectivelyReversed) + Integrationstests
 - [x] T4: Journal-Write-Endpunkte (expenses, income, opening-balances, transfers, reassignments, transfer-reassignments, corrections, reversals, refunds, balance-corrections) + DTOs + Integrationstests (Validierung, Idempotenz, 409, Referenzfälle A3)
 - [x] T5: Persistenz-/Neustart-Tests (A4) + API-Referenzzfälle komplett (A3) + „keine Salden als Input" (A5)
-- [ ] T6: Frontend — Login/Token, Ausgabeformular, Liste, Anfangsbestände, Stammdaten-minimal, Korrektur/Storno/Erstattung-Aktionen, Fehleranzeige; API-Client neu generieren (A6/A7/A8)
+- [x] T6: Frontend — Login/Token, Ausgabeformular, Liste, Anfangsbestände, Stammdaten-minimal, Korrektur/Storno/Erstattung-Aktionen, Fehleranzeige; API-Client neu generieren (A6/A7/A8)
 - [ ] T7: UI-Tests (vitest) + Build-/Lint-Verifikation (npm) + Abnahmedoku `docs/step-7/step7-api-desktop-eingabe.md` + README-Befehle
-- [ ] T8: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR
+- [ ] T8: Review-Runden bis alle Befunde behoben (externes Review), dann Commit/Push/PR (R1 `ad7d19e`, R2 `25657ef`, R3 `183babc`+`3b34ab7`, R4 `3ff15a8` Server + `f8bf24a` Client + `9ba83c1` Ablauf-Specs, R5 `63d5ae3`, R6 `cbb1271` erledigt — jeweils gepusht; PR #10 aktualisiert; auf weitere Runden des externen Reviews warten; Details: `step-7-r4-befunde.md`)
 
 ## Status
 
+- **Review R6 erledigt** (17. Okt. 2026, Commit `cbb1271` gepusht, PR #10 aktualisiert) — beide Befunde behoben:
+  - **R6-1:** In-Flight-Operation überlebt keinen Reload — `PendingOperation` lag nur in-memory (sessionStorage-Persistenz von R5-1 reichte nicht, weil `markInFlight` erst nach dem Senden aufrief und ein Reload den In-Flight-Zustand verlor). Fix: `pending-operation.ts` persistiert jetzt den In-Flight-Zustand (Operation-Id + Fingerprint) in sessionStorage und stellt nach Reload den Ausgang als unklar wieder her; geänderte Daten bleiben blockiert (keine neue Id), unveränderte Daten senden idempotent mit gleicher Id neu. Wiedersendung markiert erneut in-flight.
+  - **R6-2:** Beim Ersatz-Pfad (Korrektur mit geänderter Split-Aufteilung) wurden unberührte unmarkierte Splits still auf die Steuer-Presets ihrer Kategorie umgeschrieben (`tax: {relevant, …}` statt `tax: null`). Fix: Original-Fingerprint je Split-Zeile (tax + Kategorie) — unberührte unmarkierte Splits senden jetzt `tax: null` (Unmarkiert-Zustand behalten); bewusster Wechsel auf „Wie Voreinstellung“ materialisiert das aktuelle Preset explizit (R5-2 bleibt erhalten).
+  - Tests: 8 neue Host-Tests (`pending-operation.spec.ts` neu mit 4 Tests, `opening-balance.spec.ts` +1 Ablauf-Test, `expense-form.spec.ts` +3); Red-before-Green per Stash-Check verifiziert (5 Regressionstests rot auf dem Stand vor R6); host 54/54, mobile 23/23, Lint 0, Build grün. .NET unverändert (435/435).
+- **Review R5 erledigt** (17. Okt. 2026, Commit `63d5ae3` gepusht, PR #10 aktualisiert) — alle 5 Befunde behoben:
+  - **R5-1:** Idempotenz-Zustand ging beim 401-Redirect verloren (Zustand lag in der Komponenteninstanz). Fix: `PendingOperation` jetzt Root-Service mit sessionStorage-Persistenz (überlebt Redirect); 4xx gibt eine Operation nur noch ohne vorher unklaren Versuch frei (Commit möglich → Wiedersenden); Split-Ids bei Neuanlagen deterministisch aus Zeileninhalt (FNV-1a, `stableSplitHash`), damit das Wiedersenden dieselbe Payload trägt.
+  - **R5-2:** Korrekturzeile „Wie Voreinstellung“ sendete `tax: null` (alt Kennzeichnung still behalten, z. B. nach Kategorie-Wechsel). Fix: wirksame Voreinstellung der aktuellen Kategorie explizit materialisieren; ohne Preset explizit „nicht relevant“.
+  - **R5-3:** Steuer-Notiz bei „nicht relevant“ wurde verworfen. Fix: Notiz bleibt erhalten (Domain-Regel: Notiz unabhängig vom Relevanz-Flag).
+  - **R5-4:** Mobile-App nicht betroffen (kein 401-Login-Redirect, kein ApiErrorHandler); geteilter Code enthält das Fix.
+  - **R5-5:** Doku: Beispiel deterministische Split-Ids (Konzept, Ausgabenerfassung) + Client-Idempotenz-Zustand (Architekturplan §6).
+  - Tests: 7 neue Host-Komponententests; host 46/46, mobile 23/23, Lint + Build grün. .NET unverändert (435/435).
 - **T1 erledigt** (15. Okt. 2026, Commit `d959a64`): Token-Auth (Login/Logout, 12 h, in-memory,
   widerrufbar), credentials.json (PBKDF2-SHA256 100.000 Iterationen, 0600, einmalige
   Konsolenanzeige), Fehlerformat + Exception-Mapping (400/409/500), ApiExceptionMiddleware,
@@ -159,6 +170,92 @@
     Für Schritt 7 (Desktop) etabliertes Verhalten; für die mobile
     Synchronisation (Schritt 9+) gilt stattdessen „gerätegenerierte
     stabile Ids“ — dort ggf. erneut prüfen.
+
+- **T6 erledigt** (16. Okt. 2026, Commit `b7623fc`, gepusht): Desktop-UI
+  (Angular 22, App `host`) aus uncommittedem Arbeitsstand der letzten
+  Session verifiziert und committet. Umfang: Login (D1: Token in
+  localStorage, Bearer vom generierten Fetch-Client, authGuard,
+  401-Redirect), Ausgabeformular (Splits mit Pool/Kategorie/Steuer-
+  kennzeichnung inkl. Voreinstellung/Teilmenge, Client-Validierung,
+  Idempotenz-Id, Korrektur-Modus mit baseRevision), Buchungsliste
+  (Filter Typ/Zeitraum, Aktionen Korrektur/Storno/Erstattung als
+  Dialoge), Anfangsbestände (Verteilung auf Pools, Rest unverteilt),
+  Stammdaten-minimal (Konten/Pools/Kategorien/Steuerkategorien:
+  anlegen, umbenennen, archivieren/reaktivieren, Steuer-Voreinstellung),
+  zentrale Fehleranzeige (ApiErrorHandler: 401/400/409 mit
+  actualBaseRevision/500 mit RequestId). Generierter Client (fetch,
+  Union-Typen) neu erzeugt; `OpenAPI.BASE=''` (gleicher Origin).
+  **Verifikation (16. Okt. 2026):** Lint 0 Fehler/0 Warnungen host +
+  mobile (dabei: Selector-Konvention `app-*` statt `lario-*`,
+  Constructor-DI → `inject()`, `OnInit`-Interfaces, Unused-Variablen);
+  `ng build` host+mobile grün; `ng test` host 1/1, mobile 23/23;
+  OpenAPI-Doku 1:1 mit laufendem Backend (nur Server-URL-Host);
+  Client-Regeneration erzeugt keinen Diff (Client ist aktuell, inkl.
+  `ApiErrorBody` aus R1); .NET-Suite 428/428 (197 Domain + 146
+  Infrastructure + 85 Api).
+  **Noch offen für T7:** gezielte UI-Tests (vitest) für den geänderten
+  Ablauf + Browser-Abnahme A6/A7/A8 + Abnahmedoku `docs/step-7/` +
+  README-Befehle.
+- **Review R3 erledigt** (17. Okt. 2026, Commits `183babc` + `3b34ab7`,
+  gepusht; PR #9 aktualisiert): Review von `b7623d` — korrekt war
+  `b7623fc` (1 Befund: P1; 2 Befunde: P2; alle bestätigt, behoben).
+  - **P1 (P1) — Anfangsbestand: doppelte Buchung nach verlorener
+    Antwort.** Die Client-Logik (opening-balance.ts) erzeugte bei jedem
+    POST eine <i>frische zufällige</i> Operation-Id. Wenn die Antwort
+    verloren ging (Commit auf dem Server, kein 201 am Client), sendete
+    der zweite Klick dieselbe fachliche Operation unter einer <i>neuen</i>
+    Id → zweite Buchung. Der Server war korrekt (gleiche Id + Payload →
+    200 idempotent). Fix: neues `pending-operation.ts` (
+    `PendingOperation`), das die Id zusammen mit dem Payload-Fingerprint
+    hält: unveränderte Daten → dieselbe Id (idempotente Wiederholung);
+    4xx (definitiv nicht committet), Erfolg oder manueller Reset →
+    neue Id; Datenänderung nach unklarem Ausgang → neue Id +
+    `outcomeUncertain`-Banner mit Hinweis, die Buchungsliste zu prüfen.
+    Die API selbst bleibt unverändert (keine Server-Änderung nötig —
+    die Idempotenz war bereits vorhanden; der Server-Test sichert den
+    Haltepunkt ab).
+  - **P2 (P2) — Erstattung: Split-Deckel statt aggregiertem Pool-Deckel.**
+    Das Erstattungsformular setzte pro Split-Zeile den vollen Splitbetrag
+    als Deckel; mehrere Splits desselben Pools wurden nicht aggregiert
+    und bereits erstattete Beträge blieben außer Betracht. Nach einer
+    Teilerstattung ließ sich derselbe Betrag erneut erstatten, bis der
+    serverseitige pro-Pool-Deckel zufällig griff (der Server prüft
+    korrekt nach Rechenvertrag §5.3 — die Lücke lag clientseitig). Fix:
+    (a) `BookingDetailDto` trägt neu `refundedByPool` (Pools mit bereits
+    gewährten Erstattungssummen, Summe der Erstattungs-Buchungen mit
+    `RefundsExpenseId` — Erstattungen sind nicht stornierbar, die Summe
+    ist damit ohne Kettengrundsatz korrekt; `RefundedPoolDto`, Mapper,
+    OpenAPI + generierte DTOs); (b) `refundLinesFromDetail` aggregiert
+    die Splits pro Ursprungs-Pool, zieht `refundedByPool` vom Deckel
+    ab, lässt voll erstattete Pools heraus; Voll-Erstattung zeigt einen
+    Hinweis statt des Formulars; neue Spalte „Erstattet“.
+  - **P2 (P2) — Korrektur: stille Split-Ersatzung bei reinen
+    Skalar-Korrekturen.** Die Vorbelegung baute Split-Ids neu auf und
+    verwarf Steuer-Notizen; eine reine Skalar-Korrektur (z. B. nur die
+    Buchungsnote) ersetzte die Original-Splits still. Fix: Vorbelegung
+    erhält die Original-Split-Ids; bleibt die Aufteilung (Gesamtbetrag +
+    Splits inkl. Steuerkennzeichnung) unverändert, sendet die Korrektur
+    `splits: null` / `totalAmount: null` und der Server hält die
+    Original-Splits (verifizierter API-Vertrag, kein Verhaltenwechsel);
+    Datum/Konto/Note werden unabhängig davon immer gesendet.
+  - **Regressionstests:** `tests/Lario.Api.Tests/Step7ReviewR3Tests.cs`
+    (7 Tests: P1 idempotente Wiederholung desselben Anfangsbestands,
+    P2 Detail-Feld/refundedByPool, P2 Deckel nach Teilerstattung, P2
+    Idempotenz der Erstattung, P2 Skalar-Korrektur bewahrt Split-Iden
+    und Steuer-Notizen) + Client-Tests `bookings-list.refund.spec.ts`
+    (6) und `expense-form.allocation.spec.ts` (7). .NET 435/435 Tests
+    (197 Domain + 146 Infrastructure + 92 Api), 0 Build-Warnungen; Lint
+    0 Fehler/0 Warnungen host + mobile; `ng build` host + mobile grün;
+    `ng test` host 2/2, mobile 23/23; `openapi.json` 1:1 mit laufendem
+    Host (nur konventionelles Servers-URL-Feld).
+  - **Nebenbefund (kein Fix, bewusst):** Ausgabeformular hält die
+    Operation-Id pro Komponenteninstanz stabil (stableOperationId) —
+    nach verlorener Antwort + <i>Datenänderung</i> sendet es dieselbe Id
+    mit neuem Inhalt → 409 Revisions-/Id-Konflikt statt doppelte Buchung
+    (sicher, aber unpraktisch: Reload nötig). Das R3-P1-Fix
+    (Fingerprint-basierte `PendingOperation`) wäre hier der konsistente
+    nächste Schritt — als Folgeauftrag notiert, nicht in R3 geändert
+    (Scope: nur die Befunden).
 
 ## Notizen
 

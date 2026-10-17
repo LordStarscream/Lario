@@ -54,6 +54,8 @@ Minimaler Ablauf: Betrag, Kategorie, Zahlungsort und finanzierender Pool; häufi
 
 Beispiel: 85 € vom Hauptkonto bezahlt, davon 65 € Lebensmittel/Seife aus Flex und 20 € Geschenk aus Freizeit. Das Hauptkonto sinkt um 85 €, Flex um 65 € und Freizeit um 20 €. Liegt das Freizeitgeld auf dem Freizeitkonto, entsteht zusätzlich ein offener Ausgleich von 20 € zum Hauptkonto. Dessen Bestätigung darf weder eine zweite Ausgabe noch einen erneuten Poolabzug erzeugen.
 
+Die Teilposten erhalten auf dem erfassenden Gerät stabile, deterministische Identifikatoren: Der Identifikator einer Zeile wird aus ihrem Inhalt und ihrer Position abgeleitet. Im Beispiel erhalten die Teilposten 65 € und 20 € feste Identifikatoren (etwa „1a“ und „2b“), die bei jeder erneuten Speicherung oder Synchronisation desselben Entwurfs erhalten bleiben. Bei einer späteren Korrektur derselben Ausgabe bleiben die Identifikatoren unveränderter Zeilen erhalten, während geänderte oder neue Zeilen neue Identifikatoren erhalten; so sind Teilposten über Korrekturen hinweg eindeutig zuordbar.
+
 Ausgaben sollen korrigierbar sein. Änderungen müssen sämtliche abhängigen Salden, Reservierungen und offenen Ausgleiche konsistent aktualisieren. Stornos fehlerhafter Buchungen und echte Händlererstattungen werden getrennt geführt. Erstattungen gehen zum ursprünglichen Pool zurück; abgeschlossene Vorhaben werden dadurch nicht automatisch wieder geöffnet. Manuelle Kontostandsabgleiche erzeugen dokumentierte Korrekturen statt stiller Saldoänderungen.
 
 Ausgaben und Splits können steuerlich gekennzeichnet werden. Vorhandene PDFs/Bilder lassen sich in der Hauptanwendung sofort oder später anhängen; sie verändern keine Geldbeträge.

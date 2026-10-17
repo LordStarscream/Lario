@@ -18,22 +18,28 @@ public sealed class ExpenseSplit
     public string Id { get; init; } = string.Empty;
 
     /// <summary>Positiver Betrag in Cent; muss zusammen mit den anderen Splits exakt den Gesamtbetrag ergeben.</summary>
-    public Money Amount { get; init; }
+    public Money Amount { get; set; }
 
     /// <summary>Zweck, den die Ausgabe finanziert (Pool−).</summary>
-    public string PoolId { get; init; } = string.Empty;
+    public string PoolId { get; set; } = string.Empty;
 
     /// <summary>Alltagskategorie der Ausgabe (unabhängig von der Steuerkennzeichnung).</summary>
-    public string CategoryId { get; init; } = string.Empty;
+    public string CategoryId { get; set; } = string.Empty;
 
     /// <summary>Freitext, optional.</summary>
-    public string? Note { get; init; }
+    public string? Note { get; set; }
 
     /// <summary>
     /// Steuerliche Kennzeichnung (Snapshot aus der Erstellung); null =
     /// nicht steuerlich gekennzeichnet.
     /// </summary>
-    public TaxMarking? Tax { get; init; }
+    /// <summary>
+    /// Setbar, damit das Repository die Kennzeichnung einer In-place-
+    /// Korrektur pflegen kann (vorhanden → aktualisieren, neu → anlegen,
+    /// entfällt → löschen); die fachlichen Invarianten gelten an der
+    /// Service-Grenze, nicht in der Eigenschaft.
+    /// </summary>
+    public TaxMarking? Tax { get; set; }
 
     public override string ToString() =>
         $"{Id} ({Amount.ToEuro():0.00} € -> {PoolId}/{CategoryId}{(Tax is null ? "" : ", " + Tax)})";

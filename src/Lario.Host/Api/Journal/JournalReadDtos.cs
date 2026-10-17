@@ -58,6 +58,12 @@ public sealed record BookingSplitSummaryDto(
 /// Storno-/Rückgängig-Buchungen; <see cref="EffectivelyReversed"/> = die
 /// Buchung ist wirksam storniert; <see cref="RefundsExpenseId"/> = diese
 /// Buchung ist eine Erstattung für diese Ausgabe.
+///
+/// <see cref="RefundedByPool"/> (Review R3 P2): bereits gewährte
+/// Erstattungsbeträge pro Pool (Summe aller Erstattungs-Buchungen zu
+/// dieser Ausgabe) — daraus rechnet der Client den verbleibenden
+/// erstattungsfähigen Deckel (Split-Position − bereits erstattet),
+/// statt den vollen Splitbetrag erneut als Deckel vorzusetzen.
 /// </summary>
 public sealed record BookingDetailDto(
     string Id,
@@ -76,7 +82,16 @@ public sealed record BookingDetailDto(
     IReadOnlyList<ExpenseSplitDto> Splits,
     IReadOnlyList<PoolAllocationDto> TransferPurposes,
     IReadOnlyList<AccountAllocationDto> ReassignmentAccounts,
-    long TotalAmount);
+    long TotalAmount,
+    IReadOnlyList<RefundedPoolDto> RefundedByPool);
+
+/// <summary>
+/// Bereits gewährte Erstattung eines Ursprungs-Pools (Review R3 P2):
+/// <see cref="Amount"/> in Cent, Summe aller Erstattungs-Buchungen mit
+/// <c>RefundsExpenseId</c> = Ursprungs-Ausgabe je Pool (Erstattungen sind
+/// nicht stornierbar — die Summe ist damit ohne Kettengrundsatz).
+/// </summary>
+public sealed record RefundedPoolDto(string PoolId, long Amount);
 
 /// <summary>Kontenposten: <see cref="Amount"/> in Cent (vorzeichenbehaftet).</summary>
 public sealed record AccountPostingDto(string AccountId, string? AccountName, long Amount);

@@ -149,6 +149,15 @@ public sealed record TransferReassignmentCommand(
 /// Felder ändern sich (null = unverändert); mindestens ein Feld ist
 /// Pflicht (Prüfung in der Domain). <c>ExpectedBaseRevision</c> ist
 /// Pflicht (Rechenvertrag §5.5).
+/// <para>
+/// Bei Teilposten (<c>splits</c>) gilt dieselbe Konvention auf
+/// Teilposten-Ebene für <c>tax</c> (Review Runde 2 P2): <c>tax = null</c>
+/// heißt „unverändert" — ein bestehender Teilposten (gleiche Id) behält
+/// seine ursprüngliche Steuerkennzeichnung (inkl. Steuer-Notiz und
+/// bisheriger Nichtmarkierung), ein neuer Teilposten wird wie bei der
+/// Neuanlage aus der Kategorie-Voreinstellung materialisiert.
+/// Eine Steueränderung muss als explizite Kennzeichnung gesendet werden.
+/// </para>
 /// </summary>
 public sealed record CorrectionCommand(
     string OperationId,
