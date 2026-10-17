@@ -128,7 +128,9 @@ public sealed class CorrectionService(
         // Einmaligkeitsregel des Anfangsbestands (Zwischenstep 7.5): ein
         // Konto-Wechsel darf nicht auf ein Konto zielen, das bereits einen
         // eigenen Anfangsbestand trägt — pro Konto ist genau einer
-        // zulässig.
+        // zulässig. Die Prüfung ist posting-basiert, damit auch
+        // Bestandszeilen mit NULL-Spalte (Legacy-Duplikate, die der
+        // Backfill bewusst unangetastet lässt) den Zielkonto sperren.
         if (original.Type == BookingType.OpeningBalance
             && spec.AccountId is { } newAccountId
             && newAccountId != original.OpeningBalanceAccountId)
@@ -136,7 +138,7 @@ public sealed class CorrectionService(
             var occupied = journal.FirstOrDefault(b =>
                 b.Type == BookingType.OpeningBalance
                 && b.Id != original.Id
-                && b.OpeningBalanceAccountId == newAccountId);
+                && b.AccountPostings.Any(p => p.AccountId == newAccountId));
             if (occupied is not null)
             {
                 throw new DomainConflictException(

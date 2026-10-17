@@ -152,6 +152,62 @@
 - Hinweis: Browser-Abnahme ist eine headless-Chromium-Prüfung (kein echtes Gerät, kein
   manueller Klick-Lauf) — die manuelle Abnahme bleibt beim Nutzer.
 
+### A2.1 — Upgrade-Pfad (18. Okt. 2026)
+
+Review-Kommentar: Bestandsdatenbanken, deren Anfangsbestände vor der 7.5-
+Migration angelegt wurden, tragen nach dem Upgrade `OpeningBalanceAccountId =
+NULL` — die Einmaligkeitsregel (partielle Unique-Index + Spalten-Prüfung) sieht
+diese Zeilen nicht, und der unzugeordnete Rest bliebe unerklärt. Behoben:
+
+- **Migration `20261017105209_Step7_5OpeningBalanceAccountId`** (vorhandene,
+  noch nirgends angewendete 7.5-Migration — Branch nicht gemerged — um zwei
+  idempotente Backfill-Statements zwischen Spalte und Index erweitert):
+  (1) die älteste `OpeningBalance`-Zeile pro Konto (Fachdatum, dann Id) erhält
+  das Konto aus ihrem (einzigen) Konto-Posting; (2) noch NULL-Zeilen, deren
+  Konto nicht bereits belegt ist, werden nachgefüllt. Legacy-Duplikate
+  desselben Kontos bleiben bewusst NULL (nicht gelöscht, bleiben sichtbar);
+  der partielle Unique-Index auf nicht-NULL-Werten ist weiterhin die atomare
+  DB-Erzwingung.
+- **`OpeningBalanceService.CreateOpeningBalance` + `CorrectionService`**
+  (Konto-Wechsel-Prüfung): die Einmaligkeitsprüfung ist jetzt
+  **posting-basiert** (`AccountPostings.Any(p => p.AccountId == …)` statt
+  Spaltenvergleich), damit auch Legacy-Duplikate mit NULL-Spalte Neuanlagen
+  und Konto-Wechsel auf das Konto blockieren. Die 409-Meldung nennt jetzt die
+  vorhandene Buchung (Id + Stichtag).
+- **Test-Helfer `TestDatabase(migrateTo)`** (Step3PersistenceTests): optional
+  bei einer bestimmten Migration anhalten — Upgrade-Tests bauen die DB im
+  Step-6-Zustand auf (`Migrate("20261014134142_Step6CorrectionPayload")`) und
+  laufen dann `Migrate()` auf 7.5.
+- **Zwei neue Infrastructure-Tests**:
+  `Upgrade_LegacyOpeningBalance_IsBackfilledProtectedAndVisible` (Legacy-
+  Anfangsbestand 150 € ohne Pool-Verteilung: Backfill übernimmt das Konto,
+  `CreateOpeningBalance` → 409 mit Verweis auf die bestehende Buchung, direkte
+  DB-Zeile für gleiches Konto verletzt den Unique-Index, Rest ist als
+  unzugeordneter Anfangsbestand mit Konto-Bezug in den Salden sichtbar) und
+  `Upgrade_LegacyDuplicates_KeepOldestAndStayVisible` (zwei Legacy-Zeilen
+  desselben Kontos: älteste trägt das Konto, Duplikat bleibt NULL und sichtbar,
+  Neuanlage bleibt abgelehnt).
+
+Ergebnis: **476/476** .NET-Tests (Domain 214, Infrastructure 158 — vorher 156,
+Api 104 — unverändert).
+
+**Echter Host-Smoke-Test** (18. Okt. 2026, `/tmp/lario-smoke-run.sh`, frische
+SQLite-DB unter `/tmp/lario-smoke-2`, echter Host-Prozess): **8/8** —
+/api/health ok (Migrationen angewendet), DB: Spalte `OpeningBalanceAccountId`
++ partieller Unique-Index vorhanden, Login mit erzeugtem Passwort, Konto +
+Pool angelegt, Anfangsbestand 1.500 € (600 € an Flex) → 201, Salden
+Konto=150000/Pool=60000/Gap=90000/unzugeordnet=90000, Doppelanlage am Konto
+→ 409, `GET /` liefert die Angular-Anwendung.
+
+Umgebungs-Hinweis (18. Okt.): `~/.dotnet/dotnet test` startete den Api-
+TestHost inzwischen mit dem System-Muxer `/usr/share/dotnet/dotnet` (ohne
+ASP.NET-Runtime; `DOTNET_ROOT` wird von ihm ignoriert). Funktionierender
+Befehl: `~/.dotnet/dotnet exec --runtimeconfig
+/usr/share/dotnet/sdk/10.0.112/vstest.console.runtimeconfig.json --depsfile
+/usr/share/dotnet/sdk/10.0.112/vstest.console.deps.json
+/usr/share/dotnet/sdk/10.0.112/vstest.console.dll
+tests/Lario.Api.Tests/bin/Debug/net10.0/Lario.Api.Tests.dll`
+
 ### Übergabe (externes Review)
 
 Branch `step/7.5-salden-anfangsbestaende` auf Basis `63cfe45` (Merge PR #10). Kernfragen:

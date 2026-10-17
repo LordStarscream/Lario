@@ -4,6 +4,7 @@ using Lario.Domain;
 using Lario.Domain.Journal;
 using Lario.Domain.MasterData;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Lario.Infrastructure.Tests;
@@ -358,7 +359,140 @@ public class Step7_5OpeningBalanceTests
                     [new PoolAllocation(Flex, new Money(1))])));
     }
 
+    // ==================================================================
+    // Upgrade-Pfad (Review 7.5): Bestandsdatenbanken, deren
+    // Anfangsbestände vor der Migration 20261017105209 angelegt wurden
+    // (Spalte fehlte — die Zeilen wären sonst unsichtbar für die
+    // Einmaligkeitsregel und der unzugeordnete Rest bliebe unerklärt).
+    // ==================================================================
+
+    [Fact(DisplayName = "A2 upgrade: vor der Migration angelegter Anfangsbestand wird zurückgefillt, durch Index geschützt und in den Salden sichtbar")]
+    public async Task Upgrade_LegacyOpeningBalance_IsBackfilledProtectedAndVisible()
+    {
+        // Zustand vor der 7.5-Migration (letzte Migration von Schritt 6).
+        var db = new TestDatabase(migrateTo: "20261014134142_Step6CorrectionPayload");
+        try
+        {
+            await SeedAsync(db);
+
+            // Legacy-Anfangsbestand ohne Pool-Verteilung (150 € unzugeordnet)
+            // — wie von der alten Version gespeichert, ohne die neue Spalte.
+            await InsertLegacyOpeningBalanceAsync(
+                db, "init-legacy", Haupt, 150_000, new DateOnly(2026, 10, 1));
+
+            // Upgrade: restliche Migrationen inkl. Backfill und Index.
+            using (var scope = db.Services.CreateScope())
+            {
+                scope.ServiceProvider.GetRequiredService<LarioDbContext>().Database.Migrate();
+            }
+
+            // Backfill: das Konto wurde aus dem Posting übernommen.
+            var repo = db.Resolve<IBookingRepository>();
+            var legacy = await repo.FindByIdAsync("init-legacy");
+            Assert.NotNull(legacy);
+            Assert.Equal(Haupt, legacy!.OpeningBalanceAccountId);
+
+            // Die Einmaligkeitsregel greift für den Bestandsbestand:
+            // die Ablehnung nennt die vorhandene Buchung.
+            var conflict = await Assert.ThrowsAsync<DomainConflictException>(
+                () => db.Resolve<OpeningBalanceService>().CreateAsync(
+                    new OpeningBalanceSpec("init-2", Stichtag, Haupt, new Money(1),
+                        [new PoolAllocation(Flex, new Money(1))])));
+            Assert.Contains("bereits einen Anfangsbestand", conflict.Message);
+            Assert.Contains("init-legacy", conflict.Message);
+
+            // Datenebene: eine zweite Zeile für das gleiche Konto (z. B.
+            // Umgehung der Anwendungsprüfung) verletzt den Unique-Index.
+            await Assert.ThrowsAsync<Microsoft.EntityFrameworkCore.DbUpdateException>(
+                () => db.Resolve<IBookingRepository>().AddAsync(new Booking(
+                    "init-db-dup", BookingType.OpeningBalance, Stichtag, null,
+                    [new AccountPosting { AccountId = Haupt, Amount = new Money(1) }],
+                    [],
+                    openingBalanceAccountId: Haupt)));
+
+            // Salden: der 150-€-Rest ist als nicht zugeordneter
+            // Anfangsbestand mit Konto-Bezug sichtbar (nicht unerklärt).
+            var balances = await db.Resolve<BalanceQueryService>().GetBalancesAsync();
+            var entry = Assert.Single(balances.UnallocatedOpeningBalances);
+            Assert.Equal("init-legacy", entry.OpeningBalanceId);
+            Assert.Equal(Haupt, entry.AccountId);
+            Assert.Equal(150_000, entry.Unallocated.Cents);
+        }
+        finally
+        {
+            await db.DisposeAsync();
+        }
+    }
+
+    [Fact(DisplayName = "A2 upgrade: Legacy-Duplikat pro Konto bleibt sichtbar, älteste Zeile trägt das Konto, Neuanlage bleibt abgelehnt")]
+    public async Task Upgrade_LegacyDuplicates_KeepOldestAndStayVisible()
+    {
+        var db = new TestDatabase(migrateTo: "20261014134142_Step6CorrectionPayload");
+        try
+        {
+            await SeedAsync(db);
+            await InsertLegacyOpeningBalanceAsync(db, "init-old", Haupt, 100_000, new DateOnly(2026, 1, 1));
+            await InsertLegacyOpeningBalanceAsync(db, "init-new", Haupt, 40_000, new DateOnly(2026, 2, 1));
+
+            using (var scope = db.Services.CreateScope())
+            {
+                scope.ServiceProvider.GetRequiredService<LarioDbContext>().Database.Migrate();
+            }
+
+            // Die älteste Zeile (Fachdatum, dann Id) erhält das Konto;
+            // das Duplikat bleibt NULL — aber nicht gelöscht.
+            var repo = db.Resolve<IBookingRepository>();
+            var old = await repo.FindByIdAsync("init-old");
+            var fresh = await repo.FindByIdAsync("init-new");
+            Assert.Equal(Haupt, old!.OpeningBalanceAccountId);
+            Assert.Null(fresh!.OpeningBalanceAccountId);
+
+            // Die posting-basierte Prüfung deckt auch die NULL-Zeile ab:
+            // eine Neuanlage für das Konto bleibt abgelehnt.
+            var conflict = await Assert.ThrowsAsync<DomainConflictException>(
+                () => db.Resolve<OpeningBalanceService>().CreateAsync(
+                    new OpeningBalanceSpec("init-third", Stichtag, Haupt, new Money(1),
+                        [new PoolAllocation(Flex, new Money(1))])));
+            Assert.Contains("bereits einen Anfangsbestand", conflict.Message);
+
+            // Beide Zeilen sind im Journal sichtbar.
+            var bookings = await repo.GetAllAsync();
+            Assert.Equal(
+                2, bookings.Count(b => b.Type == BookingType.OpeningBalance
+                                       && (b.Id == "init-old" || b.Id == "init-new")));
+        }
+        finally
+        {
+            await db.DisposeAsync();
+        }
+    }
+
     // ---------- Hilfsmittel ----------
+
+    /// <summary>
+    /// Legt eine Anfangsbestandszeile per Raw-SQL an, wie sie die Version
+    /// vor der Migration 20261017105209 geschrieben hätte (ohne die
+    /// Spalte <c>OpeningBalanceAccountId</c>).
+    /// </summary>
+    private static async Task InsertLegacyOpeningBalanceAsync(
+        TestDatabase db, string id, string accountId, long cents, DateOnly date)
+    {
+        await using var connection = new SqliteConnection($"Data Source={db.DatabaseFile}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO Bookings (Id, Type, Date, Note, BaseRevision)
+            VALUES (@id, 'OpeningBalance', @date, NULL, 1);
+            INSERT INTO AccountPostings (BookingId, AccountId, Amount)
+            VALUES (@id, @account, @amount);
+            """;
+        command.Parameters.AddWithValue("@id", id);
+        command.Parameters.AddWithValue("@date", date.ToString("yyyy-MM-dd"));
+        command.Parameters.AddWithValue("@account", accountId);
+        command.Parameters.AddWithValue("@amount", cents);
+        await command.ExecuteNonQueryAsync();
+    }
 
     private static async Task SeedAsync(TestDatabase db)
     {

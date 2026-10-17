@@ -89,12 +89,22 @@ public sealed class OpeningBalanceService(
         // ist ein Datenfehler, kein zweiter Ist-Zustand. Sichtbare
         // Ablehnung mit dem Korrekturweg; die Datenbank erzwingt die
         // Regel zusätzlich atomar über einen eindeutigen Index.
-        if (bookings.Any(b => b.Type == BookingType.OpeningBalance
-                              && b.OpeningBalanceAccountId == spec.AccountId))
+        //
+        // Die Prüfung ist posting-basiert (nicht spalten-basiert): in
+        // Bestandsdatenbanken kann <c>OpeningBalanceAccountId</c> auf
+        // vor der Spalte angelegten Zeilen NULL sein (der Backfill der
+        // Migration 20261017105209 füllt nur eindeutig zuordenbare Zeilen;
+        // Legacy-Duplikate bleiben bewusst NULL). Das Konto-Posting ist in
+        // beiden Fällen die maßgebliche Zuordnung.
+        var existingOpening = bookings.FirstOrDefault(b =>
+            b.Type == BookingType.OpeningBalance
+            && b.AccountPostings.Any(p => p.AccountId == spec.AccountId));
+        if (existingOpening is not null)
         {
             var accountName = catalog.FindAccount(spec.AccountId)?.Name ?? spec.AccountId;
             throw new Lario.Domain.DomainConflictException(
-                $"Konto '{spec.AccountId}' ({accountName}) hat bereits einen Anfangsbestand — " +
+                $"Konto '{spec.AccountId}' ({accountName}) hat bereits einen Anfangsbestand " +
+                $"('{existingOpening.Id}', Stichtag {existingOpening.Date:dd.MM.yyyy}) — " +
                 "pro Konto ist genau einer zulässig. Ändere den vorhandenen Anfangsbestand " +
                 "über die Korrektur (Anfangsbestände sind nicht stornierbar); eine zweite " +
                 "Erfassung desselben Kontos ist ausgeschlossen.");

@@ -24,7 +24,7 @@ public sealed class TestDatabase : IAsyncDisposable
     public string DatabaseFile { get; }
     public ServiceProvider Services { get; }
 
-    public TestDatabase()
+    public TestDatabase(string? migrateTo = null)
     {
         TempDir = System.IO.Directory.CreateTempSubdirectory("lario-test-").FullName;
         DatabaseFile = Path.Combine(TempDir, "lario.sqlite");
@@ -34,8 +34,10 @@ public sealed class TestDatabase : IAsyncDisposable
         Services = builder.BuildServiceProvider();
 
         // Migrationen auf die neue Datei anwenden (wie beim Host-Start).
+        // <c>migrateTo</c> hält bei einer bestimmten Migration an — für
+        // Upgrade-Tests, die Zeilen vor einer späteren Migration anlegen.
         using var scope = Services.CreateScope();
-        scope.ServiceProvider.GetRequiredService<LarioDbContext>().Database.Migrate();
+        scope.ServiceProvider.GetRequiredService<LarioDbContext>().Database.Migrate(migrateTo);
     }
 
     public T Resolve<T>() where T : notnull
