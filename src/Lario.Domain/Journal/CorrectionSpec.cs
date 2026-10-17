@@ -4,10 +4,14 @@ namespace Lario.Domain.Journal;
 
 /// <summary>
 /// Korrektur-Vorgabe (Rechenvertrag §5.4, Design Schritt 6 §2.3):
-/// In-place-Änderung einer bestehenden Ausgabe- oder Einnahme-Buchung —
-/// „keine zweite Ausgabe" (Plan-Abnahme). Änderbar sind Datum, Notiz,
-/// Konto, Gesamtbetrag sowie die Teilposten (Ausgabe) bzw. die Verteilung
-/// (Einnahme); <c>null</c> bei einem Feld bedeutet „bleibt unverändert".
+/// In-place-Änderung einer bestehenden Ausgabe-, Einnahme- oder
+/// Anfangsbestand-Buchung — „keine zweite Ausgabe“ (Plan-Abnahme).
+/// Änderbar sind Datum, Notiz, Konto, Gesamtbetrag sowie die Teilposten
+/// (Ausgabe), die Verteilung (Einnahme) bzw. die Verteilung und das Konto
+/// (Anfangsbestand); <c>null</c> bei einem Feld bedeutet „bleibt
+/// unverändert". Ausnahmen: die Notiz unterscheidet zusätzlich den
+/// leeren String als explizite Löschung (Review R7-5), und <c>tax</c>
+/// auf Teilposten-Ebene folgt derselben Null-Konvention.
 /// Die <see cref="OperationId"/> ist der stabile Idempotenzschlüssel der
 /// Korrektur-Historie: gleicher Inhalt wird nur quittiert (Revision bleibt
 /// unberührt), gleiche Operation-Id mit anderem Inhalt ist ein Konflikt
@@ -23,7 +27,11 @@ public sealed record CorrectionSpec(
     int ExpectedBaseRevision,
     /// <summary>Neues Fachdatum; null = bleibt unverändert.</summary>
     DateOnly? Date = null,
-    /// <summary>Neue Notiz; null = bleibt unverändert.</summary>
+    /// <summary>
+    /// Neue Notiz (Review R7-5): <c>null</c> = bleibt unverändert (Original-Notiz
+    /// bleibt erhalten), leerer String (oder nur Leerzeichen) = explizite
+    /// Löschung, sonst = neue Notiz.
+    /// </summary>
     string? Note = null,
     /// <summary>Neues Konto; null = bleibt unverändert.</summary>
     string? AccountId = null,
@@ -51,8 +59,9 @@ public sealed record CorrectionSpec(
     ///   gesetzt (leere Korrektur ist kein Befehl).
     /// </para>
     /// <para>
-    /// - Typ: nur Ausgaben und Einnahmen sind korrigierbar — alle anderen
-    ///   Buchungstypen werden über Storno + Neuausgabe geändert.
+    /// - Typ: nur Ausgaben, Einnahmen und Anfangsbestände sind korrigierbar
+    ///   (Zwischenstep 7.5) — alle anderen Buchungstypen werden über
+    ///   Storno + Neuausgabe geändert.
     /// </para>
     /// <para>
     /// - Ausschluss: Teilposten und Verteilung niemals gleichzeitig;
@@ -107,11 +116,12 @@ public sealed record CorrectionSpec(
                 "Felder Datum, Notiz, Konto, Gesamtbetrag, Teilposten oder Verteilung ist erforderlich.");
         }
 
-        if (original.Type is not (BookingType.Expense or BookingType.Income))
+        if (original.Type is not (BookingType.Expense or BookingType.Income or BookingType.OpeningBalance))
         {
             throw new LarioDomainException(
-                $"Korrektur '{OperationId}' der Buchung '{BookingId}': nur Ausgaben und Einnahmen sind korrigierbar " +
-                $"(Buchungstyp {original.Type}) — andere Buchungstypen ändern Sie über Storno + Neuausgabe.");
+                $"Korrektur '{OperationId}' der Buchung '{BookingId}': nur Ausgaben, Einnahmen und " +
+                $"Anfangsbestände sind korrigierbar (Buchungstyp {original.Type}) — andere Buchungstypen " +
+                "ändern Sie über Storno + Neuausgabe.");
         }
 
         if (Splits is not null && Allocations is not null)
@@ -125,10 +135,50 @@ public sealed record CorrectionSpec(
         {
             ValidateExpenseCorrection(catalog, original);
         }
-        else
+        else if (original.Type == BookingType.Income)
         {
             ValidateIncomeCorrection(catalog, original);
         }
+        else
+        {
+            ValidateOpeningBalanceCorrection(catalog, original);
+        }
+    }
+
+    /// <summary>
+    /// Prüft die wirksame Fassung eines korrigierten Anfangsbestands wie
+    /// eine Neuanlage (Zwischenstep 7.5): Stichtag, Konto, Gesamtbetrag
+    /// (≥ 0) und Verteilung (aktive Pools, eindeutige Zeilen, Summe ≤
+    /// Total) — über dieselbe Prüfung wie die Erstanlage
+    /// (<see cref="OpeningBalanceSpec.ValidateAgainst"/>). Teilposten sind
+    /// ausgeschlossen; <see cref="Allocations"/> tragen die Verteilung.
+    /// </summary>
+    private void ValidateOpeningBalanceCorrection(MasterDataCatalog catalog, Booking original)
+    {
+        if (Splits is not null)
+        {
+            throw new LarioDomainException(
+                $"Korrektur '{OperationId}' der Buchung '{BookingId}': Teilposten gehören zu " +
+                "Ausgaben — ein Anfangsbestand wird über Gesamtbetrag und Verteilung korrigiert.");
+        }
+
+        // Wirksame Fassung wie Neuanlage validieren (Muster
+        // ExpenseSpec/IncomeSpec): Konto, Stichtag, Betrag ≥ 0, aktive
+        // Pools, eindeutige Verteilung und Summe ≤ Gesamtbetrag.
+        new OpeningBalanceSpec(
+            Id: OperationId,
+            Date: Date ?? original.Date,
+            AccountId: AccountId ?? original.AccountPostings.Single().AccountId,
+            Total: TotalAmount ?? original.AccountPostings.Single().Amount,
+            Distribution: Allocations is null
+                ? original.PoolPostings
+                    .Select(p => new PoolAllocation(p.PoolId, p.Amount))
+                    .ToList()
+                : Allocations
+                    .Select(a => new PoolAllocation(a.PoolId, a.Amount))
+                    .ToList(),
+            Note: EffectiveNote(original))
+            .ValidateAgainst(catalog);
     }
 
     /// <summary>
@@ -137,7 +187,8 @@ public sealed record CorrectionSpec(
     /// dieselbe <see cref="Booking.BaseRevision"/> wie das Original — die
     /// Revisionserhöhung macht der Service zusammen mit dem
     /// Historieneintrag. Datum/Notiz/Konto: gesetzt = neuer Wert, null =
-    /// alter Wert. Der Gesamtbetrag kommt aus der (geprüften) Vorgabe oder
+    /// alter Wert; die Notiz zusätzlich: leerer String = explizite Löschung
+    /// (Review R7-5). Der Gesamtbetrag kommt aus der (geprüften) Vorgabe oder
     /// bleibt der des Originals; das Konto-Posting ist −Gesamtbetrag
     /// (Ausgabe) bzw. +Gesamtbetrag (Einnahme) am wirksamen Konto.
     /// Pool-Postings: je-Pool-Summe der neuen Teilposten/Verteilung bzw.
@@ -168,16 +219,16 @@ public sealed record CorrectionSpec(
     {
         ArgumentNullException.ThrowIfNull(original);
 
-        if (original.Type is not (BookingType.Expense or BookingType.Income))
+        if (original.Type is not (BookingType.Expense or BookingType.Income or BookingType.OpeningBalance))
         {
             throw new LarioDomainException(
                 $"Korrektur '{OperationId}': Buchung '{original.Id}' (Buchungstyp {original.Type}) ist nicht " +
-                "korrigierbar — nur Ausgaben und Einnahmen lassen sich korrigieren.");
+                "korrigierbar — nur Ausgaben, Einnahmen und Anfangsbestände lassen sich korrigieren.");
         }
 
         var accountId = AccountId ?? original.AccountPostings.Single().AccountId;
         var date = Date ?? original.Date;
-        var note = Note ?? original.Note;
+        var note = EffectiveNote(original);
         var total = TotalAmount ?? OriginalTotal(original);
 
         if (original.Type == BookingType.Expense)
@@ -273,6 +324,33 @@ public sealed record CorrectionSpec(
                 null);
         }
 
+        // Anfangsbestand (Zwischenstep 7.5): Konto und Gesamtbetrag dürfen
+        // sich ändern; die Verteilung (null = unverändert) ersetzt die
+        // Pool-Postings. Das gesicherte Anfangsbestandskonto folgt dem
+        // wirksamen Konto (Einmaligkeitsregel je Konto).
+        if (original.Type == BookingType.OpeningBalance)
+        {
+            var openingAccountPostings = new List<AccountPosting>
+            {
+                new() { AccountId = accountId, Amount = total },
+            };
+
+            var openingPoolPostings = Allocations is null
+                ? original.PoolPostings.ToList()
+                : Allocations
+                    .Select(a => new PoolPosting { PoolId = a.PoolId, Amount = a.Amount })
+                    .ToList();
+
+            return new Booking(
+                original.Id,
+                BookingType.OpeningBalance,
+                date,
+                note,
+                openingAccountPostings,
+                openingPoolPostings,
+                openingBalanceAccountId: accountId);
+        }
+
         // Einnahme: Verteilung ersetzt die Pool-Postings; der
         // Finanzierungsmonat bleibt unverändert; keine Teilposten.
         var incomeAccountPostings = new List<AccountPosting>
@@ -302,6 +380,23 @@ public sealed record CorrectionSpec(
             null,
             null,
             null);
+    }
+
+    /// <summary>
+    /// Wirksame Notiz der Korrektur (Review R7-5): <c>null</c> heißt
+    /// „unverändert“ (die Original-Notiz bleibt), der leere String (oder nur
+    /// Leerzeichen) ist eine explizite Löschung, jeder andere Wert ersetzt die
+    /// Notiz. Ohne diese Unterscheidung würde eine im Formular geleerte Notiz
+    /// still als „unverändert“ behandelt.
+    /// </summary>
+    public string? EffectiveNote(Booking original)
+    {
+        if (Note is null)
+        {
+            return original.Note;
+        }
+
+        return string.IsNullOrWhiteSpace(Note) ? null : Note.Trim();
     }
 
     /// <summary>

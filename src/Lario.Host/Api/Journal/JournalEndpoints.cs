@@ -51,6 +51,11 @@ public static class JournalEndpoints
             .Produces<BalancesDto>(StatusCodes.Status200OK)
             .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest);
 
+        endpoints.MapGet("/api/v1/opening-balances", ListOpeningBalances)
+            .WithName("listOpeningBalances")
+            .Produces<IReadOnlyList<OpeningBalanceListItemDto>>(StatusCodes.Status200OK)
+            .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest);
+
         endpoints.MapGet("/api/v1/settlements", GetSettlements)
             .WithName("listSettlements")
             .Produces<IReadOnlyList<SettlementDto>>(StatusCodes.Status200OK)
@@ -118,6 +123,33 @@ public static class JournalEndpoints
         var result = await balances.GetBalancesAsync(cancellationToken);
         var catalog = await masterData.LoadCatalogAsync(cancellationToken);
         return Results.Ok(JournalDtoMapper.ToBalancesDto(result, catalog));
+    }
+
+    // ---------- Anfangsbestände (Zwischenstep 7.5, A4) ----------
+
+    private static async Task<IResult> ListOpeningBalances(
+        IBookingRepository bookings,
+        IMasterDataRepository masterData,
+        CancellationToken cancellationToken)
+    {
+        var all = await bookings.GetAllAsync(cancellationToken);
+        var catalog = await masterData.LoadCatalogAsync(cancellationToken);
+
+        // Wirksam (nicht wirkungsgestornt) sind bei Anfangsbeständen alle
+        // gespeicherten Einträge — sie sind designgemäß nicht stornierbar
+        // (Rechenvertrag §3.7); Änderungen laufen als In-place-Korrektur
+        // auf derselben Id. Pro Konto ist genau ein Eintrag vorhanden
+        // (Einmaligkeitsregel, Eindeutigkeitsindex). Sortierung aufsteigend
+        // (Stichtag, Id) — die Liste ist ein Ist-Überblick, keine
+        // Aktivitätschronik.
+        var list = all
+            .Where(b => b.Type == BookingType.OpeningBalance)
+            .OrderBy(b => b.Date)
+            .ThenBy(b => b.Id, StringComparer.Ordinal)
+            .Select(b => JournalDtoMapper.ToOpeningBalanceListItem(b, catalog))
+            .ToList();
+
+        return Results.Ok(list);
     }
 
     // ---------- Ausgleichspositionen ----------

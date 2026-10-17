@@ -49,13 +49,17 @@ public sealed record OpeningBalanceSpec(
             .Select(line => new PoolPosting { PoolId = line.PoolId, Amount = line.Amount })
             .ToList();
 
+        // Das Konto wird zusätzlich auf der Buchung gesichert
+        // (OpeningBalanceAccountId) — Einmaligkeitsregel „pro Konto genau
+        // ein Anfangsbestand“ über einen eindeutigen Index (Zwischenstep 7.5).
         return new Booking(
             id: Id,
             type: BookingType.OpeningBalance,
             date: Date,
             note: Note,
             accountPostings: accountPostings,
-            poolPostings: poolPostings);
+            poolPostings: poolPostings,
+            openingBalanceAccountId: AccountId);
     }
 
     /// <summary>

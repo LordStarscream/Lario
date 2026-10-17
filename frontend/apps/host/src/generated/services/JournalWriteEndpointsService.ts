@@ -22,6 +22,25 @@ export class JournalWriteEndpointsService {
      * @returns BookingCreatedDto OK
      * @throws ApiError
      */
+    public static createOpeningBalance(
+        requestBody: OpeningBalanceCommand,
+    ): CancelablePromise<BookingCreatedDto> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/opening-balances',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                409: `Conflict`,
+            },
+        });
+    }
+    /**
+     * @param requestBody
+     * @returns BookingCreatedDto OK
+     * @throws ApiError
+     */
     public static createExpense(
         requestBody: ExpenseCommand,
     ): CancelablePromise<BookingCreatedDto> {
@@ -47,25 +66,6 @@ export class JournalWriteEndpointsService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/income',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                400: `Bad Request`,
-                409: `Conflict`,
-            },
-        });
-    }
-    /**
-     * @param requestBody
-     * @returns BookingCreatedDto OK
-     * @throws ApiError
-     */
-    public static createOpeningBalance(
-        requestBody: OpeningBalanceCommand,
-    ): CancelablePromise<BookingCreatedDto> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/opening-balances',
             body: requestBody,
             mediaType: 'application/json',
             errors: {

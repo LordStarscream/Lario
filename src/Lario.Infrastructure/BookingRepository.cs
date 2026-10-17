@@ -239,6 +239,11 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         tracked.BaseRevision = updated.BaseRevision;
         tracked.ReversesBookingId = updated.ReversesBookingId;
         tracked.RefundsExpenseId = updated.RefundsExpenseId;
+        // Gesichertes Anfangsbestandskonto (Zwischenstep 7.5): folgt dem
+        // wirksamen Konto der korrigierten Fassung (Konto-Wechsel bewegt
+        // die Zeile; das partielle eindeutige Index erzwingt die
+        // Einmaligkeitsregel atomar).
+        tracked.OpeningBalanceAccountId = updated.OpeningBalanceAccountId;
 
         ReplaceChildren(tracked, updated);
         db.BookingCorrections.Add(correction);

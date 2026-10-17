@@ -2,6 +2,50 @@ h2 {
   margin-top: 0;
 }
 
+.form-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.form-header h2 {
+  margin: 0;
+}
+
+.entries-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.entries-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.actions {
+  display: flex;
+  gap: 0.35rem;
+  white-space: nowrap;
+  justify-content: flex-end;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 2rem 0;
+  text-align: center;
+}
+
 .page-intro {
   color: var(--muted);
   max-width: 46rem;

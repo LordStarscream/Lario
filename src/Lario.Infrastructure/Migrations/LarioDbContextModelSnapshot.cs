@@ -79,6 +79,10 @@ namespace Lario.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("OpeningBalanceAccountId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("RefundsExpenseId")
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
@@ -97,6 +101,11 @@ namespace Lario.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("OpeningBalanceAccountId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Bookings_OpeningBalanceAccountId")
+                        .HasFilter("OpeningBalanceAccountId IS NOT NULL");
 
                     b.ToTable("Bookings", (string)null);
                 });

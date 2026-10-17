@@ -140,6 +140,31 @@ public static class JournalDtoMapper
                 u.Unallocated.Cents))
             .ToList());
 
+    /// <summary>
+    /// Anfangsbestand-Zeile (Zwischenstep 7.5, A4): Konto und
+    /// Gesamtbetrag aus der wirksamen Fassung (ein Konto-Posting),
+    /// Verteilung aus den Pool-Postings; Namen aus dem aktuellen Katalog
+    /// (Anzeige — die historische Zuordnung trägt das Posting selbst).
+    /// </summary>
+    public static OpeningBalanceListItemDto ToOpeningBalanceListItem(
+        Booking booking, MasterDataCatalog catalog)
+    {
+        var accountId = booking.OpeningBalanceAccountId
+            ?? booking.AccountPostings[0].AccountId;
+        return new OpeningBalanceListItemDto(
+            booking.Id,
+            booking.Date.ToString("yyyy-MM-dd"),
+            accountId,
+            catalog.FindAccount(accountId)?.Name,
+            booking.AccountPostings[0].Amount.Cents,
+            booking.PoolPostings
+                .Select(p => new PoolAllocationDto(
+                    p.PoolId, catalog.FindPool(p.PoolId)?.Name, p.Amount.Cents))
+                .ToList(),
+            booking.Note,
+            booking.BaseRevision);
+    }
+
     public static SettlementDto ToSettlementDto(
         SettlementQueryService.SettlementView view) => new(
         view.Id,

@@ -171,6 +171,23 @@ public sealed record BalancesDto(
     IReadOnlyList<UnallocatedOpeningBalanceDto> UnallocatedOpeningBalances);
 
 /// <summary>
+/// Anfangsbestand-Zeile (GET /api/v1/opening-balances, Zwischenstep 7.5
+/// A4): Stichtag, Konto, Gesamtbetrag und Verteilung auf Pools in Cent;
+/// <see cref="BaseRevision"/> für den Korrekturweg (POST /bookings/{id}/
+/// corrections). Pro Konto ist genau ein Eintrag vorhanden (Einmaligkeits-
+/// regel, Eindeutigkeitsindex).
+/// </summary>
+public sealed record OpeningBalanceListItemDto(
+    string Id,
+    string Date,
+    string AccountId,
+    string? AccountName,
+    long Total,
+    IReadOnlyList<PoolAllocationDto> Distribution,
+    string? Note,
+    int BaseRevision);
+
+/// <summary>
 /// Ausgleichsposition (SettlementQueryService):
 /// <see cref="Amount"/>/ <see cref="RestAmount"/> in Cent,
 /// <see cref="Status"/> = <c>open|settled</c>.

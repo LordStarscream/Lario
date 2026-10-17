@@ -7,6 +7,7 @@ import { CatalogService } from '../../api/catalogs';
 import { formatCents, formatDate, parseEuroToCents, todayIso } from '../../api/money';
 import { JournalEndpointsService } from '../../generated/services/JournalEndpointsService';
 import { JournalWriteEndpointsService } from '../../generated/services/JournalWriteEndpointsService';
+import type { BalancesDto } from '../../generated/models/BalancesDto';
 import type { BookingDetailDto } from '../../generated/models/BookingDetailDto';
 import type { BookingListItemDto } from '../../generated/models/BookingListItemDto';
 
@@ -157,6 +158,13 @@ export class BookingsList implements OnInit {
   readonly loading = signal(false);
   readonly loadError = signal<ApiErrorInfo | null>(null);
   readonly success = signal<string | null>(null);
+  /**
+   * Aktuelle Salden (Zwischenstep 7.5, A1): Konten- und Pool-Salden
+   * über der Buchungsliste. Ergänzende Ansicht — ein Fehler beim Laden
+   * der Salden blockiert die Liste nicht (dann ohne Karte).
+   */
+  readonly balances = signal<BalancesDto | null>(null);
+  readonly balancesOpen = signal(true);
 
   readonly reversal = signal<ReversalDialogState | null>(null);
   readonly refund = signal<RefundDialogState | null>(null);
@@ -167,7 +175,7 @@ export class BookingsList implements OnInit {
 
   async ngOnInit(): Promise<void> {
     await this.catalog.load();
-    await this.load();
+    await Promise.all([this.load(), this.loadBalances()]);
   }
 
   async load(): Promise<void> {
@@ -190,6 +198,20 @@ export class BookingsList implements OnInit {
     } finally {
       this.loading.set(false);
     }
+  }
+
+  /** Salden laden (A1); Fehler bleiben lokal — die Liste funktioniert ohne. */
+  private async loadBalances(): Promise<void> {
+    try {
+      this.balances.set(await JournalEndpointsService.getBalances());
+    } catch {
+      this.balances.set(null);
+    }
+  }
+
+  /** Salden aktualisieren (nach Schreibaktionen, z. B. Storno). */
+  async refreshBalances(): Promise<void> {
+    await this.loadBalances();
   }
 
   typeLabel(type: string): string {
@@ -232,6 +254,7 @@ export class BookingsList implements OnInit {
       });
       this.reversal.set(null);
       await this.load();
+      await this.refreshBalances();
       // load() setzt success auf null — daher erst danach die Meldung setzen.
       this.success.set(`Storno zu ${formatDate(dialog.booking.date)} gebucht.`);
     } catch (error) {
@@ -342,6 +365,7 @@ export class BookingsList implements OnInit {
       });
       this.refund.set(null);
       await this.load();
+      await this.refreshBalances();
       // load() setzt success auf null — daher erst danach die Meldung setzen.
       this.success.set(`Erstattung zu ${formatDate(dialog.booking.date)} gebucht.`);
     } catch (error) {

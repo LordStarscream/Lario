@@ -485,7 +485,8 @@ public class OpeningBalancePersistenceTests
             DateOnly.FromDateTime(new DateTime(2026, 1, 1)),
             null,
             [new AccountPosting { AccountId = "acc-geister", Amount = new Money(100) }],
-            [new PoolPosting { PoolId = "pool-flex", Amount = new Money(100) }]);
+            [new PoolPosting { PoolId = "pool-flex", Amount = new Money(100) }],
+            openingBalanceAccountId: "acc-geister");
 
         await Assert.ThrowsAsync<DbUpdateException>(() => repo.AddAsync(invalid));
 
