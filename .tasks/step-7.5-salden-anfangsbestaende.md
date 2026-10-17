@@ -97,13 +97,51 @@
 - **Bugfix (E2E-Smoke):** `goCorrection` navigierte relativ (löst gegen Wurzel auf → falsche
   Route); jetzt absoluter Pfad, Konvention wie Ausgaben-Korrektur.
 
+### Review-Fixes (17. Okt. 2026, nach externem Review beauftragt)
+
+1. **Note-Semantik in der Korrektur (R7-5, gleicher Befund in Anfangsbestand und Ausgabe):**
+   Vorher wurde eine im Korrektur-Formular geleerte Notiz als „unverändert“ behandelt und
+   stumm zurückgesetzt (der Server hielt die Original-Notiz). Jetzt: `null` = „unverändert"
+   (Original-Notiz bleibt), leere String = explizite Löschung, Text = neue Notiz.
+   - Domain: `CorrectionSpec.EffectiveNote(Booking)` — `null` → Original, nur-Leerzeichen →
+     `null`, sonst `Trim()`; in beiden Korrektur-Pfaden (Anfangsbestand + Ausgabe/Einnahme)
+     angesetzt; XML-Doku von `CorrectionSpec.Note` und `CorrectionCommand` angepasst.
+   - API-Test: `Korrektur_Notiz_null_halte_Original_leerer_String_loescht_Review_R7_5`
+     (null hält die Original-Notiz, `""` entfernt sie — gegen echte SQLite-DB).
+   - Frontend `opening-balance.ts`: `snapshot()` trägt die rohe Notiz (Fingerprint
+     unterscheidet „gelöscht“ von „unverändert“); Korrektur sendet `null` nur bei
+     `noteUnchanged` (Vergleich gegen `target?.note ?? ''`), Neuanlage sendet `null` bei leerer
+     Notiz. `expense-form.ts`: `originalNote` (Vorbelegung) + `noteForCommand()` mit derselben
+     Semantik.
+   - Frontend-Tests: 2 Tests in `opening-balance.spec.ts` (geleert → `""`, unverändert → `null`)
+     und 2 Tests in `expense-form.spec.ts` (gleicher Vertrag).
+2. **Einrichtungsvorgang für Anfangsbestände (R7-3):** Die Neuanlage-Ansicht führt jetzt durch
+   den Vorgang „pro Konto genau ein Anfangsbestand“:
+   - `availableAccounts`: bereits eingerichtete Konte fallen aus der Konto-Auswahl heraus
+     (Korrektur-Modus behält den vollen Katalog; ein belegtes Zielkonto lehnt der Server mit
+     409-Hinweis ab).
+   - `allConfigured` (Katalog geladen + ≥ 1 aktives Konto + alle Konten belegt): statt des
+     Neuanlage-Formulars eine sichtbare Zustandsanzeige („Alle aktiven Konten haben bereits
+     einen Anfangsbestand — weitere Neuanlagen sind nicht möglich … über die Korrektur").
+   - `CatalogService`: bisher privates `loaded`-Flag jetzt öffentlicher `loaded`-Signal
+     (Zustandsanzeigen dürfen nur auf geladenem Katalog aufbauen).
+   - 3 Tests in `opening-balance.spec.ts` (Filter, Zustandsanzeige, Guard bei ungeladenem
+     Katalog).
+3. **Veralterter Test erwartetwert (vorhandener Defekt seit Commit 536d2f0):**
+   `öffnet pro Eintrag die Korrektur-Route` erwartete noch den relativen Pfad
+   `['ob-1','korrektur']`, während `goCorrection` im selben Commit auf den absoluten Pfad
+   geändert wurde (dokumentiert: relative Navigation trifft die falsche Route). Der
+   Erwartungswert wurde an das dokumentierte Verhalten angepasst — der Test war seit
+   536d2f0 rot (der bisherige „71/71 grün“-Nachweis war damit unvollständig).
+
 ### Tatsächlich ausgeführte Prüfungen
 
-- `~/.dotnet/dotnet test Lario.slnx` → **473/473** (Domain 214, Infrastructure 156, Api 103;
-  Api.Tests mit `DOTNET_ROOT=$HOME/.dotnet`, da der systemweite `dotnet` ohne ASP.NET-Runtime
+- `~/.dotnet/dotnet test` (nach Review-Fixes) → **474/474** (Domain 214, Infrastructure 156,
+  Api 104; Api.Tests mit `~/.dotnet/dotnet`, da der systemweite `dotnet` ohne ASP.NET-Runtime
   den TestHost für Web-Tests nicht starten kann).
-- `npm test` → host **71/71**, mobile **23/23**; `npm run lint` → alle Files grün;
-  `ng build host` ohne Fehler.
+- `ng test host` → **78/78** (vorher 71; +7 neue Tests für Note-Semantik und
+  Einrichtungsvorgang); `ng test mobile` → 23/23 (unverändert); `npm run lint` → alle Files
+  grün; `ng build host` ohne Fehler.
 - **E2E-Smoke-Test** (17. Okt. 2026, headless Chromium gegen echten Host + frische SQLite-DB
   unter `/tmp/lario-smoke`): **21/21** Bestätigungen, keine Konsolen-/Seitenfehler —
   leere Liste → Anlage per Formular (mit Tausenderpunkt „1.000,50“) → Zeile in der Liste mit

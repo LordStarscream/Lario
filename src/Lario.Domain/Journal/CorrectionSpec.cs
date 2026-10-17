@@ -9,7 +9,9 @@ namespace Lario.Domain.Journal;
 /// Änderbar sind Datum, Notiz, Konto, Gesamtbetrag sowie die Teilposten
 /// (Ausgabe), die Verteilung (Einnahme) bzw. die Verteilung und das Konto
 /// (Anfangsbestand); <c>null</c> bei einem Feld bedeutet „bleibt
-/// unverändert".
+/// unverändert". Ausnahmen: die Notiz unterscheidet zusätzlich den
+/// leeren String als explizite Löschung (Review R7-5), und <c>tax</c>
+/// auf Teilposten-Ebene folgt derselben Null-Konvention.
 /// Die <see cref="OperationId"/> ist der stabile Idempotenzschlüssel der
 /// Korrektur-Historie: gleicher Inhalt wird nur quittiert (Revision bleibt
 /// unberührt), gleiche Operation-Id mit anderem Inhalt ist ein Konflikt
@@ -25,7 +27,11 @@ public sealed record CorrectionSpec(
     int ExpectedBaseRevision,
     /// <summary>Neues Fachdatum; null = bleibt unverändert.</summary>
     DateOnly? Date = null,
-    /// <summary>Neue Notiz; null = bleibt unverändert.</summary>
+    /// <summary>
+    /// Neue Notiz (Review R7-5): <c>null</c> = bleibt unverändert (Original-Notiz
+    /// bleibt erhalten), leerer String (oder nur Leerzeichen) = explizite
+    /// Löschung, sonst = neue Notiz.
+    /// </summary>
     string? Note = null,
     /// <summary>Neues Konto; null = bleibt unverändert.</summary>
     string? AccountId = null,
@@ -171,7 +177,7 @@ public sealed record CorrectionSpec(
                 : Allocations
                     .Select(a => new PoolAllocation(a.PoolId, a.Amount))
                     .ToList(),
-            Note: Note ?? original.Note)
+            Note: EffectiveNote(original))
             .ValidateAgainst(catalog);
     }
 
@@ -181,7 +187,8 @@ public sealed record CorrectionSpec(
     /// dieselbe <see cref="Booking.BaseRevision"/> wie das Original — die
     /// Revisionserhöhung macht der Service zusammen mit dem
     /// Historieneintrag. Datum/Notiz/Konto: gesetzt = neuer Wert, null =
-    /// alter Wert. Der Gesamtbetrag kommt aus der (geprüften) Vorgabe oder
+    /// alter Wert; die Notiz zusätzlich: leerer String = explizite Löschung
+    /// (Review R7-5). Der Gesamtbetrag kommt aus der (geprüften) Vorgabe oder
     /// bleibt der des Originals; das Konto-Posting ist −Gesamtbetrag
     /// (Ausgabe) bzw. +Gesamtbetrag (Einnahme) am wirksamen Konto.
     /// Pool-Postings: je-Pool-Summe der neuen Teilposten/Verteilung bzw.
@@ -221,7 +228,7 @@ public sealed record CorrectionSpec(
 
         var accountId = AccountId ?? original.AccountPostings.Single().AccountId;
         var date = Date ?? original.Date;
-        var note = Note ?? original.Note;
+        var note = EffectiveNote(original);
         var total = TotalAmount ?? OriginalTotal(original);
 
         if (original.Type == BookingType.Expense)
@@ -373,6 +380,23 @@ public sealed record CorrectionSpec(
             null,
             null,
             null);
+    }
+
+    /// <summary>
+    /// Wirksame Notiz der Korrektur (Review R7-5): <c>null</c> heißt
+    /// „unverändert“ (die Original-Notiz bleibt), der leere String (oder nur
+    /// Leerzeichen) ist eine explizite Löschung, jeder andere Wert ersetzt die
+    /// Notiz. Ohne diese Unterscheidung würde eine im Formular geleerte Notiz
+    /// still als „unverändert“ behandelt.
+    /// </summary>
+    public string? EffectiveNote(Booking original)
+    {
+        if (Note is null)
+        {
+            return original.Note;
+        }
+
+        return string.IsNullOrWhiteSpace(Note) ? null : Note.Trim();
     }
 
     /// <summary>

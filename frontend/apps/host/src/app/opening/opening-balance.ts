@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   inject,
   signal,
   type Signal,
@@ -99,6 +100,40 @@ export class OpeningBalance {
    * Erfassungsformular. Ein Ladefehler blockiert das Formular nicht.
    */
   readonly entries = signal<OpeningBalanceListItemDto[]>([]);
+
+  /**
+   * Review R7-3 (Einrichtungsvorgang): Konten, die noch keinen
+   * Anfangsbestand tragen — im Neuanlage-Formular sind bereits
+   * eingerichtete Konte aus der Auswahl herausgefiltert.
+   */
+  readonly availableAccounts = computed(() => {
+    const taken = new Set(this.entries().map((entry) => entry.accountId));
+    return this.catalog.accounts().filter((account) => !taken.has(account.id));
+  });
+
+  /**
+   * Review R7-3 (Einrichtungsvorgang): alle aktiven Konten haben bereits
+   * einen Anfangsbestand — Neuanlagen sind nicht mehr möglich, statt des
+   * Formulars wird eine Zustandsanzeige gezeigt (nur wenn Katalog und
+   * Liste erfolgreich geladen sind).
+   */
+  readonly allConfigured = computed(
+    () =>
+      this.catalog.loaded()
+      && this.catalog.accounts().length > 0
+      && this.entries().length > 0
+      && this.availableAccounts().length === 0,
+  );
+
+  /**
+   * Review R7-3 (Einrichtungsvorgang): Optionsliste des Konto-Felds —
+   * Neuanlage filtert bereits eingerichtete Konten heraus; die Korrektur
+   * behält den vollen Katalog (Konto-Wechsel ist ein Korrekturfeld; ein
+   * belegtes Zielkonto lehnt der Server mit Hinweis ab).
+   */
+  readonly accountOptions = computed(() =>
+    this.isCorrection ? this.catalog.accounts() : this.availableAccounts(),
+  );
 
   constructor() {
     const id = this.route.snapshot.paramMap.get('id');
@@ -203,7 +238,9 @@ export class OpeningBalance {
         poolId: row.poolId,
         amount: parseEuroToCents(row.amountText) ?? 0,
       })),
-      note: this.note.trim() === '' ? null : this.note.trim(),
+      // Review R7-5: roher Wert — „gelöscht“ (‚'‚) und „unverändert“
+      // (Originaltext) müssen sich im Fingerprint unterscheiden.
+      note: this.note.trim(),
     });
   }
 
@@ -292,7 +329,10 @@ export class OpeningBalance {
           amount: parseEuroToCents(row.amountText) as number,
         }),
       );
-      const note = this.note.trim() === '' ? null : this.note.trim();
+      // Review R7-5 (Note-Semantik): der rohe getrimmte Wert — '' ist
+      // eine explizite Löschung; „unverändert“ wird unten als null
+      // gesendet (noteUnchanged).
+      const note = this.note.trim();
       const total = parseEuroToCents(this.totalText) as number;
       // Review R4 F1: unklarer Ausgang + geänderte Daten → Blocken.
       // Eine neue Id würde eine zweite Buchung erzeugen können, wenn die
@@ -313,7 +353,9 @@ export class OpeningBalance {
         const target = this.target();
         // Unveränderte Felder bleiben null — der Server hält die
         // Originalwerte (Review R3 P2).
-        const noteUnchanged = note === (target?.note ?? null);
+        // Review R7-5: unveränderte Notiz sendet null (Server hält das
+        // Original); eine geleerte Notiz sendet '' (explizite Löschung).
+        const noteUnchanged = note === (target?.note ?? '');
         const distributionUnchanged =
           JSON.stringify(distribution) ===
           JSON.stringify(
@@ -346,7 +388,8 @@ export class OpeningBalance {
           total,
           accountId: this.accountId,
           distribution,
-          note,
+          // Neuanlage: leere Notiz bleibt null (es gibt kein Original).
+          note: note === '' ? null : note,
         });
         this.pendingOp.release(this.opPrefix);
         await this.router.navigate(['/']);

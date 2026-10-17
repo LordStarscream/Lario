@@ -128,6 +128,12 @@ export class ExpenseForm implements OnInit {
   date = todayIso();
   accountId = '';
   note = '';
+  /**
+   * Review R7-5 (Note-Semantik): Original-Notiz der Korrektur-Vorbelegung
+   * (null = keine) — unterscheidet „Notiz unverändert“ (sendet null) von
+   * „Notiz geleert“ (sendet '') in der Korrektur.
+   */
+  private originalNote: string | null = null;
   totalText = '';
   splits: SplitRowState[] = [newSplitRow(this.nextKey())];
   expectedBaseRevision: number | null = null;
@@ -185,6 +191,7 @@ export class ExpenseForm implements OnInit {
   private prefillFromDetail(detail: BookingDetailDto): void {
     this.date = detail.date;
     this.note = detail.note ?? '';
+    this.originalNote = detail.note;
     this.accountId = detail.accountPostings[0]?.accountId ?? '';
     this.totalText = toEuroText(detail.totalAmount);
     this.expectedBaseRevision = Number(detail.baseRevision);
@@ -542,12 +549,26 @@ export class ExpenseForm implements OnInit {
       date: this.date,
       totalAmount: this.totalCents() as number,
       accountId: this.accountId,
-      note: this.note.trim() === '' ? null : this.note.trim(),
+      note: this.noteForCommand(),
       splits,
       expectedBaseRevision: this.isCorrection
         ? this.expectedBaseRevision
         : null,
     };
+  }
+
+  /**
+   * Review R7-5 (Note-Semantik, identisch zum Anfangsbestand): die
+   * Korrektur sendet null = „unverändert“ (Server hält die Original-Notiz),
+   * '' = explizite Löschung, Text = neue Notiz. Bei der Neuanlage bleibt
+   * eine leere Notiz null (es gibt kein Original).
+   */
+  private noteForCommand(): string | null {
+    const current = this.note.trim();
+    if (this.isCorrection) {
+      return current === (this.originalNote ?? '') ? null : current;
+    }
+    return current === '' ? null : current;
   }
 
   /**

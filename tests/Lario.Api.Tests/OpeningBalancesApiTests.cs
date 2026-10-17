@@ -146,6 +146,57 @@ public class OpeningBalancesApiTests : IDisposable
     }
 
     [Fact]
+    public async Task Korrektur_Notiz_null_halte_Original_leerer_String_loescht_Review_R7_5()
+    {
+        var (acc1, _, flex, _) = await SeedAsync();
+        await CreateOpeningBalanceAsync(
+            "init-1", DateOnly.Parse("2026-01-01"), acc1, 100_000,
+            note: "ursprüngliche Notiz",
+            distribution: new[] { (flex, 100_000L) });
+
+        // null = unverändert: die Original-Notiz bleibt erhalten
+        // (nur der Betrag ändert sich).
+        var nullResponse = await _client.PostAsJsonAsync(
+            "/api/v1/bookings/init-1/corrections", new
+        {
+            operationId = "corr-ob-note-null",
+            expectedBaseRevision = 1,
+            date = (string?)null,
+            note = (string?)null,
+            accountId = (string?)null,
+            totalAmount = 110_000L,
+            splits = (object[]?)null,
+            allocations = new object[] { new { poolId = flex, amount = 110_000L } }
+        });
+        nullResponse.EnsureSuccessStatusCode();
+
+        var entryAfterNull = (await (await _client.GetAsync("/api/v1/opening-balances"))
+            .Content.ReadFromJsonAsync<JsonElement>())!
+            .EnumerateArray().Single();
+        Assert.Equal("ursprüngliche Notiz", entryAfterNull.GetProperty("note").GetString());
+
+        // "" = explizite Löschung: die Notiz wird entfernt (Review R7-5).
+        var clearResponse = await _client.PostAsJsonAsync(
+            "/api/v1/bookings/init-1/corrections", new
+        {
+            operationId = "corr-ob-note-clear",
+            expectedBaseRevision = 2,
+            date = (string?)null,
+            note = "",
+            accountId = (string?)null,
+            totalAmount = (long?)null,
+            splits = (object[]?)null,
+            allocations = (object[]?)null
+        });
+        clearResponse.EnsureSuccessStatusCode();
+
+        var entryAfterClear = (await (await _client.GetAsync("/api/v1/opening-balances"))
+            .Content.ReadFromJsonAsync<JsonElement>())!
+            .EnumerateArray().Single();
+        Assert.Equal(JsonValueKind.Null, entryAfterClear.GetProperty("note").ValueKind);
+    }
+
+    [Fact]
     public async Task Korrektur_mit_Kontowechsel_bewegt_die_Einmaligkeitszuordnung()
     {
         var (acc1, acc2, flex, _) = await SeedAsync();

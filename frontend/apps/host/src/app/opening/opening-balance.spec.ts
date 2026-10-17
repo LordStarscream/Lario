@@ -66,7 +66,11 @@ function httpError(status: number, message = 'Serverfehler'): ApiErrorClass {
  * aufgerufen — die Ablauf-Tests prüfen die Komponente ohne Rendering
  * (gleiche Konvention wie die Ausgaben-Formular-Tests).
  */
-function createFixture(routeId: string | null = null): ComponentFixture<OpeningBalance> {
+function createFixture(
+  routeId: string | null = null,
+  catalogAccounts: unknown[] = [],
+  catalogLoaded = false,
+): ComponentFixture<OpeningBalance> {
   TestBed.resetTestingModule();
   TestBed.configureTestingModule({
     imports: [OpeningBalance],
@@ -88,8 +92,9 @@ function createFixture(routeId: string | null = null): ComponentFixture<OpeningB
       {
         provide: CatalogService,
         useValue: {
-          accounts: signal([]),
+          accounts: signal(catalogAccounts),
           pools: signal([]),
+          loaded: signal(catalogLoaded),
           load: vi.fn().mockResolvedValue(undefined),
         } as unknown as CatalogService,
       },
@@ -328,7 +333,11 @@ describe('OpeningBalance — Liste vorhandener Anfangsbestände (Zwischenstep 7.
     await vi.waitFor(() => expect(fixture.componentInstance.entries().length).toBe(1));
 
     fixture.componentInstance.goCorrection('ob-1');
-    expect(router.navigate).toHaveBeenCalledWith(['ob-1', 'korrektur']);
+    // Absoluter Pfad (Commit 536d2f0: relative Navigation löst gegen die
+    // Wurzel auf und würde die falsche Route treffen).
+    expect(router.navigate).toHaveBeenCalledWith(
+      ['/anfangsbestaende', 'ob-1', 'korrektur'],
+    );
   });
 });
 
@@ -356,6 +365,45 @@ describe('OpeningBalance — Korrektur per Route (Zwischenstep 7.5, A5)', () => 
     expect(component.distribution).toEqual([
       { key: expect.any(Number), poolId: 'pool-1', amountText: '40,00' },
     ]);
+  });
+
+  it('sendet eine geleerte Notiz als leeres String — explizite Löschung (Review R7-5)', async () => {
+    const correct = vi.mocked(JournalWriteEndpointsService.correctBooking);
+    correct.mockReset();
+    correct.mockResolvedValueOnce(created('ob-1', true));
+
+    const fixture = createFixture('ob-1');
+    await waitLoaded(fixture);
+    const component = fixture.componentInstance;
+
+    // Vorbelegung trägt die Original-Notiz „alt“.
+    expect(component.note).toBe('alt');
+    component.note = '   ';
+
+    await component.submit();
+
+    expect(correct).toHaveBeenCalledTimes(1);
+    // Explizite Löschung: "" — der Server setzt die Notiz auf null.
+    expect(correct.mock.calls[0][1].note).toBe('');
+  });
+
+  it('sendet eine unveränderte Notiz als null — der Server hält das Original (Review R7-5)', async () => {
+    const correct = vi.mocked(JournalWriteEndpointsService.correctBooking);
+    correct.mockReset();
+    correct.mockResolvedValueOnce(created('ob-1', true));
+
+    const fixture = createFixture('ob-1');
+    await waitLoaded(fixture);
+    const component = fixture.componentInstance;
+
+    // Nur den Betrag ändern; die Notiz bleibt wie vorgefüllt („alt“).
+    component.totalText = '120,00';
+
+    await component.submit();
+
+    expect(correct).toHaveBeenCalledTimes(1);
+    expect(Number(correct.mock.calls[0][1].totalAmount)).toBe(12000);
+    expect(correct.mock.calls[0][1].note).toBeNull();
   });
 
   it('sendet geänderte Werte als Korrektur — unveränderte Felder bleiben null (Server hält Original)', async () => {
@@ -466,5 +514,57 @@ describe('OpeningBalance — Korrektur per Route (Zwischenstep 7.5, A5)', () => 
     expect(component.target()).toBeNull();
     expect(component.loadError()).not.toBeNull();
     expect(component.loadError()?.message).toContain('nicht gefunden');
+  });
+});
+
+/**
+ * Review R7-3 (Einrichtungsvorgang): pro Konto genau ein Anfangsbestand —
+ * die Neuanlage-Ansicht führt durch den Vorgang: bereits eingerichtete
+ * Konte fallen aus der Auswahl heraus, wenn alle Konte eingerichtet sind,
+ * wird statt des Formulars eine Zustandsanzeige gezeigt.
+ */
+describe('OpeningBalance — Einrichtungsvorgang (Review R7-3)', () => {
+  const acc1 = { id: 'acc-1', name: 'Konto Eins', status: 'active' };
+  const acc2 = { id: 'acc-2', name: 'Konto Zwei', status: 'active' };
+
+  it('filtert bereits eingerichtete Konte aus der Neuanlage-Auswahl', async () => {
+    vi.mocked(JournalEndpointsService.listOpeningBalances).mockResolvedValue([
+      entry(), // acc-1 ist belegt
+    ]);
+
+    const fixture = createFixture(null, [acc1, acc2], true);
+    await waitLoaded(fixture);
+    const component = fixture.componentInstance;
+
+    expect(component.availableAccounts().map((account) => account.id)).toEqual([
+      'acc-2',
+    ]);
+    expect(component.allConfigured()).toBe(false);
+  });
+
+  it('zeigt die Zustandsanzeige, wenn alle aktiven Konten eingerichtet sind', async () => {
+    vi.mocked(JournalEndpointsService.listOpeningBalances).mockResolvedValue([
+      entry(),
+      entry({ id: 'ob-2', accountId: 'acc-2', total: 8000, distribution: [] }),
+    ]);
+
+    const fixture = createFixture(null, [acc1, acc2], true);
+    await waitLoaded(fixture);
+    const component = fixture.componentInstance;
+
+    expect(component.availableAccounts()).toHaveLength(0);
+    expect(component.allConfigured()).toBe(true);
+  });
+
+  it('zeigt die Zustandsanzeige nicht, wenn der Katalog noch nicht geladen ist', async () => {
+    vi.mocked(JournalEndpointsService.listOpeningBalances).mockResolvedValue([
+      entry(),
+      entry({ id: 'ob-2', accountId: 'acc-2', total: 8000, distribution: [] }),
+    ]);
+
+    const fixture = createFixture(null, [acc1, acc2], false);
+    await waitLoaded(fixture);
+
+    expect(fixture.componentInstance.allConfigured()).toBe(false);
   });
 });

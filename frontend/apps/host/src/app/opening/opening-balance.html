@@ -116,6 +116,15 @@
 }
 
 @if (!isCorrection || target()) {
+  @if (!isCorrection && allConfigured()) {
+    <!-- Review R7-3: Einrichtungsvorgang abgeschlossen — statt des
+         Neuanlage-Formulars eine sichtbare Zustandsanzeige. -->
+    <div class="banner banner-info" role="status">
+      Alle aktiven Konten haben bereits einen Anfangsbestand — weitere
+      Neuanlagen sind nicht möglich. Änderungen an bestehenden Einträgen
+      erfolgen über die Korrektur.
+    </div>
+  } @else {
   <form class="opening-form" (ngSubmit)="submit()" novalidate>
     <h2>
       @if (isCorrection) {
@@ -130,7 +139,9 @@
         <span class="field-label">Konto</span>
         <select name="accountId" [(ngModel)]="accountId" [disabled]="busy()">
           <option value="" disabled>Bitte wählen …</option>
-          @for (account of accounts(); track account.id) {
+          <!-- Review R7-3: Neuanlage zeigt nur Konten ohne Anfangsbestand.
+               -->
+          @for (account of accountOptions(); track account.id) {
             <option [value]="account.id">{{ account.name }}</option>
           }
         </select>
@@ -278,4 +289,5 @@
       </button>
     </div>
   </form>
+  }
 }
