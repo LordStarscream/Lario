@@ -57,7 +57,8 @@ public class BookingTypeInvariantsTests
     {
         var booking = new Booking(
             "init-inv-1", BookingType.OpeningBalance, Datum, null,
-            Account(Money.FromCents(10_000)), Pool(Money.FromCents(10_000)));
+            Account(Money.FromCents(10_000)), Pool(Money.FromCents(10_000)),
+            openingBalanceAccountId: "acc-haupt");
 
         Assert.Null(booking.FundingMonth);
         Assert.Empty(booking.Splits);

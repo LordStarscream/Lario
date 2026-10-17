@@ -20,7 +20,13 @@ namespace Lario.Application;
 ///   Schuldzelle (Konto, Pool) verkleinern und so eine offene
 ///   Ausgleichsposition (teilweise) begleichen — der Journalzustand ist
 ///   die Wahrheit, die Positionstabelle wird in derselben Transaktion
-///   nachgeführt.
+///   nachgeführt;
+/// - erzwingt die Einmaligkeitsregel (Zwischenstep 7.5): pro Konto ist
+///   genau ein Anfangsbestand zulässig — der zweite Eintrag desselben
+///   Kontos ist ein Datenfehler und wird mit dem fachlichen
+///   Korrekturweg abgelehnt (Anfangsbestände sind nicht stornierbar).
+///   Zusätzlich sichert ein partieller eindeutiger Index die Regel
+///   datenbankseitig atomar.
 ///
 /// Der Anfangsbestand ist keine Einnahme: kein Finanzierungsmonat, keine
 /// Zuweisung über Einnahme-Logik (Rechenvertrag §3.7).
@@ -77,6 +83,23 @@ public sealed class OpeningBalanceService(
         spec.ValidateAgainst(catalog);
 
         var bookings = await bookingRepository.GetAllAsync(cancellationToken);
+
+        // Einmaligkeitsregel (Zwischenstep 7.5): pro Konto ist genau ein
+        // Anfangsbestand zulässig — der zweite Eintrag desselben Kontos
+        // ist ein Datenfehler, kein zweiter Ist-Zustand. Sichtbare
+        // Ablehnung mit dem Korrekturweg; die Datenbank erzwingt die
+        // Regel zusätzlich atomar über einen eindeutigen Index.
+        if (bookings.Any(b => b.Type == BookingType.OpeningBalance
+                              && b.OpeningBalanceAccountId == spec.AccountId))
+        {
+            var accountName = catalog.FindAccount(spec.AccountId)?.Name ?? spec.AccountId;
+            throw new Lario.Domain.DomainConflictException(
+                $"Konto '{spec.AccountId}' ({accountName}) hat bereits einen Anfangsbestand — " +
+                "pro Konto ist genau einer zulässig. Ändere den vorhandenen Anfangsbestand " +
+                "über die Korrektur (Anfangsbestände sind nicht stornierbar); eine zweite " +
+                "Erfassung desselben Kontos ist ausgeschlossen.");
+        }
+
         var persistedPositions = await settlementPositionRepository.GetAllAsync(cancellationToken);
 
         var booking = spec.ToBooking();

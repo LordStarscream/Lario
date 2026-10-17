@@ -165,7 +165,8 @@ public class BookingJournalTests
             DateOnly.FromDateTime(new DateTime(2026, 1, 1)),
             "Anfangsbestand",
             [new AccountPosting { AccountId = "acc-haupt", Amount = Money.FromCents(100_000) }],
-            [new PoolPosting { PoolId = "pool-flex", Amount = Money.FromCents(100_000) }]);
+            [new PoolPosting { PoolId = "pool-flex", Amount = Money.FromCents(100_000) }],
+            openingBalanceAccountId: "acc-haupt");
 
         var leisure = new Booking(
             "init-2026-01-01-freizeit",
@@ -173,7 +174,8 @@ public class BookingJournalTests
             DateOnly.FromDateTime(new DateTime(2026, 1, 1)),
             "Anfangsbestand",
             [new AccountPosting { AccountId = "acc-freizeit", Amount = Money.FromCents(30_000) }],
-            [new PoolPosting { PoolId = "pool-freizeit", Amount = Money.FromCents(30_000) }]);
+            [new PoolPosting { PoolId = "pool-freizeit", Amount = Money.FromCents(30_000) }],
+            openingBalanceAccountId: "acc-freizeit");
 
         var journal = new BookingJournal([main, leisure]);
 
@@ -221,7 +223,8 @@ public class BookingJournalTests
                 "b-1", BookingType.OpeningBalance, DateOnly.FromDateTime(new DateTime(2026, 1, 1)),
                 null,
                 [new AccountPosting { AccountId = "acc-1", Amount = Money.FromCents(500) }],
-                [new PoolPosting { PoolId = "pool-1", Amount = Money.FromCents(500) }]),
+                [new PoolPosting { PoolId = "pool-1", Amount = Money.FromCents(500) }],
+                openingBalanceAccountId: "acc-1"),
             // Simulierte spätere Ausgabe (Schritt 4): Konto −85, Pool −85,
             // ein Teilposten (Splitregel: Summe = Gesamtbetrag).
             new Booking(

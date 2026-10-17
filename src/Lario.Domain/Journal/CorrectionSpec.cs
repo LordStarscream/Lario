@@ -4,10 +4,12 @@ namespace Lario.Domain.Journal;
 
 /// <summary>
 /// Korrektur-Vorgabe (Rechenvertrag §5.4, Design Schritt 6 §2.3):
-/// In-place-Änderung einer bestehenden Ausgabe- oder Einnahme-Buchung —
-/// „keine zweite Ausgabe" (Plan-Abnahme). Änderbar sind Datum, Notiz,
-/// Konto, Gesamtbetrag sowie die Teilposten (Ausgabe) bzw. die Verteilung
-/// (Einnahme); <c>null</c> bei einem Feld bedeutet „bleibt unverändert".
+/// In-place-Änderung einer bestehenden Ausgabe-, Einnahme- oder
+/// Anfangsbestand-Buchung — „keine zweite Ausgabe“ (Plan-Abnahme).
+/// Änderbar sind Datum, Notiz, Konto, Gesamtbetrag sowie die Teilposten
+/// (Ausgabe), die Verteilung (Einnahme) bzw. die Verteilung und das Konto
+/// (Anfangsbestand); <c>null</c> bei einem Feld bedeutet „bleibt
+/// unverändert".
 /// Die <see cref="OperationId"/> ist der stabile Idempotenzschlüssel der
 /// Korrektur-Historie: gleicher Inhalt wird nur quittiert (Revision bleibt
 /// unberührt), gleiche Operation-Id mit anderem Inhalt ist ein Konflikt
@@ -51,8 +53,9 @@ public sealed record CorrectionSpec(
     ///   gesetzt (leere Korrektur ist kein Befehl).
     /// </para>
     /// <para>
-    /// - Typ: nur Ausgaben und Einnahmen sind korrigierbar — alle anderen
-    ///   Buchungstypen werden über Storno + Neuausgabe geändert.
+    /// - Typ: nur Ausgaben, Einnahmen und Anfangsbestände sind korrigierbar
+    ///   (Zwischenstep 7.5) — alle anderen Buchungstypen werden über
+    ///   Storno + Neuausgabe geändert.
     /// </para>
     /// <para>
     /// - Ausschluss: Teilposten und Verteilung niemals gleichzeitig;
@@ -107,11 +110,12 @@ public sealed record CorrectionSpec(
                 "Felder Datum, Notiz, Konto, Gesamtbetrag, Teilposten oder Verteilung ist erforderlich.");
         }
 
-        if (original.Type is not (BookingType.Expense or BookingType.Income))
+        if (original.Type is not (BookingType.Expense or BookingType.Income or BookingType.OpeningBalance))
         {
             throw new LarioDomainException(
-                $"Korrektur '{OperationId}' der Buchung '{BookingId}': nur Ausgaben und Einnahmen sind korrigierbar " +
-                $"(Buchungstyp {original.Type}) — andere Buchungstypen ändern Sie über Storno + Neuausgabe.");
+                $"Korrektur '{OperationId}' der Buchung '{BookingId}': nur Ausgaben, Einnahmen und " +
+                $"Anfangsbestände sind korrigierbar (Buchungstyp {original.Type}) — andere Buchungstypen " +
+                "ändern Sie über Storno + Neuausgabe.");
         }
 
         if (Splits is not null && Allocations is not null)
@@ -125,10 +129,50 @@ public sealed record CorrectionSpec(
         {
             ValidateExpenseCorrection(catalog, original);
         }
-        else
+        else if (original.Type == BookingType.Income)
         {
             ValidateIncomeCorrection(catalog, original);
         }
+        else
+        {
+            ValidateOpeningBalanceCorrection(catalog, original);
+        }
+    }
+
+    /// <summary>
+    /// Prüft die wirksame Fassung eines korrigierten Anfangsbestands wie
+    /// eine Neuanlage (Zwischenstep 7.5): Stichtag, Konto, Gesamtbetrag
+    /// (≥ 0) und Verteilung (aktive Pools, eindeutige Zeilen, Summe ≤
+    /// Total) — über dieselbe Prüfung wie die Erstanlage
+    /// (<see cref="OpeningBalanceSpec.ValidateAgainst"/>). Teilposten sind
+    /// ausgeschlossen; <see cref="Allocations"/> tragen die Verteilung.
+    /// </summary>
+    private void ValidateOpeningBalanceCorrection(MasterDataCatalog catalog, Booking original)
+    {
+        if (Splits is not null)
+        {
+            throw new LarioDomainException(
+                $"Korrektur '{OperationId}' der Buchung '{BookingId}': Teilposten gehören zu " +
+                "Ausgaben — ein Anfangsbestand wird über Gesamtbetrag und Verteilung korrigiert.");
+        }
+
+        // Wirksame Fassung wie Neuanlage validieren (Muster
+        // ExpenseSpec/IncomeSpec): Konto, Stichtag, Betrag ≥ 0, aktive
+        // Pools, eindeutige Verteilung und Summe ≤ Gesamtbetrag.
+        new OpeningBalanceSpec(
+            Id: OperationId,
+            Date: Date ?? original.Date,
+            AccountId: AccountId ?? original.AccountPostings.Single().AccountId,
+            Total: TotalAmount ?? original.AccountPostings.Single().Amount,
+            Distribution: Allocations is null
+                ? original.PoolPostings
+                    .Select(p => new PoolAllocation(p.PoolId, p.Amount))
+                    .ToList()
+                : Allocations
+                    .Select(a => new PoolAllocation(a.PoolId, a.Amount))
+                    .ToList(),
+            Note: Note ?? original.Note)
+            .ValidateAgainst(catalog);
     }
 
     /// <summary>
@@ -168,11 +212,11 @@ public sealed record CorrectionSpec(
     {
         ArgumentNullException.ThrowIfNull(original);
 
-        if (original.Type is not (BookingType.Expense or BookingType.Income))
+        if (original.Type is not (BookingType.Expense or BookingType.Income or BookingType.OpeningBalance))
         {
             throw new LarioDomainException(
                 $"Korrektur '{OperationId}': Buchung '{original.Id}' (Buchungstyp {original.Type}) ist nicht " +
-                "korrigierbar — nur Ausgaben und Einnahmen lassen sich korrigieren.");
+                "korrigierbar — nur Ausgaben, Einnahmen und Anfangsbestände lassen sich korrigieren.");
         }
 
         var accountId = AccountId ?? original.AccountPostings.Single().AccountId;
@@ -271,6 +315,33 @@ public sealed record CorrectionSpec(
                 null,
                 null,
                 null);
+        }
+
+        // Anfangsbestand (Zwischenstep 7.5): Konto und Gesamtbetrag dürfen
+        // sich ändern; die Verteilung (null = unverändert) ersetzt die
+        // Pool-Postings. Das gesicherte Anfangsbestandskonto folgt dem
+        // wirksamen Konto (Einmaligkeitsregel je Konto).
+        if (original.Type == BookingType.OpeningBalance)
+        {
+            var openingAccountPostings = new List<AccountPosting>
+            {
+                new() { AccountId = accountId, Amount = total },
+            };
+
+            var openingPoolPostings = Allocations is null
+                ? original.PoolPostings.ToList()
+                : Allocations
+                    .Select(a => new PoolPosting { PoolId = a.PoolId, Amount = a.Amount })
+                    .ToList();
+
+            return new Booking(
+                original.Id,
+                BookingType.OpeningBalance,
+                date,
+                note,
+                openingAccountPostings,
+                openingPoolPostings,
+                openingBalanceAccountId: accountId);
         }
 
         // Einnahme: Verteilung ersetzt die Pool-Postings; der

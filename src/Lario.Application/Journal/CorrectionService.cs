@@ -12,8 +12,12 @@ namespace Lario.Application.Journal;
 ///   alten — die alte und neue Fassung werden als Vorher/Nachher-Snapshot
 ///   (JSON: Datum, Konto, Betrag, Notiz, Split/Verteilung) in der
 ///   Korrektur-Historie gespeichert (Rechenvertrag §5.2, §5.5);
-/// - Typen: nur Ausgaben und Einnahmen sind korrigierbar (andere Typen:
-///   klare Ablehnung, Design Schritt 6 §3.2);
+/// - Typen: nur Ausgaben, Einnahmen und Anfangsbestände sind korrigierbar
+///   (andere Typen: klare Ablehnung, Design Schritt 6 §3.2; Anfangsbestand
+///   ab Zwischenstep 7.5);
+/// - Einmaligkeitsregel des Anfangsbestands (Zwischenstep 7.5): ein
+///   Konto-Wechsel darf nicht auf ein Konto zielen, das bereits einen
+///   eigenen Anfangsbestand trägt (sichtbare Ablehnung);
 /// - Revision: <c>ExpectedBaseRevision</c> muss der Ist-Revision
 ///   entsprechen, sonst <see cref="DomainConflictException"/> mit
 ///   erwartetem und Ist-Wert (Rechenvertrag §5.5) — derselbe Mechanismus
@@ -119,6 +123,27 @@ public sealed class CorrectionService(
                 $"Korrektur der Buchung '{original.Id}': die Buchung ist storniert " +
                 "— Korrekturen auf stornierten Buchungen sind ausgeschlossen. Widerrufen " +
                 "Sie das Storno zuerst (Storno des Stornos), dann ist die Korrektur möglich.");
+        }
+
+        // Einmaligkeitsregel des Anfangsbestands (Zwischenstep 7.5): ein
+        // Konto-Wechsel darf nicht auf ein Konto zielen, das bereits einen
+        // eigenen Anfangsbestand trägt — pro Konto ist genau einer
+        // zulässig.
+        if (original.Type == BookingType.OpeningBalance
+            && spec.AccountId is { } newAccountId
+            && newAccountId != original.OpeningBalanceAccountId)
+        {
+            var occupied = journal.FirstOrDefault(b =>
+                b.Type == BookingType.OpeningBalance
+                && b.Id != original.Id
+                && b.OpeningBalanceAccountId == newAccountId);
+            if (occupied is not null)
+            {
+                throw new DomainConflictException(
+                    $"Korrektur der Buchung '{original.Id}': das Konto '{newAccountId}' hat " +
+                    $"bereits den Anfangsbestand '{occupied.Id}' — pro Konto ist genau ein " +
+                    "Anfangsbestand zulässig. Die Korrektur bleibt abgelehnt.");
+            }
         }
 
         // Neue Fassung bauen (dieselbe Id, Typ und Datum; Revision wird
