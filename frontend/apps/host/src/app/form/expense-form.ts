@@ -46,6 +46,23 @@ export interface SplitRowState {
    * nur solche Zeilen tragen die originale Split-Id (Review R5-2).
    */
   prefilled: boolean;
+  /**
+   * Review R6-2: Korrektur-only Steuer-Historie — die ursprüngliche
+   * Kennzeichnung beim Vorladen (null = unmarkiert) und die
+   * ursprüngliche Kategorie, plus ein Flag, ob der Nutzer die
+   * Steuer-Zustandsweise seit dem Vorladen bewusst geändert hat
+   * (Modus-Wechsel). Dient dazu, „unmarkiert behalten“ (tax: null)
+   * von einer bewussten Neu-Anwendung der Kategorie-Voreinstellung
+   * (explizite Materialisierung) zu unterscheiden.
+   */
+  originalTax: {
+    relevant: boolean;
+    taxCategoryId: string | null;
+    markedAmount: number | null;
+    note: string | null;
+  } | null;
+  originalCategoryId: string | null;
+  taxTouched: boolean;
 }
 
 function toEuroText(centsValue: number | string | null): string {
@@ -79,6 +96,9 @@ function newSplitRow(key: number): SplitRowState {
     note: '',
     taxNote: '',
     prefilled: false,
+    originalTax: null,
+    originalCategoryId: null,
+    taxTouched: false,
   };
 }
 
@@ -179,6 +199,22 @@ export class ExpenseForm implements OnInit {
       row.amountText = toEuroText(split.amount);
       row.poolId = split.poolId;
       row.categoryId = split.categoryId;
+      // Review R6-2: ursprüngliche Kennzeichnung/Kategorie für die
+      // „unmarkiert behalten“-Erkennung festhalten.
+      row.originalTax =
+        split.tax === null
+          ? null
+          : {
+              relevant: split.tax.relevant,
+              taxCategoryId: split.tax.taxCategoryId,
+              markedAmount:
+                split.tax.markedAmount === null
+                  ? null
+                  : Number(split.tax.markedAmount),
+              note: split.tax.note,
+            };
+      row.originalCategoryId = split.categoryId;
+      row.taxTouched = false;
       if (split.tax) {
         row.taxMode = split.tax.relevant ? 'relevant' : 'irrelevant';
         row.taxCategoryId = split.tax.taxCategoryId ?? '';
@@ -211,6 +247,12 @@ export class ExpenseForm implements OnInit {
         poolId: row.poolId,
         categoryId: row.categoryId,
         note: row.note.trim(),
+        // Review R6-2: bewusste Steuer-Modusänderung (z. B.
+        // „Wie Voreinstellung“ → relevant → „Wie Voreinstellung“) ist
+        // eine bewusste Neu-Anwendung des Presets und muss den
+        // Skalar-Pfad ausschließen, auch wenn die wirksamen Werte
+        // unverändert aussehen.
+        taxTouched: row.taxTouched,
         tax: {
           relevant: this.effectiveTaxRelevant(row),
           taxCategoryId:
@@ -280,6 +322,10 @@ export class ExpenseForm implements OnInit {
 
   onTaxModeChange(row: SplitRowState, mode: TaxMode): void {
     row.taxMode = mode;
+    // Review R6-2: bewusste Steuer-Änderung seit dem Vorladen —
+    // ein Wechsel zurück auf „Wie Voreinstellung“ ist dann eine
+    // bewusste Neu-Anwendung des aktuellen Presets.
+    row.taxTouched = true;
     if (mode === 'relevant') {
       const preset = this.effectivePreset(row);
       if (
@@ -459,15 +505,24 @@ export class ExpenseForm implements OnInit {
             note: row.taxNote.trim() === '' ? null : row.taxNote.trim(),
           };
         } else if (row.prefilled) {
-          // Review R5-2: eine bestehende Zeile, die auf „Wie
-          // Voreinstellung“ belassen wurde, darf in der Korrektur
-          // nicht tax: null senden — null heißt dort „Original-
-          // Kennzeichnung behalten“ und würde z. B. nach einer
-          // Kategorienänderung die Kennzeichnung der alten Kategorie
-          // still halten. Statt dessen wird die wirksame Voreinstellung
-          // der aktuellen Kategorie explizit materialisiert (gleiche
-          // Semantik wie bei der Neuanlage).
-          tax = this.materializePresetTax(row);
+          // „Wie Voreinstellung“ bei einer bestehenden Zeile
+          // unterscheidet (Review R5-2, R6-2):
+          // - ursprünglich unmarkiert **und** unberührt (keine
+          //   Kategorie-Änderung, kein bewusster Steuer-Moduswechsel):
+          //   tax: null — der Server behält die ursprüngliche
+          //   (unmarkierte) Kennzeichnung; die Zeile darf nicht still
+          //   mit einer expliziten Kennzeichnung umgeschrieben werden
+          //   (z. B. weil die Kategorie inzwischen ein Preset bekam);
+          // - bewusste Neu-Anwendung (bewusster Moduswechsel, Kategorie-
+          //   Änderung oder ursprünglich explizit markiert): die
+          //   wirksame Voreinstellung der aktuellen Kategorie wird
+          //   explizit materialisiert (gleiche Semantik wie bei der
+          //   Neuanlage; ohne Preset explizit „nicht relevant“).
+          const untouched =
+            row.originalTax === null &&
+            !row.taxTouched &&
+            row.categoryId === row.originalCategoryId;
+          tax = untouched ? null : this.materializePresetTax(row);
         }
         // Beträge wurden zuvor in splitIssue() validiert.
         const amount = parseEuroToCents(row.amountText) as number;

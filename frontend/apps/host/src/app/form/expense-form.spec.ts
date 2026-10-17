@@ -549,6 +549,232 @@ describe('ExpenseForm (Review R5: Idempotenz über 401, Preset-Wechsel, Notiz)',
   });
 });
 
+describe('ExpenseForm (Review R6-2: unberührte unmarkierte Splits bleiben unmarkiert)', () => {
+  it('sendet tax: null für einen unberührten unmarkierten Split, wenn ein anderer Split geändert wird', async () => {
+    // cat-0 hat inzwischen ein relevantes Preset (tax-0); s1 war
+    // dennoch unmarkiert. Nur die Notiz von s2 ändert sich →
+    // Ersatz-Pfad; s1 darf nicht still mit dem Preset umgeschrieben
+    // werden (Review R6-2).
+    vi
+      .mocked(JournalEndpointsService.getBooking)
+      .mockResolvedValueOnce(detailUntouchedSplit());
+    vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mockResolvedValue(created);
+    const component = createForm('b-1', false, [
+      presetCategory('cat-0', 'tax-0'),
+      presetCategory('cat-1', 'tax-1'),
+    ]);
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+    // Nur die gewöhnliche Notiz von s2 ändern.
+    component.splits[1].note = 'Neue Notiz';
+    await component.submit();
+
+    const [, command] = vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mock.calls[0] as [string, CorrectionCommand];
+    expect(command.splits).not.toBeNull();
+    const s1 = command.splits!.find((s) => s.id === 's1')!;
+    // Unmarkiert und unberührt → Unmarkiert-Zustand behalten.
+    expect(s1.tax).toBeNull();
+    const s2 = command.splits!.find((s) => s.id === 's2')!;
+    expect(s2.note).toBe('Neue Notiz');
+    // Die explizite Kennzeichnung von s2 bleibt unverändert.
+    expect(s2.tax).toEqual({
+      relevant: true,
+      taxCategoryId: 'tax-1',
+      markedAmount: null,
+      note: null,
+    });
+  });
+
+  it('materialisiert das aktuelle Preset bei bewusstem Wechsel auf „Wie Voreinstellung“', async () => {
+    // Explizit markierte Zeile (relevant, tax-OLD) → bewusst „Wie
+    // Voreinstellung“ (aktuelles Preset: tax-1) → das aktuelle
+    // Preset wird materialisiert, nicht tax: null (Review R5-2).
+    vi
+      .mocked(JournalEndpointsService.getBooking)
+      .mockResolvedValueOnce(detailExplicitOldTax());
+    vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mockResolvedValue(created);
+    const component = createForm('b-1', true);
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+    expect(component.splits[0].taxMode).toBe('relevant');
+    expect(component.splits[0].taxCategoryId).toBe('tax-OLD');
+
+    component.onTaxModeChange(component.splits[0], 'inherit');
+    await component.submit();
+
+    const [, command] = vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mock.calls[0] as [string, CorrectionCommand];
+    expect(command.splits).not.toBeNull();
+    const s1 = command.splits!.find((s) => s.id === 's1')!;
+    expect(s1.tax).toEqual({
+      relevant: true,
+      taxCategoryId: 'tax-1',
+      markedAmount: null,
+      note: null,
+    });
+  });
+
+  it('materialisiert das Preset nach bewusstem Hin- und Rückwechsel (unmarkierte Zeile)', async () => {
+    // Unmarkierte Zeile (cat-0, Preset tax-0): „steuerrelevant“ wählen
+    // und wieder auf „Wie Voreinstellung“ zurück — das ist eine
+    // bewusste Neu-Anwendung des Presets, kein „unberührt“: die
+    // Korrektur muss den Ersatz-Pfad nehmen und das Preset explizit
+    // senden, statt tax: null (Review R6-2).
+    vi
+      .mocked(JournalEndpointsService.getBooking)
+      .mockResolvedValueOnce(detailUntouchedSplit());
+    vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mockResolvedValue(created);
+    const component = createForm('b-1', false, [
+      presetCategory('cat-0', 'tax-0'),
+      presetCategory('cat-1', 'tax-1'),
+    ]);
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+    const row = component.splits[0];
+    component.onTaxModeChange(row, 'relevant'); // füllt tax-0 vor
+    expect(row.taxCategoryId).toBe('tax-0');
+    component.onTaxModeChange(row, 'inherit');
+    await component.submit();
+
+    const [, command] = vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mock.calls[0] as [string, CorrectionCommand];
+    expect(command.splits).not.toBeNull();
+    const s1 = command.splits!.find((s) => s.id === 's1')!;
+    expect(s1.tax).toEqual({
+      relevant: true,
+      taxCategoryId: 'tax-0',
+      markedAmount: null,
+      note: null,
+    });
+  });
+});
+
+function presetCategory(id: string, taxCategoryId: string): CategoryDto {
+  return {
+    id,
+    name: `Kategorie ${id}`,
+    parentId: null,
+    status: 'active',
+    baseRevision: 1,
+    taxPreset: {
+      taxRelevant: true,
+      taxCategoryId,
+      taxCategoryName: `Steuerkategorie ${taxCategoryId}`,
+      inheritToChildren: true,
+      baseRevision: 1,
+    },
+  } as unknown as CategoryDto;
+}
+
+/**
+ * R6-2: s1 unmarkiert (tax: null) in cat-0 (Preset tax-0), s2
+ * explizit relevant (tax-1) — beide Splits bleiben unberührt außer
+ * wo der Test etwas ändert.
+ */
+function detailUntouchedSplit(): BookingDetailDto {
+  return {
+    id: 'b-1',
+    type: 'expense',
+    date: '2026-10-01',
+    note: null,
+    baseRevision: 5,
+    effectivelyReversed: false,
+    fundingMonth: null,
+    reversesBookingId: null,
+    reversalBookingIds: [],
+    refundsExpenseId: null,
+    relatedSettlementId: null,
+    accountPostings: [
+      { accountId: 'acc-1', accountName: 'Giro', amount: -10000 },
+    ],
+    poolPostings: [],
+    splits: [
+      {
+        id: 's1',
+        amount: 6000,
+        poolId: 'pool-1',
+        poolName: 'Flex',
+        categoryId: 'cat-0',
+        categoryName: 'Mit Preset',
+        note: null,
+        tax: null,
+      },
+      {
+        id: 's2',
+        amount: 4000,
+        poolId: 'pool-2',
+        poolName: 'Haushalt',
+        categoryId: 'cat-1',
+        categoryName: 'Lebensmittel',
+        note: null,
+        tax: {
+          relevant: true,
+          taxCategoryId: 'tax-1',
+          taxCategoryName: 'Kasse 3',
+          markedAmount: null,
+          note: null,
+        },
+      },
+    ],
+    transferPurposes: [],
+    reassignmentAccounts: [],
+    totalAmount: 10000,
+    refundedByPool: [],
+  };
+}
+
+/** R6-2: s1 explizit relevant mit veralteter Steuerkategorie (tax-OLD). */
+function detailExplicitOldTax(): BookingDetailDto {
+  return {
+    id: 'b-1',
+    type: 'expense',
+    date: '2026-10-01',
+    note: null,
+    baseRevision: 5,
+    effectivelyReversed: false,
+    fundingMonth: null,
+    reversesBookingId: null,
+    reversalBookingIds: [],
+    refundsExpenseId: null,
+    relatedSettlementId: null,
+    accountPostings: [
+      { accountId: 'acc-1', accountName: 'Giro', amount: -10000 },
+    ],
+    poolPostings: [],
+    splits: [
+      {
+        id: 's1',
+        amount: 10000,
+        poolId: 'pool-1',
+        poolName: 'Flex',
+        categoryId: 'cat-1',
+        categoryName: 'Lebensmittel',
+        note: null,
+        tax: {
+          relevant: true,
+          taxCategoryId: 'tax-OLD',
+          taxCategoryName: 'Alt',
+          markedAmount: null,
+          note: null,
+        },
+      },
+    ],
+    transferPurposes: [],
+    reassignmentAccounts: [],
+    totalAmount: 10000,
+    refundedByPool: [],
+  };
+}
+
 function noPresetCategory(id: string): CategoryDto {
   return {
     id,

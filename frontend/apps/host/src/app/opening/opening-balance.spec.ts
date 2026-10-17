@@ -20,6 +20,9 @@ import type { BookingCreatedDto } from '../../generated/models/BookingCreatedDto
  * Injections sind simuliert.
  */
 beforeEach(() => {
+  // Testisolierung: der PendingOperation-Zustand liegt pro Root-
+  // Service-Instanz und in sessionStorage (Review R5-1/R6-1).
+  sessionStorage.clear();
   // Standard: unerwartete API-Calls werden sichtbar abgelehnt;
   // jeder Test setzt das für seine Calls erwartete Verhalten.
   vi
@@ -162,5 +165,49 @@ describe('OpeningBalance.submit — Operation-Id bei unklarem Ausgang (Review R4
 
     expect(create).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[1][0].id).not.toBe(create.mock.calls[0][0].id);
+  });
+
+  describe('Review R6-1: In-flight Request zum Reload-Zeitpunkt', () => {
+    it('stellt die Operation nach Reload als unklar wieder her — geänderte Daten erhalten keine neue Id', async () => {
+      const create = vi.mocked(JournalWriteEndpointsService.createOpeningBalance);
+      create.mockReset();
+      // Gesendet, aber nie quittiert: Server-Commit möglich, Antwort
+      // verloren — der Reload löst kein Catch im Formular aus.
+      create.mockImplementationOnce(
+        // nie quittierte Antwort (Reload); `as never` passt den Mock
+        // an den generierten CancelablePromise-Rückgabewert an.
+        () => new Promise<BookingCreatedDto>(() => undefined) as never,
+      );
+
+      const first = createForm();
+      fillValidForm(first);
+      void first.submit();
+      await vi.waitFor(() => expect(first.busy()).toBe(true));
+      expect(create).toHaveBeenCalledTimes(1);
+
+      // Reload: neue Formularinstanz (selbes sessionStorage).
+      const second = createForm();
+      fillValidForm(second);
+      expect(second.outcomeUncertain()).toBe(true);
+
+      // Geänderte Daten: blockiert — eine neue Id könnte eine zweite
+      // Buchung erzeugen.
+      second.totalText = '150,00';
+      await second.submit();
+
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(second.error()?.code).toBe('uncertain_operation_blocked');
+
+      // Unveränderte Daten: idempotente Wiedersendung mit gleicher Id.
+      const third = createForm();
+      fillValidForm(third);
+      const originalId = create.mock.calls[0][0].id;
+      create.mockResolvedValueOnce(created('b-1', true));
+      await third.submit();
+
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(create.mock.calls[1][0].id).toBe(originalId);
+      expect(third.error()).toBeNull();
+    });
   });
 });

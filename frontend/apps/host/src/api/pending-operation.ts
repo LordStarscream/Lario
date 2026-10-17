@@ -19,11 +19,22 @@ function randomId(): string {
  * verwirft. Zusätzlich persistiert in sessionStorage, damit auch ein
  * harter Reload die gehaltene Operation nicht verliert (konservativ:
  * im Zweifel bleibt die Operation gehalten und wird abgeglichen).
+ *
+ * In-flight (Review R6-1): Ein gesendeter Request ohne eingetroffene
+ * Antwort wird als in-flight markiert und persistiert. Ein Reload in
+ * diesem Fenster löst kein Catch aus; die Operation wird beim
+ * Wiederherstellen konservativ als "Ausgang unklar" geladen — der
+ * Server kann bereits committet haben, die Antwort ging verloren.
  */
 interface HeldOperation {
   id: string;
   fingerprint: string;
   outcomeUncertain: boolean;
+  /**
+   * Request gesendet, Antwort noch nicht eingetroffen (Review R6-1).
+   * Wird beim Reload konservativ in `outcomeUncertain` aufgelöst.
+   */
+  inFlight: boolean;
 }
 
 const STORAGE_KEY = 'lario.pendingOperations.v1';
@@ -55,6 +66,11 @@ const STORAGE_KEY = 'lario.pendingOperations.v1';
  *   Operation bereits committet ist. Die alte Operation muss erst
  *   abgeglichen werden (Buchungsliste), dann manuell
  *   {@link PendingOperation.release}.
+ * - In-flight Request beim Reload (Review R6-1): die Operation wird
+ *   konservativ als "Ausgang unklar" wiederhergestellt — der
+ *   Server-Commit kann vor dem Reload erfolgt sein, die Antwort ist
+ *   verloren. Geänderte Daten erhalten erst nach manuellem Reset
+ *   (oder idempotenter Wiedersendung) eine neue Id.
  *
  * Pro Formular-Pfad (Präfix, z. B. „exp“/„corr“) gilt je ein Slot;
  * die Slots sind über Komponentengrenzen hinweg dieselben (Root-
@@ -91,32 +107,39 @@ export class PendingOperation {
   /**
    * Id für die nächste Einreichung:
    * - unveränderte Payload → dieselbe Id (idempotentes Wiedersenden);
+   *   der (Wieder-)Versuch wird wieder als in-flight markiert;
    * - keine gehaltene Operation oder geänderte Payload nach
-   *   definitivem Ausgang → neue Id;
+   *   definitivem Ausgang → neue Id; der Request wird sofort als
+   *   in-flight persistiert (Review R6-1):
    * - `null` (Einreichung blockieren, Review R4 F1): unklarer Ausgang
-   *   (keine Antwort/5xx) **und** geänderte Payload — eine neue Id
-   *   könnte eine zweite Buchung erzeugen (die alte Operation ist
-   *   möglicherweise bereits committet). Erst abgleichen, dann manuell
-   *   {@link PendingOperation.release}.
+   *   (keine Antwort/5xx) **oder** in-flight + geänderte Payload —
+   *   eine neue Id könnte eine zweite Buchung erzeugen (die alte
+   *   Operation ist möglicherweise bereits committet). Erst abgleichen,
+   *   dann manuell {@link PendingOperation.release}.
    */
   nextId(prefix: string, payloadFingerprint: string): string | null {
     const current = this.held.get(prefix);
-    if (
-      current !== undefined &&
-      current.outcomeUncertain &&
-      current.fingerprint !== payloadFingerprint
-    ) {
-      return null;
+    if (current !== undefined) {
+      if (current.fingerprint === payloadFingerprint) {
+        if (!current.inFlight) {
+          current.inFlight = true;
+          this.persist();
+        }
+        return current.id;
+      }
+      if (current.outcomeUncertain || current.inFlight) {
+        return null;
+      }
     }
-    if (current === undefined || current.fingerprint !== payloadFingerprint) {
-      this.held.set(prefix, {
-        id: `${prefix}-${randomId()}`,
-        fingerprint: payloadFingerprint,
-        outcomeUncertain: false,
-      });
-      this.persist();
-    }
-    return this.held.get(prefix)?.id ?? null;
+    const next: HeldOperation = {
+      id: `${prefix}-${randomId()}`,
+      fingerprint: payloadFingerprint,
+      outcomeUncertain: false,
+      inFlight: true,
+    };
+    this.held.set(prefix, next);
+    this.persist();
+    return next.id;
   }
 
   /**
@@ -131,6 +154,7 @@ export class PendingOperation {
       return;
     }
     current.outcomeUncertain = true;
+    current.inFlight = false;
     this.persist();
     this.writableUncertain(prefix).set(true);
   }
@@ -180,7 +204,19 @@ export class PendingOperation {
         parsed as Record<string, unknown>,
       )) {
         if (isHeldOperation(value)) {
-          result.push([prefix, value]);
+          // Review R6-1: In-flight zum Reload-Zeitpunkt (Antwort
+          // verloren, Server kann bereits committet haben) →
+          // konservativ als "Ausgang unklar" wiederherstellen;
+          // geänderte Daten erhalten dann keine neue Id.
+          result.push([
+            prefix,
+            {
+              id: value.id,
+              fingerprint: value.fingerprint,
+              outcomeUncertain: value.outcomeUncertain || value.inFlight,
+              inFlight: false,
+            },
+          ]);
         }
       }
       return result;
@@ -196,6 +232,8 @@ function isHeldOperation(value: unknown): value is HeldOperation {
     value !== null &&
     typeof (value as HeldOperation).id === 'string' &&
     typeof (value as HeldOperation).fingerprint === 'string' &&
-    typeof (value as HeldOperation).outcomeUncertain === 'boolean'
+    typeof (value as HeldOperation).outcomeUncertain === 'boolean' &&
+    ((value as HeldOperation).inFlight === undefined ||
+      typeof (value as HeldOperation).inFlight === 'boolean')
   );
 }
