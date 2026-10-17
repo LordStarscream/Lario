@@ -5,6 +5,7 @@
 import type { BalancesDto } from '../models/BalancesDto';
 import type { BookingDetailDto } from '../models/BookingDetailDto';
 import type { BookingListItemDto } from '../models/BookingListItemDto';
+import type { OpeningBalanceListItemDto } from '../models/OpeningBalanceListItemDto';
 import type { SettlementDto } from '../models/SettlementDto';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -65,6 +66,19 @@ export class JournalEndpointsService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/v1/balances',
+            errors: {
+                400: `Bad Request`,
+            },
+        });
+    }
+    /**
+     * @returns OpeningBalanceListItemDto OK
+     * @throws ApiError
+     */
+    public static listOpeningBalances(): CancelablePromise<Array<OpeningBalanceListItemDto>> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/opening-balances',
             errors: {
                 400: `Bad Request`,
             },

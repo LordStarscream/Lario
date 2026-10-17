@@ -36,6 +36,7 @@ export type { IncomeCommand } from './models/IncomeCommand';
 export type { LoginRequest } from './models/LoginRequest';
 export type { LoginResponse } from './models/LoginResponse';
 export type { OpeningBalanceCommand } from './models/OpeningBalanceCommand';
+export type { OpeningBalanceListItemDto } from './models/OpeningBalanceListItemDto';
 export type { PoolAllocationCommand } from './models/PoolAllocationCommand';
 export type { PoolAllocationDto } from './models/PoolAllocationDto';
 export type { PoolBalanceDto } from './models/PoolBalanceDto';

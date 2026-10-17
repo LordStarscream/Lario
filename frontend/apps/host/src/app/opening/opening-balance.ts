@@ -2,19 +2,26 @@ import {
   ChangeDetectionStrategy,
   Component,
   inject,
-  OnInit,
   signal,
   type Signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { ApiError as ApiErrorClass } from '../../generated/core/ApiError';
 import type { ApiErrorInfo } from '../../api/api-error';
 import { ApiErrorHandler } from '../../api/error-handler';
 import { CatalogService } from '../../api/catalogs';
 import { PendingOperation } from '../../api/pending-operation';
-import { formatCents, parseEuroToCents, todayIso } from '../../api/money';
+import {
+  centsToEuroText,
+  formatCents,
+  formatDate,
+  parseEuroToCents,
+  todayIso,
+} from '../../api/money';
+import { JournalEndpointsService } from '../../generated/services/JournalEndpointsService';
 import { JournalWriteEndpointsService } from '../../generated/services/JournalWriteEndpointsService';
+import type { OpeningBalanceListItemDto } from '../../generated/models/OpeningBalanceListItemDto';
 import type { PoolAllocationCommand } from '../../generated/models/PoolAllocationCommand';
 
 interface DistributionRow {
@@ -24,8 +31,14 @@ interface DistributionRow {
 }
 
 /**
- * Anfangsbestände erfassen (Kernfunktion 3): Kontostand mit optionaler
- * Verteilung auf Pools; nicht verteilte Beträge bleiben "unverteilt".
+ * Anfangsbestände erfassen (Kernfunktion 3, Zwischenstep 7.5):
+ * - Route `anfangsbestaende`: Liste vorhandener Anfangsbestände (A3)
+ *   plus Erfassungsformular für einen neuen Eintrag.
+ * - Route `anfangsbestaende/:id/korrektur`: vorgelegtes Korrektur-
+ *   formular (dieselbe Komponente, Modus aus der Route — dasselbe
+ *   Muster wie die Ausgaben-Korrektur). Anfangsbestände sind
+ *   designgemäß nicht stornierbar (A4); ein fehlerhafter Eintrag wird
+ *   über den definierten Korrekturweg in-place korrigiert (A5).
  */
 @Component({
   selector: 'app-opening-balance',
@@ -34,9 +47,10 @@ interface DistributionRow {
   templateUrl: './opening-balance.html',
   styleUrl: './opening-balance.css',
 })
-export class OpeningBalance implements OnInit {
+export class OpeningBalance {
   private readonly router = inject(Router);
   private readonly catalog = inject(CatalogService);
+  private readonly route = inject(ActivatedRoute);
   private readonly errors = inject(ApiErrorHandler);
   /**
    * Stabile Operation-Id (Review R3 P1 / R5-1): nach verlorener Antwort
@@ -44,12 +58,23 @@ export class OpeningBalance implements OnInit {
    * (gleiche Id + Payload) — idempotente Quittung statt doppeltem
    * Anfangsbestand. Der Zustand liegt im Root-Service: der 401-Login-
    * Redirect zerstört das Formular, behält aber die gehaltene Operation.
+   * Der Slot ist pro Modus fest ('open' Erstellung / 'open-corr'
+   * Korrektur), analog den 'exp'/'corr'-Slots der Ausgaben-Formulare.
    */
   private readonly pendingOp = inject(PendingOperation);
-  private readonly opPrefix = 'open';
-  readonly outcomeUncertain: Signal<boolean> = this.pendingOp.outcomeUncertain(
-    this.opPrefix,
-  );
+  readonly correctionId: string | null;
+  readonly isCorrection: boolean;
+  private readonly opPrefix: string;
+  readonly outcomeUncertain: Signal<boolean>;
+  /** Der zu korrigierende Eintrag (im Korrekturmodus geladen). */
+  readonly target = signal<OpeningBalanceListItemDto | null>(null);
+  /**
+   * Fingerprint der Vorbelegung (Review R3 P2, Analogie zur
+   * Ausgaben-Korrektur): bleibt das Formular unverändert, werden die
+   * Felder als null gesendet — der Server hält die Originalwerte,
+   * statt sie still identisch neu zu setzen.
+   */
+  private originalSnapshot: string | null = null;
   private keyBase = 1;
 
   readonly accounts = this.catalog.accounts;
@@ -63,10 +88,133 @@ export class OpeningBalance implements OnInit {
 
   readonly busy = signal(false);
   readonly error = signal<ApiErrorInfo | null>(null);
+  /** Ladezustand: Korrektur-Vorbelegung bzw. Auflistung (A3). */
+  readonly loading = signal(false);
+  readonly loadError = signal<ApiErrorInfo | null>(null);
+  /** Ladefehler der Liste (A3) — blockiert das Formular nicht. */
+  readonly listError = signal<ApiErrorInfo | null>(null);
 
-  ngOnInit(): void {
-    void this.catalog.load();
+  /**
+   * Vorhandene Anfangsbestände (Zwischenstep 7.5, A3): Liste über dem
+   * Erfassungsformular. Ein Ladefehler blockiert das Formular nicht.
+   */
+  readonly entries = signal<OpeningBalanceListItemDto[]>([]);
+
+  constructor() {
+    const id = this.route.snapshot.paramMap.get('id');
+    this.correctionId = id;
+    this.isCorrection = id !== null;
+    this.opPrefix = this.isCorrection ? 'open-corr' : 'open';
+    this.outcomeUncertain = this.pendingOp.outcomeUncertain(this.opPrefix);
+    if (id !== null) {
+      // Korrekturmodus: Vorbelegung lädt den Katalog mit (eigener Aufruf).
+      void this.loadCorrection(id);
+    } else {
+      void this.catalog.load();
+      void this.loadEntries();
+    }
   }
+
+  // ---------- Liste (A3) ----------
+
+  /** Anfangsbestände laden (A3); Fehler bleiben lokal und sichtbar. */
+  private async loadEntries(): Promise<void> {
+    this.loading.set(true);
+    this.listError.set(null);
+    try {
+      this.entries.set(await JournalEndpointsService.listOpeningBalances());
+    } catch (error) {
+      this.entries.set([]);
+      this.listError.set(this.errors.handle(error));
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  /** Korrektur-Route öffnen (A5) — die URL trägt den Modus. */
+  goCorrection(id: string): void {
+    // Absoluter Pfad (gleiche Konvention wie die Ausgaben-Korrektur):
+    // ein relativer navigate() auflöst von der Wurzel und würde die
+    // falsche Route treffen.
+    void this.router.navigate(['/anfangsbestaende', id, 'korrektur']);
+  }
+
+  /** Zurück zur Liste (Korrekturmodus). */
+  goBack(): void {
+    void this.router.navigate(['/anfangsbestaende']);
+  }
+
+  // ---------- Korrektur vorbelegen (A5) ----------
+
+  private async loadCorrection(id: string): Promise<void> {
+    this.loading.set(true);
+    this.loadError.set(null);
+    try {
+      // Erst Katalog, dann Eintrag: Konto- und Poolnamen der
+      // Vorbelegung (und des Banners) kommen aus dem Katalog.
+      await this.catalog.load();
+      const list = await JournalEndpointsService.listOpeningBalances();
+      const entry = list.find((candidate) => candidate.id === id);
+      if (entry === undefined) {
+        this.loadError.set({
+          code: 'not_found',
+          message:
+            'Der gewählte Anfangsbestand wurde nicht gefunden — die Id ' +
+            'ist falsch oder der Eintrag existiert nicht mehr.',
+          expectedBaseRevision: null,
+          actualBaseRevision: null,
+        });
+        return;
+      }
+      this.target.set(entry);
+      this.accountId = entry.accountId;
+      this.date = entry.date;
+      this.totalText = centsToEuroText(entry.total);
+      this.note = entry.note ?? '';
+      this.distribution = entry.distribution.map((allocation) => ({
+        key: this.keyBase++,
+        poolId: allocation.poolId,
+        amountText: centsToEuroText(allocation.amount),
+      }));
+      this.originalSnapshot = this.snapshot();
+    } catch (error) {
+      this.loadError.set(this.errors.handle(error));
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  /** Manuelles Zurücksetzen der gehaltene Operation (Review R5-1). */
+  resetPendingOperation(): void {
+    this.pendingOp.release(this.opPrefix);
+  }
+
+  /**
+   * Aktueller Formularzustand als stabiler Fingerprint — dient sowohl
+   * der Pending-Operation (Idempotenz) als auch der "unverändert"-
+   * Erkennung für die Korrektur.
+   */
+  private snapshot(): string {
+    return JSON.stringify({
+      date: this.date,
+      total: parseEuroToCents(this.totalText),
+      accountId: this.accountId,
+      distribution: this.distribution.map((row) => ({
+        poolId: row.poolId,
+        amount: parseEuroToCents(row.amountText) ?? 0,
+      })),
+      note: this.note.trim() === '' ? null : this.note.trim(),
+    });
+  }
+
+  /** Das Formular entspricht der Vorbelegung — nichts zu korrigieren. */
+  correctionUnchanged(): boolean {
+    return (
+      this.originalSnapshot !== null && this.snapshot() === this.originalSnapshot
+    );
+  }
+
+  // ---------- Verteilung ----------
 
   addRow(): void {
     this.distribution = [
@@ -92,6 +240,9 @@ export class OpeningBalance implements OnInit {
   }
 
   issue(): string | null {
+    if (this.isCorrection && this.correctionUnchanged()) {
+      return 'Keine Änderungen gegenüber dem aktuellen Eintrag — nichts zu korrigieren.';
+    }
     if (!this.date) {
       return 'Datum fehlt.';
     }
@@ -126,6 +277,8 @@ export class OpeningBalance implements OnInit {
     return this.issue();
   }
 
+  // ---------- Einreichen ----------
+
   async submit(): Promise<void> {
     if (this.busy() || this.issue() !== null) {
       return;
@@ -141,40 +294,63 @@ export class OpeningBalance implements OnInit {
       );
       const note = this.note.trim() === '' ? null : this.note.trim();
       const total = parseEuroToCents(this.totalText) as number;
-      // Fingerprint ohne die Operation-Id: unveränderte Daten →
-      // dieselbe Id (Idempotenz bei verlorener Antwort).
-      const fingerprint = JSON.stringify({
-        date: this.date,
-        total,
-        accountId: this.accountId,
-        distribution,
-        note,
-      });
       // Review R4 F1: unklarer Ausgang + geänderte Daten → Blocken.
       // Eine neue Id würde eine zweite Buchung erzeugen können, wenn die
       // alte Operation bereits committet ist.
-      const id = this.pendingOp.nextId(this.opPrefix, fingerprint);
+      const id = this.pendingOp.nextId(this.opPrefix, this.snapshot());
       if (id === null) {
         this.error.set({
           code: 'uncertain_operation_blocked',
           message:
-            'Einreichung blockiert: Der Ausgang des letzten Versuchs ist unklar und die Daten wurden seitdem geändert. Prüfe die Buchungsliste, ob der vorherige Eintrag gebucht wurde (ggf. korrigieren oder stornieren), und setze die Operation unten zurück, bevor du neue Daten einreichst.',
+            'Einreichung blockiert: Der Ausgang des letzten Versuchs ist unklar und die Daten wurden seitdem geändert. Prüfe die Buchungsliste, ob der vorherige Eintrag gebucht wurde (ggf. korrigieren), und setze die Operation unten zurück, bevor du neue Daten einreichst.',
           expectedBaseRevision: null,
           actualBaseRevision: null,
         });
         this.busy.set(false);
         return;
       }
-      await JournalWriteEndpointsService.createOpeningBalance({
-        id,
-        date: this.date,
-        total,
-        accountId: this.accountId,
-        distribution,
-        note,
-      });
-      this.pendingOp.release(this.opPrefix);
-      await this.router.navigate(['/']);
+      if (this.isCorrection) {
+        const target = this.target();
+        // Unveränderte Felder bleiben null — der Server hält die
+        // Originalwerte (Review R3 P2).
+        const noteUnchanged = note === (target?.note ?? null);
+        const distributionUnchanged =
+          JSON.stringify(distribution) ===
+          JSON.stringify(
+            (target?.distribution ?? []).map((allocation) => ({
+              poolId: allocation.poolId,
+              amount: allocation.amount,
+            })),
+          );
+        await JournalWriteEndpointsService.correctBooking(
+          this.correctionId as string,
+          {
+            operationId: id,
+            expectedBaseRevision: Number(target?.baseRevision ?? 0),
+            date: this.date === target?.date ? null : this.date,
+            note: noteUnchanged ? null : note,
+            accountId:
+              this.accountId === target?.accountId ? null : this.accountId,
+            totalAmount:
+              total === Number(target?.total) ? null : total,
+            splits: null,
+            allocations: distributionUnchanged ? null : distribution,
+          },
+        );
+        this.pendingOp.release(this.opPrefix);
+        await this.router.navigate(['/anfangsbestaende']);
+      } else {
+        await JournalWriteEndpointsService.createOpeningBalance({
+          id,
+          date: this.date,
+          total,
+          accountId: this.accountId,
+          distribution,
+          note,
+        });
+        this.pendingOp.release(this.opPrefix);
+        await this.router.navigate(['/']);
+      }
     } catch (err) {
       this.error.set(this.errors.handle(err));
       // Definitive Ablehnung (4xx): neue Id beim nächsten Versuch —
@@ -184,7 +360,7 @@ export class OpeningBalance implements OnInit {
       const definitive =
         err instanceof ApiErrorClass && err.status >= 400 && err.status < 500;
       if (definitive) {
-        if (!this.outcomeUncertain()) {
+        if (!this.pendingOp.outcomeUncertain(this.opPrefix)()) {
           this.pendingOp.release(this.opPrefix);
         }
       } else {
@@ -194,10 +370,28 @@ export class OpeningBalance implements OnInit {
     }
   }
 
-  /** Rücksetzen: neue Operation-Id für die nächste Einreichung. */
-  resetPendingOperation(): void {
-    this.pendingOp.release(this.opPrefix);
-  }
+  // ---------- Anzeige für das Template ----------
 
   formatCents = formatCents;
+  formatDate = formatDate;
+
+  /** Unverteilter Rest (Client-Seite: DTO trägt keine Summenfelder). */
+  unallocatedOf(entry: OpeningBalanceListItemDto): number {
+    const total = Number(entry.total);
+    const distributed = entry.distribution.reduce(
+      (sum, allocation) => sum + Number(allocation.amount),
+      0,
+    );
+    return total - distributed;
+  }
+
+  accountName(id: string): string {
+    const account = this.catalog.accounts().find((entry) => entry.id === id);
+    return account ? account.name : id;
+  }
+
+  poolName(id: string): string {
+    const pool = this.catalog.pools().find((entry) => entry.id === id);
+    return pool ? pool.name : id;
+  }
 }
