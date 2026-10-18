@@ -219,25 +219,26 @@ export class BookingsList implements OnInit {
   }
 
   /**
-   * Korrigierbare Buchungstypen (Domain-Regel, CorrectionService):
-   * nur Ausgaben, Einnahmen und Anfangsbestände sind in-place
-   * korrigierbar — andere Typen ändern über Storno + Neuausgabe
-   * (der Storno-Button bleibt für sie verfügbar).
+   * Buchungen, für die der UI-Korrektur-Button sichtbar ist: nur Typen mit
+   * vorhandenem Korrekturformular — Ausgabe (ausgaben/:id/korrektur) und
+   * Anfangsbestand (anfangsbestaende/:id/korrektur). Die Domain definiert
+   * Korrektur zusätzlich für Einnahmen (CorrectionService), dafür existiert
+   * in der UI aber noch kein Einnahmenformular — bis dahin ändern
+   * Einnahmen über Storno + Neuausgabe (der Storno-Button bleibt für sie
+   * verfügbar). Gleiches gilt für alle übrigen Typen (Storno + Neu).
    */
   isCorrectable(item: BookingListItemDto): boolean {
-    return (
-      item.type === 'Expense' ||
-      item.type === 'Income' ||
-      item.type === 'OpeningBalance'
-    );
+    return item.type === 'Expense' || item.type === 'OpeningBalance';
   }
 
   /**
    * Typgerechte Korrektur-Route öffnen (7.5, offener Punkt): ein
    * Anfangsbestand öffnet das Anfangsbestände-Korrekturformular
-   * (Verteilung auf Pools, in-place); Ausgaben/Einnahmen das
-   * Ausgaben-Korrekturformular. Beide Pfade sind absolut (relative
-   * Navigation löst gegen die Wurzel auf und trifft die falsche Route).
+   * (Verteilung auf Pools, in-place), Ausgaben das
+   * Ausgaben-Korrekturformular. isCorrectable() begrenzt den Button auf
+   * genau diese beiden Typen — die Ausgaben-Branch erreicht nur Ausgaben.
+   * Beide Pfade sind absolut (relative Navigation löst gegen die Wurzel
+   * auf und trifft die falsche Route).
    */
   goCorrection(item: BookingListItemDto): void {
     const base =

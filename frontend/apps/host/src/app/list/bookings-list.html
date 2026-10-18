@@ -87,9 +87,10 @@
           <td class="actions">
             <!-- 7.5, offener Punkt: der Anfangsbestand öffnet das
                  Anfangsbestände-Korrekturformular, keine Ausgabe-
-                 Korrektur. Nicht korrigierbare Typen (Transfer, Storno,
-                 …) haben keinen Korrektur-Button — dort ist der Weg
-                 Storno + Neuausgabe (Domain-Regel). -->
+                 Korrektur. Typen ohne Korrekturformular in der UI
+                 (Einnahme, Transfer, Storno, …) haben keinen
+                 Korrektur-Button — dort ist der Weg Storno +
+                 Neuausgabe. -->
             @if (isCorrectable(item)) {
               <button
                 type="button"

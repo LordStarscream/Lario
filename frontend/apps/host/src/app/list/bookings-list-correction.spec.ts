@@ -10,9 +10,11 @@ import type { BookingListItemDto } from '../../generated/models/BookingListItemD
 /**
  * 7.5, offener Punkt: Ein Anfangsbestand in der Buchungsliste öffnet
  * das Anfangsbestände-Korrekturformular (Verteilung auf Pools, in-place)
- * — nicht die Ausgaben-Korrektur. Nur korrigierbare Typen (Ausgabe,
- * Einnahme, Anfangsbestand) haben einen Korrektur-Button; andere Typen
- * ändern über Storno + Neuausgabe (Domain-Regel).
+ * — nicht die Ausgaben-Korrektur. Den Korrektur-Button erhalten nur Typen
+ * mit vorhandenem Korrekturformular (Ausgabe, Anfangsbestand). Einnahmen
+ * sind in der Domain zwar korrigierbar, haben aber kein
+ * Einnahmenformular in der UI — sie ändern über Storno + Neuausgabe
+ * (Restfehler, PR-Review 18.10.).
  *
  * Ablauf-Test: echte Komponentenklasse, nur die API-Ebene und die
  * Injections sind simuliert.
@@ -90,29 +92,25 @@ describe('BookingsList — typgerechte Korrektur-Route (offener Punkt 7.5)', () 
     ]);
   });
 
-  it('öffnet für Ausgaben und Einnahmen die Ausgaben-Korrektur', () => {
+  it('öffnet für Ausgaben die Ausgaben-Korrektur', () => {
     const { component, router } = createFixture();
 
     component.goCorrection(item('b-1', 'Expense'));
-    component.goCorrection(item('e-1', 'Income'));
 
-    expect(router.navigate).toHaveBeenNthCalledWith(1, [
+    expect(router.navigate).toHaveBeenCalledWith([
       '/ausgaben',
       'b-1',
       'korrektur',
     ]);
-    expect(router.navigate).toHaveBeenNthCalledWith(2, [
-      '/ausgaben',
-      'e-1',
-      'korrektur',
-    ]);
   });
 
-  it('markiert nur Ausgaben, Einnahmen und Anfangsbestände als korrigierbar', () => {
+  it('markiert nur Ausgaben und Anfangsbestände als korrigierbar', () => {
     const { component } = createFixture();
 
     expect(component.isCorrectable(item('b-1', 'Expense'))).toBe(true);
-    expect(component.isCorrectable(item('e-1', 'Income'))).toBe(true);
+    // Restfehler: Einnahmen haben kein Korrekturformular in der UI —
+    // der Button würde ins ungeeignete Ausgabenformular führen.
+    expect(component.isCorrectable(item('e-1', 'Income'))).toBe(false);
     expect(component.isCorrectable(item('ob-1', 'OpeningBalance'))).toBe(true);
     expect(component.isCorrectable(item('t-1', 'Transfer'))).toBe(false);
     expect(component.isCorrectable(item('r-1', 'Reversal'))).toBe(false);

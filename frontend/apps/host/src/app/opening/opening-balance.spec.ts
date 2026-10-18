@@ -749,4 +749,57 @@ describe('OpeningBalance — bleibt nach Speichern auf der Seite (offener Punkt 
     expect(component.savedMessage()).toBeNull();
     expect(component.error()).not.toBeNull();
   });
+
+  it('hält das eingerichtete Konto bei fehlgeschlagenem Nachladen aus der Auswahl (7.5 Restfehler)', async () => {
+    vi.mocked(JournalWriteEndpointsService.createOpeningBalance).mockResolvedValue(
+      created('ob-1'),
+    );
+    // Erstes Laden (Konstruktor) erfolgreich — Liste leer. Das Nachladen
+    // nach dem Speichern schlägt fehl.
+    vi.mocked(JournalEndpointsService.listOpeningBalances)
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('Netzwerk weg'));
+    vi.mocked(JournalEndpointsService.getBalances).mockResolvedValue(
+      emptyBalances(),
+    );
+
+    const fixture = createFixture(null, [acc1, acc2], true);
+    const component = fixture.componentInstance;
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+    fillValidForm(component);
+    await component.submit();
+    // Das fehlgeschlagene Nachladen muss abgewickelt sein (Liste leer,
+    // Fehler sichtbar).
+    await vi.waitFor(() => expect(component.listError()).not.toBeNull());
+
+    // Ohne Fix wäre die Eintragsliste leer und acc-1 wieder auswählbar.
+    expect(component.entries()).toEqual([]);
+    expect(component.availableAccounts()).toEqual([acc2]);
+  });
+
+  it('hält die All-Configured-Anzeige bei fehlgeschlagenem Nachladen (7.5 Restfehler)', async () => {
+    vi.mocked(JournalWriteEndpointsService.createOpeningBalance).mockResolvedValue(
+      created('ob-1'),
+    );
+    vi.mocked(JournalEndpointsService.listOpeningBalances)
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('Netzwerk weg'));
+    vi.mocked(JournalEndpointsService.getBalances).mockResolvedValue(
+      emptyBalances(),
+    );
+
+    const fixture = createFixture(null, [acc1], true);
+    const component = fixture.componentInstance;
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+    expect(component.allConfigured()).toBe(false);
+
+    fillValidForm(component);
+    await component.submit();
+    await vi.waitFor(() => expect(component.listError()).not.toBeNull());
+
+    // Die Liste ist leer (Ladefehler) — aber das gelungene Speichern weißt,
+    // dass das einzige Konto eingerichtet ist.
+    expect(component.allConfigured()).toBe(true);
+  });
 });

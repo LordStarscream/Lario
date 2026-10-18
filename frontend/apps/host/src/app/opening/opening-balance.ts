@@ -130,12 +130,26 @@ export class OpeningBalance {
   readonly savedMessage = signal<string | null>(null);
 
   /**
+   * 7.5 Restfehler: Konten, die soeben erfolgreich gespeichert wurden und
+   * noch nicht in der (neu geladenen) Eintragsliste stehen. Scheitert das
+   * Nachladen nach dem Speichern, wäre die Eintragsliste leer/veraltet
+   * und das eingerichtete Konto würde wieder auswählbar — diese Auf-
+   * zeichnung hält es heraus, bis ein Laden der Liste erfolgreich ist.
+   */
+  readonly newlySavedAccountIds = signal<string[]>([]);
+
+  /**
    * Review R7-3 (Einrichtungsvorgang): Konten, die noch keinen
    * Anfangsbestand tragen — im Neuanlage-Formular sind bereits
-   * eingerichtete Konte aus der Auswahl herausgefiltert.
+   * eingerichtete Konte aus der Auswahl herausgefiltert (einschließlich
+   * soeben gespeicherter Konten, deren Eintrag die Liste nach einem
+   * fehlgeschlagenen Nachladen noch nicht zeigt).
    */
   readonly availableAccounts = computed(() => {
-    const taken = new Set(this.entries().map((entry) => entry.accountId));
+    const taken = new Set([
+      ...this.entries().map((entry) => entry.accountId),
+      ...this.newlySavedAccountIds(),
+    ]);
     return this.catalog.accounts().filter((account) => !taken.has(account.id));
   });
 
@@ -143,13 +157,17 @@ export class OpeningBalance {
    * Review R7-3 (Einrichtungsvorgang): alle aktiven Konten haben bereits
    * einen Anfangsbestand — Neuanlagen sind nicht mehr möglich, statt des
    * Formulars wird eine Zustandsanzeige gezeigt (nur wenn Katalog und
-   * Liste erfolgreich geladen sind).
+   * Liste erfolgreich geladen sind). „Mindestens ein Eintrag existiert“
+   * gilt zusätzlich für soeben gespeicherte Konten, deren Eintrag ein
+   * fehlgeschlagenes Nachladen der Liste noch nicht enthält (7.5
+   * Restfehler).
    */
   readonly allConfigured = computed(
     () =>
       this.catalog.loaded()
       && this.catalog.accounts().length > 0
-      && this.entries().length > 0
+      && (this.entries().length > 0
+        || this.newlySavedAccountIds().length > 0)
       && this.availableAccounts().length === 0,
   );
 
@@ -188,6 +206,10 @@ export class OpeningBalance {
     this.listError.set(null);
     try {
       this.entries.set(await JournalEndpointsService.listOpeningBalances());
+      // Gelungenes Laden zeigt den tatsächlichen Stand — die lokale
+      // Aufzeichnung der soeben gespeicherten Konten ist damit
+      // überflüssig (7.5 Restfehler).
+      this.newlySavedAccountIds.set([]);
     } catch (error) {
       this.entries.set([]);
       this.listError.set(this.errors.handle(error));
@@ -427,6 +449,14 @@ export class OpeningBalance {
             .accounts()
             .find((acc) => acc.id === this.accountId)?.name ?? this.accountId;
         this.pendingOp.release(this.opPrefix);
+        // 7.5 Restfehler: das soeben eingerichtete Konto muss auch dann
+        // nicht wieder auswählbar sein, wenn das Nachladen unten
+        // fehlschlägt (Eintragsliste wird leer/veraltet). Die Auf-
+        // zeichnung wird erst von einem erfolgreichen Laden gelöscht.
+        this.newlySavedAccountIds.set([
+          ...this.newlySavedAccountIds(),
+          this.accountId,
+        ]);
         // 7.5, offener Punkt: nach dem Speichern auf derselben Seite
         // bleiben — das Formular wird für das nächste Konto
         // zurückgesetzt. Der Stichtag bleibt gesetzt (Einrichtungsvor-
