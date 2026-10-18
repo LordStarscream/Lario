@@ -653,3 +653,100 @@ describe('OpeningBalance — Salden-Panel (Review R7-8)', () => {
     expect(component.issue()).toBeNull();
   });
 });
+
+/**
+ * 7.5, offener Punkt: Nach dem Speichern eines neuen Anfangsbestands
+ * bleibt der Nutzer auf derselben Seite und erfasst das nächste Konto —
+ * Formular wird zurückgesetzt (Stichtag bleibt gesetzt), Liste und
+ * Salden-Panel aktualisieren sich, Erfolgsmeldung erscheint.
+ */
+describe('OpeningBalance — bleibt nach Speichern auf der Seite (offener Punkt 7.5)', () => {
+  const acc1 = { id: 'acc-1', name: 'Konto Eins', status: 'active' };
+  const acc2 = { id: 'acc-2', name: 'Konto Zwei', status: 'active' };
+
+  function emptyBalances(): BalancesDto {
+    return {
+      accounts: [],
+      pools: [],
+      totalAccountBalance: 0,
+      totalPoolBalance: 0,
+      totalIncome: 0,
+      accountPoolGap: 0,
+      unallocatedOpeningBalances: [],
+    };
+  }
+
+  it('navigiert nicht weg, setzt das Formular zurück und zeigt die Erfolgsmeldung', async () => {
+    vi.mocked(JournalWriteEndpointsService.createOpeningBalance).mockResolvedValue(
+      created('ob-1'),
+    );
+    // Nach dem Speichern ist acc-1 belegt (Liste wird neu geladen).
+    vi.mocked(JournalEndpointsService.listOpeningBalances).mockResolvedValue([
+      entry(),
+    ]);
+    vi.mocked(JournalEndpointsService.getBalances).mockResolvedValue(
+      emptyBalances(),
+    );
+
+    const fixture = createFixture(null, [acc1, acc2], true);
+    const router = TestBed.inject(Router) as unknown as {
+      navigate: ReturnType<typeof vi.fn>;
+    };
+    const component = fixture.componentInstance;
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+    fillValidForm(component);
+    component.note = 'Test';
+    await component.submit();
+
+    // Keine Navigation (vor dem Fix: Navigation zur Buchungsliste).
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(component.savedMessage()).toContain('Konto Eins');
+    // Formular ist für das nächste Konto zurückgesetzt; der Stichtag
+    // bleibt gesetzt (Einrichtungsvorgang: alle Konten teilen denselben
+    // Stichtag) und ist weiterhin änderbar.
+    expect(component.accountId).toBe('');
+    expect(component.totalText).toBe('');
+    expect(component.note).toBe('');
+    expect(component.distribution).toEqual([]);
+    expect(component.date).toBe('2026-10-01');
+    // Liste aktualisiert: das eingerichtete Konto fällt aus der Auswahl.
+    expect(component.entries()).toHaveLength(1);
+    expect(component.availableAccounts()).toEqual([acc2]);
+  });
+
+  it('löscht die Erfolgsmeldung beim Start der nächsten Einreichung', async () => {
+    vi.mocked(JournalWriteEndpointsService.createOpeningBalance).mockResolvedValue(
+      created('ob-1'),
+    );
+    vi.mocked(JournalEndpointsService.listOpeningBalances).mockResolvedValue([
+      entry(),
+    ]);
+    vi.mocked(JournalEndpointsService.getBalances).mockResolvedValue(
+      emptyBalances(),
+    );
+
+    const fixture = createFixture(null, [acc1, acc2], true);
+    const component = fixture.componentInstance;
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+    fillValidForm(component);
+    await component.submit();
+    expect(component.savedMessage()).not.toBeNull();
+
+    // Zweites Konto erfassen, aber die Einreichung schlägt fehl
+    // (409: acc-2 bereits belegt) — die alte Erfolgsmeldung darf
+    // nicht neben dem Fehler stehen bleiben.
+    component.accountId = 'acc-2';
+    component.totalText = '100,00';
+    component.addRow();
+    component.distribution[0].poolId = 'pool-1';
+    component.distribution[0].amountText = '100,00';
+    const create = vi.mocked(JournalWriteEndpointsService.createOpeningBalance);
+    create.mockRejectedValue(httpError(409));
+    await component.submit();
+
+    expect(component.savedMessage()).toBeNull();
+    expect(component.error()).not.toBeNull();
+  });
+});

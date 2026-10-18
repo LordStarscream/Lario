@@ -122,6 +122,14 @@ export class OpeningBalance {
   }
 
   /**
+   * Erfolgsmeldung nach erfolgreichem Speichern (7.5, offener Punkt):
+   * Der Nutzer bleibt auf derselben Seite und erfasst das nächste
+   * Konto — die Meldung bleibt sichtbar, bis die nächste Einreichung
+   * startet (oder die Seite verlassen wird).
+   */
+  readonly savedMessage = signal<string | null>(null);
+
+  /**
    * Review R7-3 (Einrichtungsvorgang): Konten, die noch keinen
    * Anfangsbestand tragen — im Neuanlage-Formular sind bereits
    * eingerichtete Konte aus der Auswahl herausgefiltert.
@@ -344,6 +352,7 @@ export class OpeningBalance {
     }
     this.busy.set(true);
     this.error.set(null);
+    this.savedMessage.set(null);
     try {
       const distribution: PoolAllocationCommand[] = this.distribution.map(
         (row) => ({
@@ -413,9 +422,33 @@ export class OpeningBalance {
           // Neuanlage: leere Notiz bleibt null (es gibt kein Original).
           note: note === '' ? null : note,
         });
+        const savedAccountName =
+          this.catalog
+            .accounts()
+            .find((acc) => acc.id === this.accountId)?.name ?? this.accountId;
         this.pendingOp.release(this.opPrefix);
-        await this.router.navigate(['/']);
+        // 7.5, offener Punkt: nach dem Speichern auf derselben Seite
+        // bleiben — das Formular wird für das nächste Konto
+        // zurückgesetzt. Der Stichtag bleibt gesetzt (Einrichtungsvor-
+        // gang: alle Konten teilen üblicherweise denselben Stichtag);
+        // er ist weiterhin pro Konto änderbar. Liste (das eingerichtete
+        // Konto fällt automatisch aus der Auswahl heraus) und Salden-
+        // Panel werden aktualisiert.
+        this.savedMessage.set(
+          `Anfangsbestand für ${savedAccountName} gebucht — nächstes ` +
+            'Konto erfassen.',
+        );
+        this.accountId = '';
+        this.totalText = '';
+        this.note = '';
+        this.distribution = [];
+        void this.loadEntries();
+        void this.loadBalances();
       }
+      // 7.5, offener Punkt: die Komponente bleibt nach dem Erfolg auf
+      // derselben Seite aktiv (vorher zerstörte die Navigation sie) —
+      // das Formular muss für den nächsten Eintrag freigeschaltet sein.
+      this.busy.set(false);
     } catch (err) {
       this.error.set(this.errors.handle(err));
       // Definitive Ablehnung (4xx): neue Id beim nächsten Versuch —

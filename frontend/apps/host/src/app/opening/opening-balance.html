@@ -124,6 +124,13 @@
 }
 
 @if (!isCorrection || target()) {
+  <!-- 7.5, offener Punkt: nach dem Speichern bleibt der Nutzer auf
+       dieser Seite — Erfolgsmeldung, dann das nächste Konto. Die
+       Meldung steht über dem Formular UND über der All-Configured-
+       Anzeige (letztes Konto). -->
+  @if (savedMessage(); as msg) {
+    <div class="banner banner-success" role="status">{{ msg }}</div>
+  }
   @if (!isCorrection && allConfigured()) {
     <!-- Review R7-3: Einrichtungsvorgang abgeschlossen — statt des
          Neuanlage-Formulars eine sichtbare Zustandsanzeige. -->

@@ -218,8 +218,31 @@ export class BookingsList implements OnInit {
     return TYPE_LABELS[type] ?? type;
   }
 
-  goCorrection(id: string): void {
-    void this.router.navigate(['/ausgaben', id, 'korrektur']);
+  /**
+   * Korrigierbare Buchungstypen (Domain-Regel, CorrectionService):
+   * nur Ausgaben, Einnahmen und Anfangsbestände sind in-place
+   * korrigierbar — andere Typen ändern über Storno + Neuausgabe
+   * (der Storno-Button bleibt für sie verfügbar).
+   */
+  isCorrectable(item: BookingListItemDto): boolean {
+    return (
+      item.type === 'Expense' ||
+      item.type === 'Income' ||
+      item.type === 'OpeningBalance'
+    );
+  }
+
+  /**
+   * Typgerechte Korrektur-Route öffnen (7.5, offener Punkt): ein
+   * Anfangsbestand öffnet das Anfangsbestände-Korrekturformular
+   * (Verteilung auf Pools, in-place); Ausgaben/Einnahmen das
+   * Ausgaben-Korrekturformular. Beide Pfade sind absolut (relative
+   * Navigation löst gegen die Wurzel auf und trifft die falsche Route).
+   */
+  goCorrection(item: BookingListItemDto): void {
+    const base =
+      item.type === 'OpeningBalance' ? '/anfangsbestaende' : '/ausgaben';
+    void this.router.navigate([base, item.id, 'korrektur']);
   }
 
   // ---------- Storno ----------

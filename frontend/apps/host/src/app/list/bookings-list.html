@@ -85,14 +85,21 @@
           </td>
           <td class="num">{{ formatCents(item.totalAmount) }}</td>
           <td class="actions">
-            <button
-              type="button"
-              class="btn btn-small"
-              [disabled]="item.effectivelyReversed"
-              (click)="goCorrection(item.id)"
-            >
-              Korrektur
-            </button>
+            <!-- 7.5, offener Punkt: der Anfangsbestand öffnet das
+                 Anfangsbestände-Korrekturformular, keine Ausgabe-
+                 Korrektur. Nicht korrigierbare Typen (Transfer, Storno,
+                 …) haben keinen Korrektur-Button — dort ist der Weg
+                 Storno + Neuausgabe (Domain-Regel). -->
+            @if (isCorrectable(item)) {
+              <button
+                type="button"
+                class="btn btn-small"
+                [disabled]="item.effectivelyReversed"
+                (click)="goCorrection(item)"
+              >
+                Korrektur
+              </button>
+            }
             <button
               type="button"
               class="btn btn-small"
