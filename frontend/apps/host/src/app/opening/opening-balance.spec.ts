@@ -832,8 +832,14 @@ describe('OpeningBalance — bleibt nach Speichern auf der Seite (offener Punkt 
     // Konten eingerichtet sind. Jetzt bleibt die letzte erfolgreiche
     // Liste erhalten und das neue Konto kommt aus der Aufzeichnung.
     expect(component.entries()).toHaveLength(1);
+    expect(component.newlySavedAccountIds()).toEqual(['acc-2']);
     expect(component.availableAccounts()).toEqual([]);
     expect(component.allConfigured()).toBe(true);
+    // Der bestätigte POST bleibt ein Erfolg: Meldung, kein busy,
+    // Refreshfehler getrennt sichtbar.
+    expect(component.savedMessage()).toContain('gebucht');
+    expect(component.busy()).toBe(false);
+    expect(component.listError()).not.toBeNull();
   });
 
   it('zeigt bei fehlgeschlagenem Refresh die zuletzt geladene Liste weiter an (7.5 Restfehler)', async () => {
