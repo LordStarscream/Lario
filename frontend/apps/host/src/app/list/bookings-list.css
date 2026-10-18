@@ -132,6 +132,10 @@
   font-size: 0.9rem;
 }
 
+/* Salden-Panel-Styles (Review R7-8) liegen jetzt in
+   shared/balances-panel/balances-panel.css — das Panel wird von der
+   Buchungsliste und der Anfangsbestände-Seite geteilt. */
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

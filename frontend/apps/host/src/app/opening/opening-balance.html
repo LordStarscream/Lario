@@ -1,18 +1,170 @@
-<section>
-  <h2>Anfangsbestände erfassen</h2>
-  <p class="page-intro">
-    Erfasse den aktuellen Kontostand. Optional kannst du den Betrag auf Pools
-    verteilen; nicht verteilte Beträge bleiben als unverteilt im
-    Abgleich-Kontostand erhalten.
-  </p>
+<section class="form-header">
+  @if (isCorrection) {
+    <button type="button" class="btn btn-ghost" (click)="goBack()">
+      ← Zurück
+    </button>
+  }
+  <h2>
+    @if (isCorrection) {
+      Anfangsbestand korrigieren
+    } @else {
+      Anfangsbestände
+    }
+  </h2>
+</section>
 
+<p class="page-intro">
+  @if (isCorrection) {
+    Der vorhandene Eintrag wird in-place korrigiert (gleiche Buchung, Revision
+    wird erhöht). Anfangsbestände sind designgemäß nicht stornierbar.
+  } @else {
+    Bestandsübernahme bei Einrichtung: Kontostand mit optionaler Verteilung
+    auf Pools. Pro Konto ist genau ein Anfangsbestand zulässig.
+  }
+</p>
+
+<!-- Review R7-8: dasselbe gemeinsame Salden-Panel wie in der
+     Buchungsliste — bei der Verteilung eines Anfangsbestands sind die
+     Kontostände und Poolbestände direkt ablesbar (abgeleitete Werte
+     aus GET /api/v1/balances). -->
+@if (balances(); as b) {
+  <app-balances-panel [balances]="b" />
+}
+
+@if (isCorrection) {
+  @if (loading()) {
+    <p class="empty">Lade Anfangsbestand …</p>
+  } @else if (loadError(); as err) {
+    <div class="banner banner-error" role="alert">
+      <strong>Fehler beim Laden des Anfangsbestands:</strong> {{ err.message }}
+    </div>
+  } @else if (target(); as entry) {
+    <div class="banner banner-info">
+      <strong>{{ accountName(entry.accountId) }}</strong>
+      · {{ formatDate(entry.date) }}
+      · {{ formatCents(entry.total) }}
+      @for (allocation of entry.distribution; track allocation.poolId) {
+        · {{ poolName(allocation.poolId) }}:
+        {{ formatCents(allocation.amount) }}
+      }
+      <br />
+      <span class="muted"
+        >Basisrevision {{ entry.baseRevision }} — die Korrektur wird nur
+        akzeptiert, solange sich die Buchung seither nicht geändert hat.</span
+      >
+    </div>
+  }
+}
+
+@if (!isCorrection) {
+  <section class="entries-card">
+    <h3>Vorhandene Anfangsbestände</h3>
+    <!-- Ein fehlgeschlagener Refresh versteckt die zuletzt geladene
+         Liste nicht: Der Fehler ist als Banner sichtbar, die Einträge
+         bleiben angezeigt (7.5 Restfehler). -->
+    @if (listError(); as err) {
+      <div class="banner banner-error" role="alert">
+        <strong>Liste konnte nicht geladen werden:</strong> {{ err.message }}
+        @if (entries().length > 0) {
+          <br />
+          <span class="muted">Zuletzt geladene Einträge werden weiterhin angezeigt.</span>
+        }
+      </div>
+    }
+    @if (entries().length > 0) {
+      <table class="table table-small">
+        <thead>
+          <tr>
+            <th>Datum</th>
+            <th>Konto</th>
+            <th>Betrag</th>
+            <th>Verteilt</th>
+            <th>Unverteilt</th>
+            <th>Notiz</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (entry of entries(); track entry.id) {
+            <tr>
+              <td>{{ formatDate(entry.date) }}</td>
+              <td>{{ accountName(entry.accountId) }}</td>
+              <td class="num">{{ formatCents(entry.total) }}</td>
+              <td>
+                @if (entry.distribution.length === 0) {
+                  <span class="muted">—</span>
+                } @else {
+                  @for (allocation of entry.distribution; track allocation.poolId) {
+                    <div>
+                      {{ poolName(allocation.poolId) }}:
+                      {{ formatCents(allocation.amount) }}
+                    </div>
+                  }
+                }
+              </td>
+              <td class="num">{{ formatCents(unallocatedOf(entry)) }}</td>
+              <td>
+                @if (entry.note) {
+                  {{ entry.note }}
+                } @else {
+                  <span class="muted">—</span>
+                }
+              </td>
+              <td class="actions">
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  (click)="goCorrection(entry.id)"
+                >
+                  Korrektur
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    } @else if (loading()) {
+      <p class="empty">Liste wird geladen …</p>
+    } @else if (!listError()) {
+      <p class="muted">Noch keine Anfangsbestände erfasst.</p>
+    }
+  </section>
+}
+
+@if (!isCorrection || target()) {
+  <!-- 7.5, offener Punkt: nach dem Speichern bleibt der Nutzer auf
+       dieser Seite — Erfolgsmeldung, dann das nächste Konto. Die
+       Meldung steht über dem Formular UND über der All-Configured-
+       Anzeige (letztes Konto). -->
+  @if (savedMessage(); as msg) {
+    <div class="banner banner-success" role="status">{{ msg }}</div>
+  }
+  @if (!isCorrection && allConfigured()) {
+    <!-- Review R7-3: Einrichtungsvorgang abgeschlossen — statt des
+         Neuanlage-Formulars eine sichtbare Zustandsanzeige. -->
+    <div class="banner banner-info" role="status">
+      Alle aktiven Konten haben bereits einen Anfangsbestand — weitere
+      Neuanlagen sind nicht möglich. Änderungen an bestehenden Einträgen
+      erfolgen über die Korrektur.
+    </div>
+  } @else {
   <form class="opening-form" (ngSubmit)="submit()" novalidate>
+    <h2>
+      @if (isCorrection) {
+        Werte anpassen
+      } @else {
+        Neuen Anfangsbestand erfassen
+      }
+    </h2>
+
     <div class="grid-2">
       <label class="field">
         <span class="field-label">Konto</span>
         <select name="accountId" [(ngModel)]="accountId" [disabled]="busy()">
           <option value="" disabled>Bitte wählen …</option>
-          @for (account of accounts(); track account.id) {
+          <!-- Review R7-3: Neuanlage zeigt nur Konten ohne Anfangsbestand.
+               -->
+          @for (account of accountOptions(); track account.id) {
             <option [value]="account.id">{{ account.name }}</option>
           }
         </select>
@@ -24,11 +176,11 @@
     </div>
 
     <label class="field">
-      <span class="field-label">Kontostand (€)</span>
+      <span class="field-label">Gesamtbetrag (€)</span>
       <input
         type="text"
+        name="totalText"
         inputmode="decimal"
-        name="total"
         class="money-input"
         [(ngModel)]="totalText"
         [disabled]="busy()"
@@ -102,17 +254,34 @@
     @if (error(); as err) {
       <div class="banner banner-error" role="alert">
         <strong>Fehler:</strong> {{ err.message }}
+        @if (err.expectedBaseRevision !== null) {
+          <br />
+          <span class="muted"
+            >Erwartete Basisrevision {{ err.expectedBaseRevision }}, aktuelle
+            Revision {{ err.actualBaseRevision }} — die Buchung hat sich
+            seither geändert. Aktualisiere und versuche es erneut.</span
+          >
+        }
       </div>
     }
 
     @if (outcomeUncertain()) {
       <div class="banner banner-info" role="alert">
-        <strong>Hinweis:</strong> Der letzte Versuch wurde nicht bestätigt —
-        die Buchung kann möglicherweise schon gebucht sein. Nochmal
-        senden mit unveränderten Daten wiederholt dieselbe Operation
-        (keine doppelte Buchung). Prüfe die Buchungsliste, bevor du neue
-        Daten einreichst.
-        <button type="button" class="btn btn-small" [disabled]="busy()" (click)="resetPendingOperation()">
+        <strong>Hinweis:</strong>
+        {{
+          isCorrection
+            ? 'Der Ausgang des letzten Korrektur-Versuchs ist unklar.'
+            : 'Der letzte Versuch wurde nicht bestätigt — der Anfangsbestand kann möglicherweise schon gebucht sein.'
+        }}
+        Nochmal senden mit unveränderten Daten wiederholt dieselbe Operation
+        (keine doppelte Buchung). Prüfe die Liste, bevor du neue Daten
+        einreichst.
+        <button
+          type="button"
+          class="btn btn-small"
+          [disabled]="busy()"
+          (click)="resetPendingOperation()"
+        >
           Zurücksetzen (neue Operation)
         </button>
       </div>
@@ -123,9 +292,25 @@
     }
 
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary" [disabled]="busy() || issueText !== null">
-        {{ busy() ? 'Wird gebucht …' : 'Anfangsbestand buchen' }}
+      @if (isCorrection) {
+        <button type="button" class="btn btn-ghost" (click)="goBack()">
+          Abbrechen
+        </button>
+      }
+      <button
+        type="submit"
+        class="btn btn-primary"
+        [disabled]="busy() || issueText !== null"
+      >
+        {{
+          busy()
+            ? 'Wird gesendet …'
+            : isCorrection
+              ? 'Korrektur übernehmen'
+              : 'Anfangsbestand buchen'
+        }}
       </button>
     </div>
   </form>
-</section>
+  }
+}

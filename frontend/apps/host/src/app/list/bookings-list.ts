@@ -5,8 +5,10 @@ import type { ApiErrorInfo } from '../../api/api-error';
 import { ApiErrorHandler } from '../../api/error-handler';
 import { CatalogService } from '../../api/catalogs';
 import { formatCents, formatDate, parseEuroToCents, todayIso } from '../../api/money';
+import { BalancesPanel } from '../shared/balances-panel/balances-panel';
 import { JournalEndpointsService } from '../../generated/services/JournalEndpointsService';
 import { JournalWriteEndpointsService } from '../../generated/services/JournalWriteEndpointsService';
+import type { BalancesDto } from '../../generated/models/BalancesDto';
 import type { BookingDetailDto } from '../../generated/models/BookingDetailDto';
 import type { BookingListItemDto } from '../../generated/models/BookingListItemDto';
 
@@ -140,7 +142,7 @@ export function refundLinesFromDetail(detail: BookingDetailDto): {
 @Component({
   selector: 'app-bookings-list',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, BalancesPanel],
   templateUrl: './bookings-list.html',
   styleUrl: './bookings-list.css',
 })
@@ -157,6 +159,12 @@ export class BookingsList implements OnInit {
   readonly loading = signal(false);
   readonly loadError = signal<ApiErrorInfo | null>(null);
   readonly success = signal<string | null>(null);
+  /**
+   * Aktuelle Salden (Zwischenstep 7.5, A1): Konten- und Pool-Salden
+   * über der Buchungsliste. Ergänzende Ansicht — ein Fehler beim Laden
+   * der Salden blockiert die Liste nicht (dann ohne Karte).
+   */
+  readonly balances = signal<BalancesDto | null>(null);
 
   readonly reversal = signal<ReversalDialogState | null>(null);
   readonly refund = signal<RefundDialogState | null>(null);
@@ -167,7 +175,7 @@ export class BookingsList implements OnInit {
 
   async ngOnInit(): Promise<void> {
     await this.catalog.load();
-    await this.load();
+    await Promise.all([this.load(), this.loadBalances()]);
   }
 
   async load(): Promise<void> {
@@ -192,12 +200,50 @@ export class BookingsList implements OnInit {
     }
   }
 
+  /** Salden laden (A1); Fehler bleiben lokal — die Liste funktioniert ohne. */
+  private async loadBalances(): Promise<void> {
+    try {
+      this.balances.set(await JournalEndpointsService.getBalances());
+    } catch {
+      this.balances.set(null);
+    }
+  }
+
+  /** Salden aktualisieren (nach Schreibaktionen, z. B. Storno). */
+  async refreshBalances(): Promise<void> {
+    await this.loadBalances();
+  }
+
   typeLabel(type: string): string {
     return TYPE_LABELS[type] ?? type;
   }
 
-  goCorrection(id: string): void {
-    void this.router.navigate(['/ausgaben', id, 'korrektur']);
+  /**
+   * Buchungen, für die der UI-Korrektur-Button sichtbar ist: nur Typen mit
+   * vorhandenem Korrekturformular — Ausgabe (ausgaben/:id/korrektur) und
+   * Anfangsbestand (anfangsbestaende/:id/korrektur). Die Domain definiert
+   * Korrektur zusätzlich für Einnahmen (CorrectionService), dafür existiert
+   * in der UI aber noch kein Einnahmenformular — bis dahin ändern
+   * Einnahmen über Storno + Neuausgabe (der Storno-Button bleibt für sie
+   * verfügbar). Gleiches gilt für alle übrigen Typen (Storno + Neu).
+   */
+  isCorrectable(item: BookingListItemDto): boolean {
+    return item.type === 'Expense' || item.type === 'OpeningBalance';
+  }
+
+  /**
+   * Typgerechte Korrektur-Route öffnen (7.5, offener Punkt): ein
+   * Anfangsbestand öffnet das Anfangsbestände-Korrekturformular
+   * (Verteilung auf Pools, in-place), Ausgaben das
+   * Ausgaben-Korrekturformular. isCorrectable() begrenzt den Button auf
+   * genau diese beiden Typen — die Ausgaben-Branch erreicht nur Ausgaben.
+   * Beide Pfade sind absolut (relative Navigation löst gegen die Wurzel
+   * auf und trifft die falsche Route).
+   */
+  goCorrection(item: BookingListItemDto): void {
+    const base =
+      item.type === 'OpeningBalance' ? '/anfangsbestaende' : '/ausgaben';
+    void this.router.navigate([base, item.id, 'korrektur']);
   }
 
   // ---------- Storno ----------
@@ -232,6 +278,7 @@ export class BookingsList implements OnInit {
       });
       this.reversal.set(null);
       await this.load();
+      await this.refreshBalances();
       // load() setzt success auf null — daher erst danach die Meldung setzen.
       this.success.set(`Storno zu ${formatDate(dialog.booking.date)} gebucht.`);
     } catch (error) {
@@ -342,6 +389,7 @@ export class BookingsList implements OnInit {
       });
       this.refund.set(null);
       await this.load();
+      await this.refreshBalances();
       // load() setzt success auf null — daher erst danach die Meldung setzen.
       this.success.set(`Erstattung zu ${formatDate(dialog.booking.date)} gebucht.`);
     } catch (error) {

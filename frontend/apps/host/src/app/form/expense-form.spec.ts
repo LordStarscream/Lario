@@ -923,3 +923,54 @@ function detailWithIrrelevantNote(): BookingDetailDto {
     refundedByPool: [],
   };
 }
+
+/**
+ * Review R7-5 (Note-Semantik, gleicher Befund wie Anfangsbestände):
+ * die Korrektur sendet null = „unverändert“ (der Server hält die
+ * Original-Notiz), '' = explizite Löschung, Text = neue Notiz.
+ */
+describe('ExpenseForm (Review R7-5: Note-Semantik in der Korrektur)', () => {
+  it('sendet eine geleerte Notiz als leeres String — explizite Löschung', async () => {
+    vi
+      .mocked(JournalEndpointsService.getBooking)
+      .mockResolvedValueOnce({ ...detailUntouchedSplit(), note: 'Original' });
+    vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mockResolvedValue(created);
+
+    const component = createForm('b-1');
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+    expect(component.note).toBe('Original');
+    component.note = '   ';
+
+    await component.submit();
+
+    const [, command] = vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mock.calls[0] as [string, CorrectionCommand];
+    expect(command.note).toBe('');
+  });
+
+  it('sendet eine unveränderte Notiz als null — der Server hält das Original', async () => {
+    vi
+      .mocked(JournalEndpointsService.getBooking)
+      .mockResolvedValueOnce({ ...detailUntouchedSplit(), note: 'Original' });
+    vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mockResolvedValue(created);
+
+    const component = createForm('b-1');
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+    expect(component.note).toBe('Original');
+    // Die Notiz bleibt wie vorgefüllt — es ändert sich nichts an ihr.
+    await component.submit();
+
+    const [, command] = vi
+      .mocked(JournalWriteEndpointsService.correctBooking)
+      .mock.calls[0] as [string, CorrectionCommand];
+    // Unverändert → null: der Server hält die Original-Notiz.
+    expect(command.note).toBeNull();
+  });
+});

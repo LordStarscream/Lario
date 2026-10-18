@@ -158,6 +158,12 @@ public sealed record TransferReassignmentCommand(
 /// Neuanlage aus der Kategorie-Voreinstellung materialisiert.
 /// Eine Steueränderung muss als explizite Kennzeichnung gesendet werden.
 /// </para>
+/// <para>
+/// Note-Semantik (Review R7-5): <c>Note = null</c> bedeutet „unverändert"
+/// (die Original-Notiz bleibt erhalten); der leere String ist eine
+/// explizite Löschung (die Notiz wird entfernt); jeder andere Wert ersetzt
+/// die Notiz.
+/// </para>
 /// </summary>
 public sealed record CorrectionCommand(
     string OperationId,

@@ -21,6 +21,14 @@
   </form>
 </section>
 
+<!-- Aktuelle Salden (Zwischenstep 7.5, Review R7-8): gemeinsames
+     Salden-Panel (abgeleitete Werte aus GET /api/v1/balances, inkl.
+     Differenz und unzugeordneter Anfangsbestände) — dasselbe Panel wie
+     auf der Anfangsbestände-Seite. -->
+@if (balances(); as b) {
+  <app-balances-panel [balances]="b" />
+}
+
 @if (loadError(); as err) {
   <div class="banner banner-error" role="alert">
     <strong>Fehler beim Laden:</strong> {{ err.message }}
@@ -77,14 +85,22 @@
           </td>
           <td class="num">{{ formatCents(item.totalAmount) }}</td>
           <td class="actions">
-            <button
-              type="button"
-              class="btn btn-small"
-              [disabled]="item.effectivelyReversed"
-              (click)="goCorrection(item.id)"
-            >
-              Korrektur
-            </button>
+            <!-- 7.5, offener Punkt: der Anfangsbestand öffnet das
+                 Anfangsbestände-Korrekturformular, keine Ausgabe-
+                 Korrektur. Typen ohne Korrekturformular in der UI
+                 (Einnahme, Transfer, Storno, …) haben keinen
+                 Korrektur-Button — dort ist der Weg Storno +
+                 Neuausgabe. -->
+            @if (isCorrectable(item)) {
+              <button
+                type="button"
+                class="btn btn-small"
+                [disabled]="item.effectivelyReversed"
+                (click)="goCorrection(item)"
+              >
+                Korrektur
+              </button>
+            }
             <button
               type="button"
               class="btn btn-small"

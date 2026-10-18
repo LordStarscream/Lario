@@ -61,6 +61,15 @@ public sealed class Booking
     /// </summary>
     public IReadOnlyList<AllocationDeltaEntry> ReversalDeltas { get; set; } = [];
 
+    /// <summary>
+    /// Konto des Anfangsbestands (nur <see cref="BookingType.OpeningBalance"/>,
+    /// sonst null): derselbe Wert wie das einzige Konto-Posting, zusätzlich
+    /// auf der Buchung persistiert, damit die Einmaligkeitsregel „pro Konto
+    /// genau ein Anfangsbestand“ (Zwischenstep 7.5) datenbankseitig über
+    /// einen eindeutigen Index atomar erzwungen werden kann.
+    /// </summary>
+    public string? OpeningBalanceAccountId { get; set; }
+
     /// <summary>Kontobewegungen der Buchung (signierte Cent-Beträge).</summary>
     public List<AccountPosting> AccountPostings { get; init; } = [];
 
@@ -163,7 +172,8 @@ public sealed class Booking
         bool? allocationExplicit = null,
         string? reversesBookingId = null,
         string? refundsExpenseId = null,
-        IReadOnlyList<AllocationDeltaEntry>? reversalDeltas = null)
+        IReadOnlyList<AllocationDeltaEntry>? reversalDeltas = null,
+        string? openingBalanceAccountId = null)
     {
         Id = id;
         Type = type;
@@ -180,6 +190,7 @@ public sealed class Booking
         ReversesBookingId = reversesBookingId;
         RefundsExpenseId = refundsExpenseId;
         ReversalDeltas = reversalDeltas ?? [];
+        OpeningBalanceAccountId = openingBalanceAccountId;
         ValidatePostings();
         ValidateTypeSpecific();
     }
@@ -331,6 +342,21 @@ public sealed class Booking
                         $"Anfangsbestand '{Id}' trägt Teilposten — Teilposten gehören zu Ausgaben.");
                 }
 
+                // Einmaligkeitsregel (Zwischenstep 7.5): das Konto wird
+                // zusätzlich auf der Buchung gesichert (partieller
+                // eindeutiger Index) — es muss mit dem einzigen
+                // Konto-Posting übereinstimmen.
+                var obAccount = AccountPostings.Count == 1
+                    ? AccountPostings[0].AccountId
+                    : null;
+                if (OpeningBalanceAccountId is null || OpeningBalanceAccountId != obAccount)
+                {
+                    throw new LarioDomainException(
+                        $"Anfangsbestand '{Id}': das gesicherte Anfangsbestandskonto " +
+                        "(OpeningBalanceAccountId) muss mit dem einzigen Konto-Posting " +
+                        "übereinstimmen (Einmaligkeitsregel je Konto, Zwischenstep 7.5).");
+                }
+
                 break;
 
             case BookingType.AccountTransfer:
@@ -480,6 +506,13 @@ public sealed class Booking
                 // Schritten (z. B. Reservierung/Closeout);
                 // typspezifische Invarianten werden dort ergänzt.
                 break;
+        }
+
+        if (Type != BookingType.OpeningBalance && OpeningBalanceAccountId is not null)
+        {
+            throw new LarioDomainException(
+                $"Buchung '{Id}' (Buchungstyp {Type}): das gesicherte Anfangsbestandskonto " +
+                "ist nur auf Anfangsbeständen zulässig.");
         }
     }
 

@@ -19,6 +19,14 @@ export class CatalogService {
   readonly allTaxCategories = signal<TaxCategoryDto[]>([]);
   readonly loading = signal(false);
 
+  /**
+   * Review R7-3 (Einrichtungsvorgang): true, wenn die Stammdaten
+   * mindestens einmal erfolgreich geladen wurden — Zustands-Anzeigen
+   * (z. B. „alle Konten eingerichtet") dürfen nur darauf aufbauen, wenn
+   * sowohl Katalog als auch Listen geladen sind.
+   */
+  readonly loaded = signal(false);
+
   readonly accounts = computed(() =>
     this.allAccounts().filter((a) => a.status === 'active'),
   );
@@ -32,10 +40,8 @@ export class CatalogService {
     this.allTaxCategories().filter((t) => t.status === 'active'),
   );
 
-  private loaded = false;
-
   async load(): Promise<void> {
-    if (this.loaded || this.loading()) {
+    if (this.loaded() || this.loading()) {
       return;
     }
     this.loading.set(true);
@@ -51,7 +57,7 @@ export class CatalogService {
       this.allPools.set(pools);
       this.allCategories.set(categories);
       this.allTaxCategories.set(taxCategories);
-      this.loaded = true;
+      this.loaded.set(true);
     } finally {
       this.loading.set(false);
     }
@@ -59,7 +65,7 @@ export class CatalogService {
 
   /** Zwangsfrisch nach Stammdaten-Änderungen. */
   async refresh(): Promise<void> {
-    this.loaded = false;
+    this.loaded.set(false);
     this.loading.set(false);
     await this.load();
   }

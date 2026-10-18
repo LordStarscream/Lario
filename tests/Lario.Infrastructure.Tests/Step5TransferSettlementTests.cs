@@ -303,13 +303,14 @@ public class TransferPersistenceTests
         await admin.CreatePoolAsync(Step5Scenario.Flex, "Flex");
         await admin.CreatePoolAsync(Step5Scenario.PoolFreizeit, "Freizeit");
 
+        // Zwischenstep 7.5: pro Konto ist genau ein Anfangsbestand zulässig;
+        // die zwei positiven Zellen (Haupt, Flex) und (Haupt, Freizeit)
+        // entstehen daher über die Pool-Zeilen eines Anfangsbestands.
         var opening = db.Resolve<OpeningBalanceService>();
         await opening.CreateAsync(new OpeningBalanceSpec(
             "init-a", new DateOnly(2026, 1, 1), Step5Scenario.Haupt, new Money(100_000),
-            [new PoolAllocation(Step5Scenario.Flex, new Money(60_000))]));
-        await opening.CreateAsync(new OpeningBalanceSpec(
-            "init-b", new DateOnly(2026, 1, 1), Step5Scenario.Haupt, new Money(40_000),
-            [new PoolAllocation(Step5Scenario.PoolFreizeit, new Money(40_000))]));
+            [new PoolAllocation(Step5Scenario.Flex, new Money(60_000)),
+             new PoolAllocation(Step5Scenario.PoolFreizeit, new Money(40_000))]));
 
         await Assert.ThrowsAsync<LarioDomainException>(
             () => db.Resolve<TransferService>().CreateAsync(

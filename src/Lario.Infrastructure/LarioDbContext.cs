@@ -145,6 +145,20 @@ public class LarioDbContext : DbContext
             // Erstattungs-Referenz (nur Refund): stabile Id der
             // Ursprungs-Ausgabe (ebenfalls Referenz ohne FK).
             e.Property(x => x.RefundsExpenseId).HasMaxLength(128);
+            // Gesichertes Anfangsbestandskonto (nur OpeningBalance, sonst
+            // null): derselbe Wert wie das einzige Konto-Posting, zusätzlich
+            // persistiert, damit die Einmaligkeitsregel „pro Konto genau ein
+            // Anfangsbestand“ (Zwischenstep 7.5) datenbankseitig atomar
+            // erzwungen werden kann. Partielles eindeutiges Index über
+            // SQLite-Filter: die Spalte ist für alle anderen Buchungstypen
+            // NULL, und NULL-Werte sind in SQLite-Indizes nicht eindeutig
+            // (nur NULL == NULL wird ignoriert) — die Regel greift also
+            // nur für Anfangsbestände.
+            e.Property(x => x.OpeningBalanceAccountId).HasMaxLength(128);
+            e.HasIndex(x => x.OpeningBalanceAccountId)
+                .IsUnique()
+                .HasFilter("OpeningBalanceAccountId IS NOT NULL")
+                .HasDatabaseName("UX_Bookings_OpeningBalanceAccountId");
             // Die negierten Deltas liegen als eigene Zeilen in
             // ReversalDeltas; die Domain-Liste (record) mappen weder EF
             // noch das Modell — das Repository hält sie synchron.

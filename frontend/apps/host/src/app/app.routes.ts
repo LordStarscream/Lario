@@ -18,6 +18,7 @@ export const routes: Routes = [
       { path: 'ausgaben/neu', component: ExpenseForm },
       { path: 'ausgaben/:id/korrektur', component: ExpenseForm },
       { path: 'anfangsbestaende', component: OpeningBalance },
+      { path: 'anfangsbestaende/:id/korrektur', component: OpeningBalance },
       { path: 'stammdaten', component: MasterData },
     ],
   },

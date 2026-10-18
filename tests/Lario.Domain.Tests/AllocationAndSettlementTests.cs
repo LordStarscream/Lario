@@ -38,7 +38,8 @@ public class AllocationAndSettlementTests
             Stichtag,
             null,
             [new AccountPosting { AccountId = accountId, Amount = amount }],
-            [new PoolPosting { PoolId = poolId, Amount = amount }]);
+            [new PoolPosting { PoolId = poolId, Amount = amount }],
+            openingBalanceAccountId: accountId);
 
     /// <summary>
     /// Gemischter Einkauf 85,00 € vom Hauptkonto (Referenzfall 3,
@@ -215,7 +216,8 @@ public class AllocationAndSettlementTests
             Stichtag,
             null,
             [new AccountPosting { AccountId = "acc-haupt", Amount = Money.FromCents(100_000) }],
-            [new PoolPosting { PoolId = "pool-flex", Amount = Money.FromCents(80_000) }]);
+            [new PoolPosting { PoolId = "pool-flex", Amount = Money.FromCents(80_000) }],
+            openingBalanceAccountId: "acc-haupt");
         var journal = new BookingJournal([booking]);
 
         Assert.Equal(Money.FromCents(20_000), journal.OpeningBalanceUnallocated("init-partial"));
