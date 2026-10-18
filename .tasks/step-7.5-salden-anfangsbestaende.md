@@ -1,6 +1,6 @@
 # Zwischenstep 7.5 – Salden-Übersicht und Anfangsbestände
 
-**Status:** aktiv
+**Status:** abgeschlossen und gemerged (18. Okt. 2026) — PR #11, Merge-Commit `52e07a4`
 **Branch:** `step/7.5-salden-anfangsbestaende`
 **Voraussetzung:** Schritt 7 (T1–T6 + Reviews R1–R6, merged auf `main` als `63cfe45`, PR #10)
 **Beauftragt vom Nutzer:** 17. Okt. 2026 (manuelle T8-Abnahme pausiert)
@@ -70,7 +70,7 @@
 
 ## Status
 
-**Abgeschlossen (17. Okt. 2026), alle Abnahmekriterien A1–A4 umgesetzt.**
+**Abgeschlossen (17. Okt. 2026), alle Abnahmekriterien A1–A4 umgesetzt.** **Review-Runden 17./18. Okt. 2026 abgeschlossen (alle Befunde behoben) und PR #11 vom Nutzer gemerged (18. Okt. 2026, 13:48 UTC, Merge-Commit `52e07a4`).**
 
 ### Umsetzung
 
@@ -373,3 +373,8 @@ Branch `step/7.5-salden-anfangsbestaende` auf Basis `63cfe45` (Merge PR #10). Ke
 ist die Erweiterung von `CorrectionSpec` sauber genug getrennt? (3) `parseEuroToCents`-Supersatz
 inkl. „1.234“ → 1234 € (deutsche Tausenderkonvention) akzeptabel? (4) UI: Korrektur-Route als
 eigene Form-Variante derselben Komponente (Muster `expense-form.ts`).
+
+**Ergebnis:** Alle drei Review-Runden (17./18. Okt. 2026) mit allen Befunden (P1 Backfill vor
+Unique-Index, P2 Einrichtungsablauf, Notizlöschung, unverteilter Rest, typgerechte Korrektur,
+Refreshfehler) behoben; PR #11 vom Nutzer gemerged (18. Okt. 2026, Merge-Commit `52e07a4`).
+Keine offenen Reste — Aufgabe abgeschlossen.
