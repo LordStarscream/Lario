@@ -335,6 +335,36 @@ Nachladen — Auswahl und All-Configured bleiben korrekt; Einnahme
 mobile 23/23, Lint/Build grün. E2E-Smoke **32/32** (neu: Einnahme per
 API gebucht, Zeile zeigt Storno ohne Korrektur-Button).
 
+### PR-Review Restfehler 7.5, Fortsetzung (18. Okt. 2026, Commit `b5319c8`)
+
+Zweiter Treffer auf dasselbe Szenario: `newlySavedAccountIds` schützte
+nur das gerade gespeicherte Konto — `loadEntries()` leerte bei
+Ladefehler aber weiterhin die zuletzt geladene Eintragsliste. Konten,
+die „vorher“ bereits eingerichtet waren (z. B. Giro), fielen aus
+`entries` heraus und waren dadurch wieder in der Neuanlage-Auswahl
+wählbar; die All-Configured-Anzeige verschwand ebenfalls. Doppelanlage
+schlägt erst serverseitig mit 409 fehl — unsauber, wie im Review
+beanstandet.
+
+Fix (Frontend, keine API-Änderung):
+
+1. `loadEntries()`: `catch` setzt `entries` nicht mehr auf `[]`; die
+   letzte erfolgreiche Liste bleibt, zusätzlich mit dem Fehlerbanner.
+2. Template `opening-balance.html`: Fehlerbanner und Tabelle sind
+   entkoppelt — die zuletzt geladene Liste bleibt unter dem Banner
+   sichtbar („Zuletzt geladene Einträge werden weiterhin angezeigt“);
+   Lade-Hinweis nur ohne Einträge, Leerzustands-Hinweis nur ohne
+   Fehler.
+
+Tests: host **94/94** (neu: 2 Regressionstests — behaltene Einträge
+schützen Auswahl/All-Configured; Liste bleibt unter dem Fehlerbanner
+sichtbar. Beide Tests laufen gegen den alten Code rot, verifiziert).
+mobile 23/23, Lint/Build grün. .NET **214/158/104** (nicht betroffen,
+Sicherheitsnetz). E2E-Smoke **35/35** (neu: fehlgeschlagener Refresh
+per CDP-Fetch-Blocking — vorhandener Giro-Eintrag bleibt sichtbar,
+neu gespeichertes Konto bleibt aus der Auswahl, POST ist committet,
+Reload stellt den echten Stand wieder her).
+
 ### Übergabe (externes Review)
 
 Branch `step/7.5-salden-anfangsbestaende` auf Basis `63cfe45` (Merge PR #10). Kernfragen:
