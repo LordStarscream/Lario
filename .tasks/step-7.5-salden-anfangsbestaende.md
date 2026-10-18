@@ -265,6 +265,47 @@ vollständige E2E-Smoke-Test (27/27, oben) prüft das Panel auf beiden
 Seiten gegen den echten Host, inkl. des Übergangs „vollständige
 Verteilung → Unzugeordneter-Sektion verschwindet“.
 
+### Offener Punkt 7.5 — bleiben auf der Seite / typgerechte Korrektur (18. Okt. 2026)
+
+Nutzer-Feedback (18. Okt. 2026): (1) Nach dem Speichern eines
+Anfangsbestands soll der Nutzer auf derselben Seite bleiben und das
+nächste Konto erfassen — nicht zur Buchungsliste zurückgeleitet werden.
+(2) Ein Anfangsbestand in der Buchungsliste soll nicht die
+Ausgaben-Korrektur öffnen, sondern das Anfangsbestände-Korrekturformular.
+
+- **`opening-balance.ts`**: nach erfolgreichem Speichern (Neuanlage)
+  keine Navigation — Erfolgs-Banner (Kontenname, „nächstes Konto
+erfassen“), Formular zurückgesetzt (Konto, Betrag, Verteilung, Notiz);
+der Stichtag bleibt gesetzt (Einrichtungsvorgang: alle Konten teilen
+  üblicherweise denselben Stichtag; weiterhin pro Konto änderbar).
+  Eintragsliste
+  und Salden-Panel werden neu geladen — das eingerichtete Konto fällt
+  automatisch aus der Auswahl (R7-3). Das Banner erscheint über dem
+  Formular UND über der All-Configured-Anzeige (letztes Konto).
+  **Bugfix im Zuge:** `busy` wurde auf dem Erfolgs-Pfad nie freigeschaltet
+  (vorher unsichtbar, weil die Navigation die Komponente zerstörte) —
+  blockierte jetzt den zweiten Eintrag auf derselben Seite.
+- **`bookings-list.ts/html`**: `goCorrection(item)` routet typabhängig —
+  `OpeningBalance` → `/anfangsbestaende/:id/korrektur` (Korrektur mit
+  Verteilung auf Pools, in-place), `Expense`/`Income` →
+  `/ausgaben/:id/korrektur`. `isCorrectable()`: nur diese drei Typen
+  zeigen den Korrektur-Button (Domain-Regel, `CorrectionService` — andere
+  Typen ändern über Storno + Neuausgabe; der Storno-Button bleibt für
+  sie verfügbar). Abweichung vom alten Verhalten: der Button war bisher
+  für alle Typen sichtbar und führte für nicht-korrigierbare Typen in
+eine tote Ecke (Ausgaben-Formular ohne passende Daten).
+- **Tests:** host **90/90** (neu: bleiben-auf-Seite + Formular-Reset,
+  Erfolgsmeldung wird beim nächsten Versuch gelöscht; typgerechte
+  Korrektur-Route + `isCorrectable` — neue
+  `bookings-list-correction.spec.ts`), mobile 23/23, Lint/Build grün.
+- **E2E-Smoke** (18. Okt. 2026, `/tmp/lario-e2e/smoke.js`, headless
+  Chromium per CDP gegen echten Host + frische SQLite-DB): **30/30**
+  (neu: Anfangsbestand-Zeile in der Buchungsliste öffnet das
+  Anfangsbestände-Korrekturformular mit Voreingaben; Neuanlage des
+  zweiten Kontos per UI-Formular bleibt auf der Seite — Erfolgsmeldung
+  + All-Configured, keine Navigation; API-Verifikation der Neuanlage).
+  Commit `180ed28`, gepusht (PR #11 aktualisiert).
+
 ### Übergabe (externes Review)
 
 Branch `step/7.5-salden-anfangsbestaende` auf Basis `63cfe45` (Merge PR #10). Kernfragen:
