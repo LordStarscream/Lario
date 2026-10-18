@@ -12,6 +12,7 @@ import type { ApiResult } from '../../generated/core/ApiResult';
 import { CatalogService } from '../../api/catalogs';
 import { JournalEndpointsService } from '../../generated/services/JournalEndpointsService';
 import { JournalWriteEndpointsService } from '../../generated/services/JournalWriteEndpointsService';
+import type { BalancesDto } from '../../generated/models/BalancesDto';
 import type { BookingCreatedDto } from '../../generated/models/BookingCreatedDto';
 import type { OpeningBalanceListItemDto } from '../../generated/models/OpeningBalanceListItemDto';
 
@@ -38,6 +39,13 @@ beforeEach(() => {
   vi
     .spyOn(JournalEndpointsService, 'listOpeningBalances')
     .mockRejectedValue(new Error('Unerwarteter API-Call: listOpeningBalances'));
+  // Review R7-8: der Konstruktor lädt in beiden Modus die Salden für
+  // das gemeinsame Panel; Tests setzen das erwartete Verhalten.
+  vi
+    .spyOn(JournalEndpointsService, 'getBalances')
+    .mockRejectedValue(
+      new Error('Unerwarteter API-Call: JournalEndpointsService.getBalances'),
+    );
 });
 
 afterEach(() => {
@@ -566,5 +574,82 @@ describe('OpeningBalance — Einrichtungsvorgang (Review R7-3)', () => {
     await waitLoaded(fixture);
 
     expect(fixture.componentInstance.allConfigured()).toBe(false);
+  });
+});
+
+/**
+ * Review R7-8: Salden-Panel auf der Anfangsbestände-Seite — dasselbe
+ * gemeinsame Panel wie in der Buchungsliste, damit bei der Verteilung
+ * eines Anfangsbestands die Kontostände und Poolbestände direkt
+ * ablesbar sind. Daten ausschließlich aus dem abgeleiteten
+ * GET /api/v1/balances; ein Ladefehler blockiert das Formular nicht.
+ */
+describe('OpeningBalance — Salden-Panel (Review R7-8)', () => {
+  function panelBalances(): BalancesDto {
+    return {
+      accounts: [
+        { accountId: 'acc-1', name: 'Giro', status: 'active', balance: 1200 },
+      ],
+      pools: [{ poolId: 'pool-1', name: 'Flex', status: 'active', balance: 500 }],
+      totalAccountBalance: 1200,
+      totalPoolBalance: 500,
+      totalIncome: 0,
+      accountPoolGap: 700,
+      unallocatedOpeningBalances: [
+        {
+          openingBalanceId: 'ob-1',
+          date: '2026-01-01',
+          accountId: 'acc-1',
+          accountName: 'Giro',
+          unallocated: 700,
+        },
+      ],
+    };
+  }
+
+  it('lädt in der Erstellungsansicht die Salden für das Panel', async () => {
+    vi.mocked(JournalEndpointsService.listOpeningBalances).mockResolvedValue([]);
+    vi.mocked(JournalEndpointsService.getBalances).mockResolvedValue(
+      panelBalances(),
+    );
+
+    const fixture = createFixture();
+    await vi.waitFor(
+      () => expect(fixture.componentInstance.balances()).not.toBeNull(),
+    );
+
+    const balances = fixture.componentInstance.balances()!;
+    expect(Number(balances.totalAccountBalance)).toBe(1200);
+    expect(Number(balances.accountPoolGap)).toBe(700);
+    expect(balances.unallocatedOpeningBalances).toHaveLength(1);
+  });
+
+  it('lädt im Korrekturmodus die Salden für das Panel', async () => {
+    vi.mocked(JournalEndpointsService.listOpeningBalances).mockResolvedValue([
+      entry(),
+    ]);
+    vi.mocked(JournalEndpointsService.getBalances).mockResolvedValue(
+      panelBalances(),
+    );
+
+    const fixture = createFixture('ob-1');
+    await waitLoaded(fixture);
+
+    expect(fixture.componentInstance.isCorrection).toBe(true);
+    expect(fixture.componentInstance.balances()).not.toBeNull();
+  });
+
+  it('blockiert ein Salden-Ladefehler das Formular nicht (ohne Panel)', async () => {
+    // getBalances lehnt ab (Standard aus dem äußeren beforeEach).
+    vi.mocked(JournalEndpointsService.listOpeningBalances).mockResolvedValue([]);
+
+    const fixture = createFixture();
+    const component = fixture.componentInstance;
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+    expect(component.balances()).toBeNull();
+    // Das Formular bleibt unabhängig nutzbar:
+    fillValidForm(component);
+    expect(component.issue()).toBeNull();
   });
 });

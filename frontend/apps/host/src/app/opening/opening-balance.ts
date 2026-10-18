@@ -20,8 +20,10 @@ import {
   parseEuroToCents,
   todayIso,
 } from '../../api/money';
+import { BalancesPanel } from '../shared/balances-panel/balances-panel';
 import { JournalEndpointsService } from '../../generated/services/JournalEndpointsService';
 import { JournalWriteEndpointsService } from '../../generated/services/JournalWriteEndpointsService';
+import type { BalancesDto } from '../../generated/models/BalancesDto';
 import type { OpeningBalanceListItemDto } from '../../generated/models/OpeningBalanceListItemDto';
 import type { PoolAllocationCommand } from '../../generated/models/PoolAllocationCommand';
 
@@ -44,7 +46,7 @@ interface DistributionRow {
 @Component({
   selector: 'app-opening-balance',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, BalancesPanel],
   templateUrl: './opening-balance.html',
   styleUrl: './opening-balance.css',
 })
@@ -102,6 +104,24 @@ export class OpeningBalance {
   readonly entries = signal<OpeningBalanceListItemDto[]>([]);
 
   /**
+   * Aktuelle Salden (Review R7-8): dasselbe gemeinsame Salden-Panel wie
+   * in der Buchungsliste — bei der Verteilung eines Anfangsbestands
+   * sind die Kontostände und Poolbestände direkt ablesbar. Daten
+   * ausschließlich aus dem abgeleiteten GET /api/v1/balances.
+   * Ergänzend: ein Ladefehler blockiert das Formular nicht (ohne Panel).
+   */
+  readonly balances = signal<BalancesDto | null>(null);
+
+  /** Salden laden (R7-8); Fehler bleiben lokal und unsichtbar. */
+  private async loadBalances(): Promise<void> {
+    try {
+      this.balances.set(await JournalEndpointsService.getBalances());
+    } catch {
+      this.balances.set(null);
+    }
+  }
+
+  /**
    * Review R7-3 (Einrichtungsvorgang): Konten, die noch keinen
    * Anfangsbestand tragen — im Neuanlage-Formular sind bereits
    * eingerichtete Konte aus der Auswahl herausgefiltert.
@@ -148,6 +168,8 @@ export class OpeningBalance {
       void this.catalog.load();
       void this.loadEntries();
     }
+    // Salden-Panel (R7-8): in beiden Modus verfügbar.
+    void this.loadBalances();
   }
 
   // ---------- Liste (A3) ----------

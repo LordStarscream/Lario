@@ -21,84 +21,12 @@
   </form>
 </section>
 
+<!-- Aktuelle Salden (Zwischenstep 7.5, Review R7-8): gemeinsames
+     Salden-Panel (abgeleitete Werte aus GET /api/v1/balances, inkl.
+     Differenz und unzugeordneter Anfangsbestände) — dasselbe Panel wie
+     auf der Anfangsbestände-Seite. -->
 @if (balances(); as b) {
-  <section class="card balances-card" aria-label="Aktuelle Salden">
-    <button
-      type="button"
-      class="balances-toggle"
-      [attr.aria-expanded]="balancesOpen()"
-      (click)="balancesOpen.set(!balancesOpen())"
-    >
-      <span class="balances-toggle-title">Aktuelle Salden</span>
-      <span class="balances-total">
-        Konten: {{ formatCents(b.totalAccountBalance) }}
-        · Pools: {{ formatCents(b.totalPoolBalance) }}
-      </span>
-      <span class="balances-caret" aria-hidden="true">{{ balancesOpen() ? '▾' : '▸' }}</span>
-    </button>
-
-    @if (balancesOpen()) {
-      <div class="balances-grid">
-        <div class="balances-column">
-          <h3>Konten</h3>
-          <table class="table table-small">
-            <thead>
-              <tr>
-                <th>Konto</th>
-                <th class="num">Saldo</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (acc of b.accounts; track acc.accountId) {
-                <tr>
-                  <td>
-                    {{ acc.name }}
-                    @if (acc.status !== 'active') {
-                      <span class="badge badge-muted">{{ acc.status }}</span>
-                    }
-                  </td>
-                  <td class="num">{{ formatCents(acc.balance) }}</td>
-                </tr>
-              }
-              <tr class="balances-total-row">
-                <td>Gesamt</td>
-                <td class="num">{{ formatCents(b.totalAccountBalance) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="balances-column">
-          <h3>Pools</h3>
-          <table class="table table-small">
-            <thead>
-              <tr>
-                <th>Pool</th>
-                <th class="num">Saldo</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (pool of b.pools; track pool.poolId) {
-                <tr>
-                  <td>
-                    {{ pool.name }}
-                    @if (pool.status !== 'active') {
-                      <span class="badge badge-muted">{{ pool.status }}</span>
-                    }
-                  </td>
-                  <td class="num">{{ formatCents(pool.balance) }}</td>
-                </tr>
-              }
-              <tr class="balances-total-row">
-                <td>Gesamt</td>
-                <td class="num">{{ formatCents(b.totalPoolBalance) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    }
-  </section>
+  <app-balances-panel [balances]="b" />
 }
 
 @if (loadError(); as err) {

@@ -1,0 +1,108 @@
+/* Gemeinsames Salden-Panel (Review R7-8): Stile waren zuvor lokal in
+   bookings-list.css; das Panel wird jetzt von der Buchungsliste und der
+   Anfangsbestände-Seite geteilt und ist damit eigenständig. */
+
+.balances-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  background: var(--surface);
+}
+
+.balances-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.75rem;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.balances-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.balances-toggle-title {
+  font-weight: 600;
+}
+
+.balances-total {
+  flex: 1;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.balances-caret {
+  color: var(--muted);
+}
+
+.balances-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 48rem) {
+  .balances-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.balances-column h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Engere Tabellen im Panel (Analogie zu .table-small, lokal gehalten). */
+.balances-card .table th {
+  font-size: 0.78rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.balances-card .table td {
+  padding: 0.35rem 0.5rem;
+}
+
+.balances-total-row td {
+  font-weight: 600;
+  border-top: 1px solid var(--line);
+}
+
+/* R7-9: Sektion für den unzugeordneten Anfangsbestand-Rest. */
+.balances-unallocated {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.balances-unallocated h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.balances-none {
+  color: var(--muted);
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* Lokale num-Konvention (Betragsspalten rechtsbündig, tabellarisch). */
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

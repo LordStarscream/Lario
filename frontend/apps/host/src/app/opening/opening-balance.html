@@ -23,6 +23,14 @@
   }
 </p>
 
+<!-- Review R7-8: dasselbe gemeinsame Salden-Panel wie in der
+     Buchungsliste — bei der Verteilung eines Anfangsbestands sind die
+     Kontostände und Poolbestände direkt ablesbar (abgeleitete Werte
+     aus GET /api/v1/balances). -->
+@if (balances(); as b) {
+  <app-balances-panel [balances]="b" />
+}
+
 @if (isCorrection) {
   @if (loading()) {
     <p class="empty">Lade Anfangsbestand …</p>

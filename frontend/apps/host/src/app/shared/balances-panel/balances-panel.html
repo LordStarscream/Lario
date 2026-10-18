@@ -1,0 +1,111 @@
+<section class="card balances-card" aria-label="Aktuelle Salden">
+  <button
+    type="button"
+    class="balances-toggle"
+    [attr.aria-expanded]="open()"
+    (click)="toggle()"
+  >
+    <span class="balances-toggle-title">Aktuelle Salden</span>
+    <span class="balances-total">
+      Konten: {{ formatCents(balances().totalAccountBalance) }}
+      · Pools: {{ formatCents(balances().totalPoolBalance) }}
+      · Differenz: {{ formatCents(balances().accountPoolGap) }}
+    </span>
+    <span class="balances-caret" aria-hidden="true">{{ open() ? '▾' : '▸' }}</span>
+  </button>
+
+  @if (open()) {
+    <div class="balances-grid">
+      <div class="balances-column">
+        <h3>Konten</h3>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Konto</th>
+              <th class="num">Saldo</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (acc of balances().accounts; track acc.accountId) {
+              <tr>
+                <td>
+                  {{ acc.name }}
+                  @if (acc.status !== 'active') {
+                    <span class="badge badge-muted">{{ acc.status }}</span>
+                  }
+                </td>
+                <td class="num">{{ formatCents(acc.balance) }}</td>
+              </tr>
+            }
+            <tr class="balances-total-row">
+              <td>Gesamt</td>
+              <td class="num">{{ formatCents(balances().totalAccountBalance) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="balances-column">
+        <h3>Pools</h3>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Pool</th>
+              <th class="num">Saldo</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (pool of balances().pools; track pool.poolId) {
+              <tr>
+                <td>
+                  {{ pool.name }}
+                  @if (pool.status !== 'active') {
+                    <span class="badge badge-muted">{{ pool.status }}</span>
+                  }
+                </td>
+                <td class="num">{{ formatCents(pool.balance) }}</td>
+              </tr>
+            }
+            <tr class="balances-total-row">
+              <td>Gesamt</td>
+              <td class="num">{{ formatCents(balances().totalPoolBalance) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- R7-9: unzugeordneter Rest (Kontostände − Poolsummen) sichtbar. -->
+    <div class="balances-unallocated">
+      <h3>Unzugeordnete Anfangsbestände</h3>
+      @if (balances().unallocatedOpeningBalances.length === 0) {
+        <p class="balances-none">
+          Keine — alle Anfangsbestände sind vollständig auf Pools verteilt.
+        </p>
+      } @else {
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Stichtag</th>
+              <th>Konto</th>
+              <th class="num">Unzugeordnet</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (entry of balances().unallocatedOpeningBalances; track entry.openingBalanceId) {
+              <tr>
+                <td>{{ formatDate(entry.date) }}</td>
+                <td>{{ entry.accountName ?? entry.accountId }}</td>
+                <td class="num">{{ formatCents(entry.unallocated) }}</td>
+              </tr>
+            }
+            <tr class="balances-total-row">
+              <td colspan="2">Summe</td>
+              <td class="num">{{ formatCents(unallocatedTotal()) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      }
+    </div>
+  }
+</section>

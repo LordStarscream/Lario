@@ -132,65 +132,9 @@
   font-size: 0.9rem;
 }
 
-.balances-card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-}
-
-.balances-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.balances-toggle-title {
-  font-weight: 600;
-}
-
-.balances-total {
-  flex: 1;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.balances-caret {
-  color: var(--muted);
-}
-
-.balances-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
-  margin-top: 0.75rem;
-}
-
-@media (max-width: 48rem) {
-  .balances-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.balances-column h3 {
-  margin: 0 0 0.4rem;
-  font-size: 0.95rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.balances-total-row td {
-  font-weight: 600;
-  border-top: 1px solid var(--line);
-}
+/* Salden-Panel-Styles (Review R7-8) liegen jetzt in
+   shared/balances-panel/balances-panel.css — das Panel wird von der
+   Buchungsliste und der Anfangsbestände-Seite geteilt. */
 
 .dialog-actions {
   display: flex;

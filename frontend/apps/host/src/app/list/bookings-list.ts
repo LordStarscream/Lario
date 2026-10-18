@@ -5,6 +5,7 @@ import type { ApiErrorInfo } from '../../api/api-error';
 import { ApiErrorHandler } from '../../api/error-handler';
 import { CatalogService } from '../../api/catalogs';
 import { formatCents, formatDate, parseEuroToCents, todayIso } from '../../api/money';
+import { BalancesPanel } from '../shared/balances-panel/balances-panel';
 import { JournalEndpointsService } from '../../generated/services/JournalEndpointsService';
 import { JournalWriteEndpointsService } from '../../generated/services/JournalWriteEndpointsService';
 import type { BalancesDto } from '../../generated/models/BalancesDto';
@@ -141,7 +142,7 @@ export function refundLinesFromDetail(detail: BookingDetailDto): {
 @Component({
   selector: 'app-bookings-list',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, BalancesPanel],
   templateUrl: './bookings-list.html',
   styleUrl: './bookings-list.css',
 })
@@ -164,7 +165,6 @@ export class BookingsList implements OnInit {
    * der Salden blockiert die Liste nicht (dann ohne Karte).
    */
   readonly balances = signal<BalancesDto | null>(null);
-  readonly balancesOpen = signal(true);
 
   readonly reversal = signal<ReversalDialogState | null>(null);
   readonly refund = signal<RefundDialogState | null>(null);
