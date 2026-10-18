@@ -306,6 +306,35 @@ eine tote Ecke (Ausgaben-Formular ohne passende Daten).
   + All-Configured, keine Navigation; API-Verifikation der Neuanlage).
   Commit `180ed28`, gepusht (PR #11 aktualisiert).
 
+### PR-Review Restfehler 7.5 (18. Okt. 2026, Commit `4cfe58f`)
+
+Zwei Restfehler aus dem PR-Review:
+
+1. **Scheitert das Nachladen nach erfolgreichem Speichern, werden bereits
+   eingerichtete Konten wieder auswählbar.** Ursache: `loadEntries()`
+   setzt bei Ladefehler die Eintragsliste auf `[]`; `availableAccounts`
+   (computed über `entries`) und `allConfigured` sahen dadurch alle Konten
+   wieder frei. Fix: `newlySavedAccountIds` (Signal) — nach
+   erfolgreichem Speichern wird das eingerichtete Konto dort
+   aufgezeichnet und in die Neuanlage-Auswahl sowie in die
+   All-Configured-Anzeige („mindestens ein Eintrag existiert“) einbezogen.
+   Ein erfolgreiches Laden der Liste löscht die Aufzeichnung, weil die
+   Liste dann den tatsächlichen Stand zeigt.
+2. **Einnahmen erhalten einen Korrekturbutton, der ins dafür ungeeignete
+   Ausgabenformular führt.** In der UI existiert kein
+   Einnahmenformular (Routen: nur `ausgaben/…` und
+   `anfangsbestaende/…`) — die Domain definiert Korrektur zwar auch für
+   Einnahmen, aber die UI bietet sie nicht an. Fix: `isCorrectable` nur
+   noch für Ausgabe und Anfangsbestand; Einnahmen ändern über Storno +
+   Neuausgabe (Storno-Button bleibt). `goCorrection` erreicht die
+   Ausgaben-Route dadurch nur noch für Ausgaben.
+
+Tests: host **92/92** (neu: 2 Regressionstests für das fehlgeschlagene
+Nachladen — Auswahl und All-Configured bleiben korrekt; Einnahme
+`isCorrectable` = false, goCorrection nur Ausgabe/Anfangsbestand),
+mobile 23/23, Lint/Build grün. E2E-Smoke **32/32** (neu: Einnahme per
+API gebucht, Zeile zeigt Storno ohne Korrektur-Button).
+
 ### Übergabe (externes Review)
 
 Branch `step/7.5-salden-anfangsbestaende` auf Basis `63cfe45` (Merge PR #10). Kernfragen:
