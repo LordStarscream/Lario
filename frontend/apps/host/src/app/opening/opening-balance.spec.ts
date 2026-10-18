@@ -802,4 +802,68 @@ describe('OpeningBalance — bleibt nach Speichern auf der Seite (offener Punkt 
     // dass das einzige Konto eingerichtet ist.
     expect(component.allConfigured()).toBe(true);
   });
+
+  it('behält bei fehlgeschlagenem Nachladen auch bereits vorhandene Einträge (7.5 Restfehler)', async () => {
+    vi.mocked(JournalWriteEndpointsService.createOpeningBalance).mockResolvedValue(
+      created('ob-2'),
+    );
+    // Erstes Laden (Konstruktor): acc-1 ist bereits eingerichtet.
+    // Das Nachladen nach dem Speichern von acc-2 schlägt fehl.
+    vi.mocked(JournalEndpointsService.listOpeningBalances)
+      .mockResolvedValueOnce([entry()])
+      .mockRejectedValueOnce(new Error('Netzwerk weg'));
+    vi.mocked(JournalEndpointsService.getBalances).mockResolvedValue(
+      emptyBalances(),
+    );
+
+    const fixture = createFixture(null, [acc1, acc2], true);
+    const component = fixture.componentInstance;
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+    expect(component.entries()).toHaveLength(1);
+
+    // Zweites Konto (Bar) erfassen.
+    fillValidForm(component);
+    component.accountId = 'acc-2';
+    await component.submit();
+    await vi.waitFor(() => expect(component.listError()).not.toBeNull());
+
+    // Vorher: der Refresh-Fehler leerte entries — acc-1 (Giro) war
+    // wieder auswählbar und allConfigured war false, obwohl beide
+    // Konten eingerichtet sind. Jetzt bleibt die letzte erfolgreiche
+    // Liste erhalten und das neue Konto kommt aus der Aufzeichnung.
+    expect(component.entries()).toHaveLength(1);
+    expect(component.availableAccounts()).toEqual([]);
+    expect(component.allConfigured()).toBe(true);
+  });
+
+  it('zeigt bei fehlgeschlagenem Refresh die zuletzt geladene Liste weiter an (7.5 Restfehler)', async () => {
+    vi.mocked(JournalWriteEndpointsService.createOpeningBalance).mockResolvedValue(
+      created('ob-3'),
+    );
+    vi.mocked(JournalEndpointsService.listOpeningBalances)
+      .mockResolvedValueOnce([entry()])
+      .mockRejectedValueOnce(new Error('Netzwerk weg'));
+    vi.mocked(JournalEndpointsService.getBalances).mockResolvedValue(
+      emptyBalances(),
+    );
+
+    const fixture = createFixture(null, [acc1, acc2], true);
+    const component = fixture.componentInstance;
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+
+    fillValidForm(component);
+    component.accountId = 'acc-2';
+    await component.submit();
+    await vi.waitFor(() => expect(component.listError()).not.toBeNull());
+    fixture.detectChanges();
+
+    // Der Fehler-Banner ist sichtbar — und die zuletzt geladene Liste
+    // bleibt weiterhin angezeigt (nicht durch den Banner ersetzt).
+    const root = fixture.nativeElement;
+    const banner = root.querySelector('.entries-card .banner-error');
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain('weiterhin angezeigt');
+    const rows = root.querySelectorAll('.entries-card tbody tr');
+    expect(rows.length).toBe(1);
+  });
 });

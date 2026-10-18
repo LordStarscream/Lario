@@ -59,15 +59,19 @@
 @if (!isCorrection) {
   <section class="entries-card">
     <h3>Vorhandene Anfangsbestände</h3>
-    @if (loading()) {
-      <p class="empty">Liste wird geladen …</p>
-    } @else if (listError(); as err) {
+    <!-- Ein fehlgeschlagener Refresh versteckt die zuletzt geladene
+         Liste nicht: Der Fehler ist als Banner sichtbar, die Einträge
+         bleiben angezeigt (7.5 Restfehler). -->
+    @if (listError(); as err) {
       <div class="banner banner-error" role="alert">
         <strong>Liste konnte nicht geladen werden:</strong> {{ err.message }}
+        @if (entries().length > 0) {
+          <br />
+          <span class="muted">Zuletzt geladene Einträge werden weiterhin angezeigt.</span>
+        }
       </div>
-    } @else if (entries().length === 0) {
-      <p class="muted">Noch keine Anfangsbestände erfasst.</p>
-    } @else {
+    }
+    @if (entries().length > 0) {
       <table class="table table-small">
         <thead>
           <tr>
@@ -119,6 +123,10 @@
           }
         </tbody>
       </table>
+    } @else if (loading()) {
+      <p class="empty">Liste wird geladen …</p>
+    } @else if (!listError()) {
+      <p class="muted">Noch keine Anfangsbestände erfasst.</p>
     }
   </section>
 }

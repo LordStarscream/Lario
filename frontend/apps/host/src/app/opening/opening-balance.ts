@@ -200,7 +200,16 @@ export class OpeningBalance {
 
   // ---------- Liste (A3) ----------
 
-  /** Anfangsbestände laden (A3); Fehler bleiben lokal und sichtbar. */
+  /**
+   * Anfangsbestände laden (A3); Fehler bleiben lokal und sichtbar.
+   * Ein fehlgeschlagenes Laden (z. B. ein Refresh nach erfolgreichem
+   * Speichern) leert die zuletzt geladene Liste NICHT: gingen
+   * vorher eingerichtete Konte aus `entries` verloren, wären sie aus
+   * der Neuanlage-Auswahl und der All-Configured-Anzeige wieder
+   * herausgefallen (7.5 Restfehler). Die letzte erfolgreiche Liste
+   * bleibt sichtbar, zusätzlich mit dem Fehlerbanner; `newlySaved-
+   * AccountIds` schützt daneben das gerade gespeicherte Konto.
+   */
   private async loadEntries(): Promise<void> {
     this.loading.set(true);
     this.listError.set(null);
@@ -211,7 +220,6 @@ export class OpeningBalance {
       // überflüssig (7.5 Restfehler).
       this.newlySavedAccountIds.set([]);
     } catch (error) {
-      this.entries.set([]);
       this.listError.set(this.errors.handle(error));
     } finally {
       this.loading.set(false);
