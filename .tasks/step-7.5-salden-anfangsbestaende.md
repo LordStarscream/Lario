@@ -208,6 +208,63 @@ Befehl: `~/.dotnet/dotnet exec --runtimeconfig
 /usr/share/dotnet/sdk/10.0.112/vstest.console.dll
 tests/Lario.Api.Tests/bin/Debug/net10.0/Lario.Api.Tests.dll`
 
+**Vollständiger E2E-Smoke-Test** (18. Okt. 2026, `/tmp/lario-e2e/smoke.js`,
+headless Chromium per CDP gegen echten Host + frische SQLite-DB; Node + `ws`,
+kein Test-Framework; startet Host selbst, erzeugt Smoke-User, killt Host
+nach Lauf): **27/27** —
+
+- **API (10):** health, Login (Bearer), 401 ohne Token, Konten Giro + Haus,
+  Pool Flex, Anfangsbestand 200,00 € (100,00 € → Flex) → **201 Created**, 
+  Doppelanlage am Konto → **409**, Anfangsbestände-Liste mit Verteilung,
+  Salden Giro=200 000 / Flex=100 000 / Differenz=100 000 (Cent-Werte),
+  unzugeordneter Rest Giro=10 000.
+- **UI (17):** Login leitet zur Buchungsliste; Liste zeigt die
+  Anfangsbestand-Zeile (18.10.2026, Giro, 200,00 €) im Filter „Alle Typen";
+  Salden-Panel-Kopf mit Konten/Pools/Differenz; Unzugeordnete-Sektion mit
+  Giro + 100,00 €; Panel ein-/ausklappbar (aria-expanded); auf der
+  Anfangsbestände-Seite dasselbe Panel (R7-8) inkl. Unzugeordneter (R7-9);
+  Eintragsliste mit Verteilung „Flex: 100,00 €"; Korrektur-Route vorgefüllt
+  (Datum + Betrag); Korrektur auf volle Verteilung (200,00 € → Flex) wird
+  übernommen, führt zurück, Rest 0, Unzugeordnete-Sektion zeigt „Keine"-
+  Hinweis; Neuanlage-Formular listet nur Konten **ohne** Anfangsbestand
+  (Giro ausgeblendet, R7-3); unbekannte Korrektur-Id zeigt Fehlerbanner.
+- **Fehlerfreiheit:** 0 Konsolenfehler, 0 Seiten-/Log-Fehler während des
+  gesamten Laufs (live protokolliert).
+
+Ersetzt die früheren Teil-Smokes (17. Okt. 21/21 UI/Anfangsbestände, 18. Okt.
+8/8 Host/Upgrade). Befehl: `cd /tmp/lario-e2e && node smoke.js`.
+
+### R7-8 — Gemeinsames Salden-Panel auf der Anfangsbestände-Seite (18. Okt. 2026)
+
+Review-Kommentar: Bei der Verteilung eines Anfangsbestands sollen die
+aktuellen Konten- und Pool-Salden direkt ablesbar sein — nicht nur in der
+Buchungsliste. Umsetzung:
+
+- **Neue gemeinsame Komponente `shared/balances-panel`**
+  (`app-balances-panel`): das bisher in `bookings-list` eingebaute Panel
+  (Kontentabelle, Pooltabelle, Kopfzeile Konten/Pools/Differenz, Sektion
+  „Unzugeordnete Anfangsbestände“ nach R7-9, Ein-/Ausklappen) wurde
+  ausgelagert. Rein präsentiell: `@input() balances: BalancesDto | null` —
+  keine clientseitige Saldo-Rechnung, alle Werte aus
+  `GET /api/v1/balances` (inkl. serverseitiger Summen und
+  `accountPoolGap`; die Summenzeile der Unzugeordneter-Sektion summiert
+  nur die serverseitig gelieferten Restbeträge).
+- **`bookings-list`** verwendet jetzt `<app-balances-panel>` (Panel-Code aus
+  HTML/CSS/TS entfernt, `balancesOpen`-Signal in die Komponente verlegt).
+- **`opening-balance`** lädt die Salden in beiden Modi (Liste + Korrektur)
+  und rendert dasselbe Panel über der Eintragsliste bzw. dem Formular;
+  ein Salden-Ladefehler blockiert das Formular nicht (Panel fehlt dann
+  schlicht).
+- **Tests:** neue `balances-panel.spec.ts` (Rendern der Tabellen, Kopf-
+  summen, Unzugeordneter-Sektion mit Summenzeile und „Keine“-Hinweis,
+  Ein-/Ausklappen) + 3 Tests in `opening-balance.spec.ts` (Panel in Liste
+  und Korrektur, Ladefehler → Formular bleibt funktionsfähig).
+
+Ergebnis: host **85/85** (vorher 78), mobile 23/23, Lint/Build grün; der
+vollständige E2E-Smoke-Test (27/27, oben) prüft das Panel auf beiden
+Seiten gegen den echten Host, inkl. des Übergangs „vollständige
+Verteilung → Unzugeordneter-Sektion verschwindet“.
+
 ### Übergabe (externes Review)
 
 Branch `step/7.5-salden-anfangsbestaende` auf Basis `63cfe45` (Merge PR #10). Kernfragen:
