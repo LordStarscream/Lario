@@ -215,21 +215,34 @@ Datei-ID, Name, Typ, Größe, Prüfsumme und Buchungsbezug speichern; Dateien au
 
 **Fertig:** Planung existiert getrennt vom tatsächlichen Buchungsjournal.
 
-### Schritt 12 – Monatsdeckung, Einkommen und Flex-Anzeige
+### Schritt 12 – Monatsdeckung, Einkommen, Flex-Anzeige und Transfer-/Umwidmungserfassung
 
 **Voraussetzung:** 5 und 11.
 
 **Implementieren:** Finanzierungsmonat je Einkommen, Deckungsbindungen, Unterdeckung, feste Kalenderrichtwerte, Flexbestand/reserviert/unverplant und laufende Nettoausgaben. Planungshorizont aus Abschnitt 3; zukünftige Vorschau getrennt. Gehaltszuweisung automatisch Folgemonat, andere Einnahmen mit konfigurierbarer Regel.
 
+Desktop-Eingabe für einmalige interne Geldbewegungen (UI für die Anwendungsfälle aus Schritt 5; wiederkehrende Transfers bleiben Regeln aus Schritt 11/13):
+- **Kontotransfer:** Quelle, Zielkonto, Fachdatum, Betrag, Pool-/Zweckverteilung und optionale Notiz erfassen. Geld zwischen Konten bewegen, ohne Einkommen oder Ausgabe zu erzeugen; Poolbestände und der Zweck der übertragenen Mittel (Konto-Pool-Zuordnung) bleiben erhalten.
+- **Pool-Umwidmung:** Quellpool, Zielpool, Betrag, betroffene Kontoverteilung (soweit vorhanden) und optionale Notiz erfassen; Datum gemäß bestehendem Vertrag behandeln. Den Zweck vorhandener Mittel ändern, ohne die Kontostände zu verändern.
+- **Kombinierter Konto- und Poolwechsel:** der vorhandene kombinierte Anwendungsfall (Transfer und Umwidmung in einer Buchung) wird durch eine klar erkennbare Variante der Transfererfassung bedient (zusätzliche Option „Zweck ändern“ mit Quellpool/Zielpool), nicht durch ein eigenes Formular. Bestehende Fachregeln unverändert übernehmen.
+- **Interne Ausgleiche:** Offene Vorfinanzierungen (Ausgleichspositionen) verständlich anzeigen (Betrag, Quellkonto, Zielpool, Verursacherbuchung). Einen passenden Kontotransfer zum Begleichen erfassen, verknüpft mit der offenen Ausgleichsposition; die bereits durch die Ausgabe erfolgte Poolbelastung wird beim Ausgleich nicht erneut abgezogen. Teilbegleichung und verbleibender offener Betrag bleiben sichtbar.
+
+Für alle Abläufe gelten die bestehenden Eingabekonventionen: vorhandene Backend-Anwendungsfälle und API-Verträge verwenden (`POST /transfers`, `POST /reassignments`, `POST /transfer-reassignments`, `GET /settlements/open`); keine zweite Saldenengine im Frontend. Kontotransfer, Umwidmung und kombinierter Vorgang bleiben fachlich und in der Buchungsliste unterscheidbar. Gemeinsame Eingabekomponenten (Konto-/Poolauswahl, Betragseingabe, Operations-ID-Verhalten wie im Ausgabeformular) nur dort vorsehen, wo die Abläufe tatsächlich gemeinsame Anforderungen haben. Validierung, stabile Operations-IDs, Fehleranzeige und Wiederholung nach verlorener Antwort (Idempotenz: gleiche ID + gleicher Inhalt → keine zweite Buchung; gleiche ID + anderer Inhalt → Ablehnung) gehören zu den Abnahmekriterien. Nach bestätigter Buchung zeigen Buchungsliste, Konto-/Poolsalden und offene Ausgleiche den neuen Stand.
+
 **Prüfen:** Gehalt 3.000 € am 28. Oktober für November, Novemberverpflichtungen 2.000 €: zusätzlicher freier Flex-Anteil 1.000 €, Kontozugang 3.000 €. Derselbe Eingang am 30. Oktober ändert den Monatsbeginn nicht. Zweiter Teileingang bindet Fixkosten nicht doppelt. Zahlung einer gebundenen Rechnung senkt Bestand und löst dieselbe Bindung, freie Mittel sinken nicht nochmals um den vollen Rechnungsbetrag. Erwartete Steuererstattung erhöht den Bestand nicht. Dezembervorschau bindet nicht automatisch alle Dezemberkosten.
 
-**Fertig:** Dashboard zeigt tatsächliche freie Mittel getrennt von Richtwert und Prognose. Dieser Schritt macht die Anwendung fachlich als Monatsbegleiter brauchbar.
+Browser-Referenzfälle für die Transfer-/Umwidmungserfassung (Werte aus den dokumentierten Referenzfällen `docs/step-0/referenzfaelle/`, keine abweichenden Regeln):
+- **Kontotransfer (Fall 5):** Start: Hauptkonto 1.000,00 € (Flex 1.000,00 €), Wohnungskonto 0,00 €. Transfer 800,00 € Haupt → Wohnung. Ende: Haupt 200,00 €, Wohnung 800,00 €, Poolbestände unverändert (Flex 1.000,00 €); die 800,00 € behalten ihren Flex-Zweck als Zuordnung (Haupt/Flex 200,00 €, Wohnung/Flex 800,00 €).
+- **Umwidmung (Fall 6):** Start: Hauptkonto 1.000,00 € (Flex 1.000,00 €). Umwidmung 500,00 € Flex → Rücklage. Ende: Kontostände unverändert (Haupt 1.000,00 €), Flex 500,00 €, Rücklage 500,00 €.
+- **Begleichung internen Ausgleichs (Fall 4):** Start (nach gemischtem Einkauf 85,00 € vom Hauptkonto, 65,00 € Flex + 20,00 € Freizeit): Haupt 915,00 €, Freizeitkonto 300,00 €, Flex 935,00 €, Freizeit 280,00 €, offene Ausgleichsposition 20,00 €. Transfer 20,00 € Freizeitkonto → Haupt, verknüpft mit der offenen Position. Ende: Haupt 935,00 €, Freizeit 280,00 €, Pools unverändert (Flex 935,00 €, Freizeit 280,00 €), Position beglichen. Teilbegleichung 5,00 € lässt 15,00 € offen.
+
+**Fertig:** Dashboard zeigt tatsächliche freie Mittel getrennt von Richtwert und Prognose. Dieser Schritt macht die Anwendung fachlich als Monatsbegleiter brauchbar. Einzelne Kontotransfers, Umwidmungen (inklusive kombinierter Variante) und die Begleichung offener interner Ausgleiche sind ohne API-Zugriff im Browser erfassbar; Buchungsliste, Salden und offene Ausgleiche zeigen danach den neuen Stand.
 
 ### Schritt 13 – Ansparungen und regelmäßige Zuweisungen
 
 **Voraussetzung:** 11–12.
 
-**Implementieren:** Monatliche Zielzuweisungen für Freizeit, Jahreskosten und Rücklagen; optional zugehöriger Kontotransfer. Regeländerungen ab Monat X. Jahreskosten mit nächster Fälligkeit, vorhandenem Guthaben und erforderlicher Sonderzuführung. Centgenaue Verteilung.
+**Implementieren:** Monatliche Zielzuweisungen für Freizeit, Jahreskosten und Rücklagen; optional zugehöriger Kontotransfer (regelbasiert, abzugrenzen von der einmaligen Transfererfassung aus Schritt 12, die manuelle Transfers bedient). Regeländerungen ab Monat X. Jahreskosten mit nächster Fälligkeit, vorhandenem Guthaben und erforderlicher Sonderzuführung. Centgenaue Verteilung.
 
 **Prüfen:** Jahresrechnung 600 €: monatlich 50 €. Quartalsrechnung 90 €: monatlich 30 €. 100 € auf 12 Zuführungen verteilen ergibt exakt 100 €. Zuführung plus Rechnung zählt nicht als doppelte Ausgabe. Kurz vor Fälligkeit fehlen Mittel: Unterdeckung anzeigen, nicht vollständig angespart vortäuschen. Wiederholter Monatsaufbau verdoppelt keine Zuweisung.
 
@@ -241,7 +254,7 @@ Datei-ID, Name, Typ, Größe, Prüfsumme und Buchungsbezug speichern; Dateien au
 
 **Implementieren:** Projekt, Reservierungsbewegungen, Kontoverteilung, Teilfreigabe, Zusatzfinanzierung, Ausgabezuordnung, Abschluss/Abbruch. Vorhabenstammdaten mobil verfügbar machen. Großausgaben vom laufenden Richtwert getrennt halten.
 
-**Prüfen:** 2.000 € reservieren, 1.500 € auf verzinstes Konto verschieben, zurücküberweisen, 1.750 € bezahlen und abschließen: 250 € frei, keine Zusatzbuchung beim Abschluss. Ausgabe über Reservierung benötigt erkennbare Zusatzdeckung. Abschluss während Handy offline und späterer Vorhabenausgabe erzeugt Klärungsbedarf; Eingabe bleibt erhalten. Erstattung nach Abschluss fließt in den Herkunftspool.
+**Prüfen:** 2.000 € reservieren, 1.500 € auf verzinstes Konto verschieben (über die Transfererfassung aus Schritt 12), zurücküberweisen, 1.750 € bezahlen und abschließen: 250 € frei, keine Zusatzbuchung beim Abschluss. Ausgabe über Reservierung benötigt erkennbare Zusatzdeckung. Abschluss während Handy offline und späterer Vorhabenausgabe erzeugt Klärungsbedarf; Eingabe bleibt erhalten. Erstattung nach Abschluss fließt in den Herkunftspool.
 
 **Fertig:** Reservierungen bleiben über Konten hinweg erhalten und lassen sich korrekt auflösen.
 
@@ -285,12 +298,38 @@ Datei-ID, Name, Typ, Größe, Prüfsumme und Buchungsbezug speichern; Dateien au
 
 **Fertig:** Alle Referenzfälle bestanden; kein Datenverlust bei Neustart, Syncwiederholung oder Update. Automatisierte Kerntests und dokumentierte echte Gerätetests liegen vor.
 
+### UI-Zuordnung der Kernfunktionen (Stand 21.10.2026)
+
+Abgleich der vorhandenen API-Anwendungsfälle mit Plan und UI. „Offene Entscheidung“ = im Plan nicht eindeutig zuordenbar; Vorschlag und Begründung sind dokumentiert, die Festlegung liegt beim Nutzer.
+
+| Anwendungsfall | Backend/API | Desktop-UI | Etappe | Offene Punkte |
+|---|---|---|---|---|
+| Konten, Pools, Kategorien, Steuerkategorien (Anlage/Umbenennung/Archivierung) | Schritte 3, 7 | vorhanden (Stammdaten) | 7 | — |
+| Anfangsbestände (Anlage, Liste) | Schritte 3, 7 | vorhanden (Einrichtung) | 7 | — |
+| Anfangsbestand-Korrektur | Schritt 7 (CorrectionService) | vorhanden (Korrektur-Route) | 7.5 | — |
+| Ausgabe (Split, Steuerkennzeichnung) | Schritte 4, 7 | vorhanden | 7 | — |
+| Ausgabe-Korrektur | Schritte 6, 7 | vorhanden (Korrektur-Route) | 7.5 | — |
+| Storno, Händlererstattung | Schritte 6, 7 | vorhanden (Dialoge) | 7 | — |
+| **Kontotransfer (einmalig)** | Schritte 5, 7 | **nicht vorhanden** | **12 (fest zugeordnet)** | Browser-Referenzfall: Fall 5 |
+| **Pool-Umwidmung** | Schritte 5, 7 | **nicht vorhanden** | **12 (fest zugeordnet)** | Browser-Referenzfall: Fall 6 |
+| **Kombinierter Transfer + Umwidmung** | Schritte 5, 7 | **nicht vorhanden** | **12 (fest zugeordnet, als klar erkennbare Transfer-Variante, kein eigenes Formular)** | — |
+| **Interne Ausgleiche (offene Positionen, Begleichung, Teilbegleichung)** | Schritte 5, 7 (`GET /settlements/open`, `relatedSettlementId`) | **nicht vorhanden** | **12 (fest zugeordnet)** | Browser-Referenzfall: Fall 4 |
+| **Einnahme (Anlage)** | Schritte 4, 7 | nicht vorhanden (nur Liste/Filter) | **offene Entscheidung** — Vorschlag: 12 | Begründung: Schritt-12-Meilenstein „erste fachlich nutzbare Version **mit Einkommen** … brauchbar als Monatsbegleiter“; ohne Einnahmen-Formular ist das Dashboard nicht füllbar. Fehlende Abnahmekriterien: Formularfelder (Fachdatum, Konto, Betrag, Pool-Verteilung, Finanzierungsmonat, Notiz), Browser-Referenzfall (z. B. Fall 2) |
+| **Einnahme-Korrektur** | Schritt 7 (CorrectionService) | nicht vorhanden (kein Korrektur-Dialog für Einnahmen) | **offene Entscheidung** — Vorschlag: zusammen mit der Einnahme-Anlage | Endpunkt ohne Formular unbrauchbar; Korrekturverlauf und Abnahmekriterien fehlen |
+| **Kontostandskorrektur (Bankdifferenz)** | Schritt 6, 7 | nicht vorhanden (Differenz nur im Salden-Panel sichtbar, 7.5) | **offene Entscheidung** — Vorschlag: 12 | Begründung: Monatsbegleiter benötigt einen dokumentierten Korrekturweg für Bankdifferenzen; Abnahmekriterien (Korrekturformular mit Grund, Verknüpfung zur Differenz) fehlen. Schritt 16 „ohne manuelle Datenbankeingriffe“ setzt einen bedienbaren Weg voraus |
+| Wiederkehrende Regeln (Einnahmen/Ausgaben/Transfers) | noch nicht | noch nicht | 11 (Regeln), 13 (Zielzuweisungen) | — |
+| Vorhaben, Reservierungen, Ansparung | noch nicht | noch nicht | 14 | — |
+| Wohnung | noch nicht | noch nicht | 15 (verwendet generische Transfers/Poolzuweisungen, inkl. UI aus 12) | — |
+| Einrichtung, Berichte, Abgleichhinweise | noch nicht | noch nicht | 16 | — |
+
+Hinweis: „Bedienbar“ heißt immer ein Formular im Browser; ein vorhandener API-Endpunkt ist kein Ersatz für die UI-Abnahme. Wiederkehrende Transfers bleiben regelbasiert (Schritt 11/13) und sind von der einmaligen Transfererfassung (Schritt 12) abgegrenzt.
+
 ## 6. Reihenfolge und erste nutzbare Stände
 
 Die Schritte werden grundsätzlich in der nummerierten Reihenfolge umgesetzt; Schritt 7a folgt direkt auf Schritt 7. Insgesamt sind es jetzt 20 einzeln abnehmbare Abschnitte. Schritt 2 ist bewusst ein früher technischer Nachweis. Änderungen am Finanzkern warten nicht auf eine fertige Oberfläche; SQLite-/API-Tests prüfen ihn direkt. Mobile Stammdaten und Syncverträge werden bei späteren Features jeweils mit erweitert.
 
 - Nach Schritt 9: voll funktionsfähige manuelle Ausgabenerfassung mobil und auf dem Hauptrechner; Salden korrekt, aber noch ohne vollständige Monatsplanung.
-- Nach Schritt 12: erste fachlich nutzbare Version mit Einkommen, Verpflichtungen, festem Kalendermonat und Flexanzeige.
+- Nach Schritt 12: erste fachlich nutzbare Version mit Einkommen, Verpflichtungen, festem Kalendermonat, Flexanzeige und einmaliger Transfer-/Umwidmungserfassung inklusive Begleichung offener interner Ausgleiche.
 - Nach Schritt 16: vereinbarter funktionaler Umfang einschließlich Wohnung und Vorhaben.
 - Nach Schritt 18: geprüfte Auslieferung und Sicherungs-/Wiederherstellungsstrecke.
 
