@@ -17,10 +17,33 @@ _Status: aktiv · Last updated: 21. Okt. 2026_
 - **A5** Beleg/Zuordnung entfernen → Konten und Pools unverändert; eine zweite Zuordnung derselben Datei geht nicht verloren.
 - **A6** Vorhandene digitale Nachweise sind ohne mobile Belegerfassung in der Hauptanwendung verwaltbar (Upload, Anzeige, Download, Zuordnung, Entfern­ung). Originaldateien + Metadaten gehören ab diesem Schritt zum Sicherungsumfang (vollständige Restore-Abnahme folgt in Schritt 17).
 
+**Erweitert nach Designreview PR #12 (21. Okt. 2026):**
+
+- **A7** (Review P1) Split-Korrektur-Lebenszyklus: Korrektur entfernt einen belegten Split → Originaldatei intakt, Beleg auf die Gesamtbuchung umgehängt (SplitId null, OriginalSplitId gesetzt), Salden ausschließlich gemäß Korrektur; gleiche SplitId in anderer Buchung wird beim Upload abgewiesen (Komposit-FK);
+- **A8** (Review P2) Abbruchfestigkeit: Upload-Abbruch vor/nach Rename hinterlässt keine sichtbaren Orphans (Start-Abgleich entfernt `.part`-Dateien und finale Dateien ohne DB-Zeile); fehlgeschlagene Datei-Löschung beim Delete wird beim nächsten Start bereinigt, Metadaten sind bereits weg;
+- **A9** (Review P2) Grenzen: Upload exakt `MaxBytes` wird akzeptiert, `MaxBytes + 1` abgewiesen (413); Upload mit Unicode-Dateiname + beiden Ids funktioniert; 413-Fehler ist in der UI verständlich.
+
 ## Design-Entscheidungen
 
-_(werden nach Code-Analyse festgehalten)_
+Siehe `.tasks/step-7a-design-paket.md` (D1–D9b). Stand nach Designreview PR #12:
+
+- **Review (LordStarscream, 21. Okt. 2026):** 4 Punkte (1×P1, 3×P2) — alle vier im
+  Design-Paket umgesetzt:
+  - **P1** Split-Bezug: Komposit-FK `(BookingId, SplitId)` → `ExpenseSplits` (Muster
+    `SplitTaxMarkings`), Erhaltungsregel in `ReplaceSplits` (Umlageung auf Gesamtbuchung
+    in derselben Transaktion) — D1/D1b.
+  - **P2** Abbruch-Cleanup: `.part`-Tempname + Rename + Start-Abgleich nach `Migrate()`;
+    Delete-Order DB-zeile → Datei — D2/D2b/D3/D5.
+  - **P2** Größen: `MaxBytes` = Dateibyte; `MultipartBodyLengthLimit` und Kestrel
+    `options.Limits.MaxRequestBodySize` = `MaxBytes + 1 MB` (abgeleitet) — D7.
+  - **P2** Schicht: `IAttachmentFileStore` in Application, Implementierung in
+    Infrastructure — D9b.
 
 ## Batches / Tasks
 
-_(werden nach Code-Analyse festgelegt)_
+| Batch | Tasks | Status |
+|---|---|---|
+| A | A1 Domain/Mapping/Migration · A2 Korrektur-Integration · A3 Application (Interfaces + Service + EF-Repo) · A4 Infrastructure (FileStore + DI) | offen |
+| B | B1 Host-Endpunkte + Limits + Start-Abgleich + README · B2 Api-Tests (a)–(iv) | offen |
+| C | C1 Frontend-Dialog + Client-Regeneration + host-Tests · C2 E2E-Smoke-Test | offen |
+| D | D1 Gesamtabnahme + Commit | offen |
