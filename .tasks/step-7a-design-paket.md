@@ -1,5 +1,5 @@
 # Design-Paket Schritt 7a — PDF-/Bildnachweise
-_Stand: 21. Okt. 2026, überarbeitet nach Designreview PR #12 (4 Punkte: 1×P1, 3×P2 — alle in D1/D1b/D2/D2b/D3/D5/D7/D9/D9b/Batch umgesetzt) · Basis: Code-Analyse-Bericht (38 Reads) + Plan §5 Schritt 7a_
+_Stand: 21. Okt. 2026, überarbeitet nach Designreview PR #12 (4 Punkte: 1×P1, 3×P2) und Nachreview (Präzisierung A7/D3/D9(f) + Parallelfall + Platzhalter-Fix) — Design freigegeben als Grundlage für die Implementierung · Basis: Code-Analyse-Bericht (38 Reads) + Plan §5 Schritt 7a_
 
 ## Umfassung aus dem Plan (verbindlich)
 
@@ -129,23 +129,28 @@ Catch-Only-Cleanup deckt Prozessabbrüche nicht ab. Ergänzung:
   2. **Typ**: multipart `Content-Type` der Part **und** Magic-Bytes (PDF `%PDF-`, JPEG `FF D8 FF`,
      PNG `89 50 4E 47 0D 0A 1A 0A`) müssen übereinstimmen → sonst `400 validation_error`
      `code=unsupported_attachment_type`.
-  3. **Buchungsbezug**: `bookingId` existiert (sonst `400 invalid_reference`); `splitId`
-     existiert **und gehört zur Buchung** (Komposit-FK, D1 — gleiche SplitId in anderer
-     Buchung wird abgewiesen) (sonst `400 invalid_reference`).
+  3. **Buchungsbezug**: `bookingId` existiert (sonst `400 invalid_reference`); das Tupel
+     (`bookingId`, `splitId`) muss in `ExpenseSplits` existieren (Komposit-FK, D1 — dieselbe
+     SplitId darf in mehreren Buchungen vorkommen; beide Zuordnungen sind dann unabhängig
+     gültig, abgewiesen wird nur ein nicht existierendes Tupel) (sonst `400 invalid_reference`).
 - Reihenfolge der Ablage (Review P2 — Abbruchfest):
-  1. Datei streamen nach `Root/attachments/{id[BUDGET-CAP]ext}.part` (FSync vor Close — dauerhafte
-     Ablage), SHA-256 dabei berechnen, Größe exakt zählen.
-  2. Typ- und Größenprüfung erfolgreich → Rename auf `{id[BUDGET-CAP]ext}` (atomar).
+  1. Datei streamen nach `Root/attachments/{storedName}.part` (storedName = GUID + Endung, D2;
+     FSync vor Close — dauerhafte Ablage), SHA-256 dabei berechnen, Größe exakt zählen.
+  2. Typ- und Größenprüfung erfolgreich → Rename auf `{storedName}` (atomar).
   3. DB-Eintrag in `Bookings`-unabhängiger Transaktion anlegen (FK-Prüfung durch SQLite,
      inkl. Komposit-Split-FK).
   4. **Jeder Fehler → `finally`-Cleanup** der `.part`- bzw. (nach Rename) finalen Datei ohne
      DB-Zeile; bei Prozessabbruch übernimmt der Start-Abgleich (D2b).
   5. Antwort `201` erst danach, mit vollständigen Metadaten (Id, Name, Typ, Größe, Prüfsumme,
      Buchungsbezug, Split).
-- **Konkurrenz Upload vs. Split-Entfernung** (Review P1-Test): SQLite prüft den FK beim
-  Insert — Korrektur entfernt den Split vor dem Insert → sauberes 400 invalid_reference
-  ohne Orphan-Datei; Korrektur kommt nach dem Insert → Umlageung via D1b. Beide
-  Endzustände konsistent (Tests f–h).
+- **Konkurrenz Upload vs. Split-Entfernung** (Review-Nachreview: als **eigener
+  Integrationstest** auszuführen, sequenzielle Fälle allein beweisen den Parallelfall nicht):
+  Upload und Split-löschende Korrektur laufen echt parallel (konkurrierende Transaktionen);
+  SQLite serialisiert — es entsteht exakt einer der beiden konsistenten Endzustände:
+  (1) Insert scheitert am FK → 400 invalid_reference, keine Orphan-Datei (Cleanup),
+  Split entfernt; oder (2) Insert erfolgreich → die Korrektur hängt den Beleg per D1b um
+  (Datei intakt, `SplitId = null`, `OriginalSplitId` gesetzt). Der Test (i) in D9 prüft
+  den Endzustand, nicht das Rennen.
 - Uploadfehler verändern **keine** Finanzbuchung: kein Repository der Buchungen wird angerührt,
   keine Revision, keine Operation. Wiederholter Upload nach verlorener Antwort erzeugt einen
   zweiten Eintrag (bewusst, D6).
@@ -229,7 +234,10 @@ einem kleineren äußeren Standardlimit):
   Datei vorhanden, Download identisch (SHA-Prüfung).
 - **Mehrere Dateien** an derselben Rechnung; **Beleg auf Split** + **Beleg auf Gesamt-Ausgabe**
   derselben Split-Ausgabe; `GET /bookings/{id}/attachments` listet korrekt.
-- **Split-Validierung**: `splitId` unbekannt bzw. anderer Buchung → 400 invalid_reference.
+- **Split-Validierung**: Tupel (`bookingId`, `splitId`) nicht vorhanden → 400
+  invalid_reference — unbekannter Split **oder** SplitId, die nur einer anderen Buchung
+  gehört; dieselbe SplitId, die in der angegebenen Buchung **auch** existiert, ist gültig
+  (kein globaler Eindeutigkeitsfehler, Fälle f1/f2).
 - **Ablehnung**: falscher Typ (z. B. HTML/ZIP mit PDF-Spoof: Magic-Bytes-Mismatch) → 400;
   zu große Datei (kleines Testlimit via Setting) → 413/400; unberechtigter Abruf (kein/
   falscher Token) → 401.
@@ -240,23 +248,31 @@ einem kleineren äußeren Standardlimit):
       wird gelöscht, Verzeichnis bleibt leer;
   (c) **simulierter Abbruch vor Rename**: `.part`-Datei vorhanden → Start-Abgleich (D2b)
       entfernt sie, keine DB-Zeile;
-  (d) **simulierter Abbruch nach Rename vor DB-Commit**: finale `{guid[BUDGET-CAP]ext}` ohne DB-Zeile
-      → Start-Abgleich entfernt sie;
+  (d) **simulierter Abbruch nach Rename vor DB-Commit**: finale Datei `{storedName}`
+      (GUID + Endung, D2) ohne DB-Zeile → Start-Abgleich entfernt sie;
   (e) **Delete mit fehlgeschlagener Datei-Löschung** (FileStore-Fake) → DB-Zeile weg (204),
       Datei bleibt → nächster Start-Abgleich entfernt sie; referenzierte, manuell entfernte
       Datei → 410, Metadaten sichtbar (bleibt davon unberührt).
-- **Split-Bezug & Korrektur** (Review P1):
-  (f) zwei Buchungen mit **gleicher SplitId**: Upload mit fremder SplitId (passende Id,
-      andere Buchung) → 400 invalid_reference (Komposit-FK);
+- **Split-Bezug & Korrektur** (Review P1, nach Nachreview präzisiert — **keine** globale
+  SplitId-Eindeutigkeit):
+  (f1) **Positiv**: Buchung A **und** Buchung B haben beide einen Split `same` → Upload
+      (A, `same`) und Upload (B, `same`) sind jeweils unabhängig zulässig (beide 201, keine
+      gegenseitige Beeinflussung);
+  (f2) **Negativ**: Split `only-B` existiert ausschließlich unter B → Upload (A, `only-B`)
+      → 400 invalid_reference (Komposit-FK: nicht existierendes Tupel);
   (g) Korrektur entfernt einen **belegten** Split → Originaldatei intakt, Beleg erreichbar
       (umgehängt: `SplitId = null`, `OriginalSplitId` gesetzt), Salden ausschließlich
       gemäß Korrektur, Buchung/Konten/Pools sonst unverändert;
   (h) In-Place-Korrektur eines belegten Splits (Betrag/Pool ändern) → Beleg bleibt an
       gleicher SplitId gültig.
-- **Größen** (Review P2): (i) Upload exakt `MaxBytes` → 201; (ii) `MaxBytes + 1` → 413;
-  (iii) zulässiger Upload mit **Unicode-Dateiname** (Umlaute) + `bookingId` + `splitId` →
+- **Parallelfall (eigener Integrationstest, Review-Nachreview)**: (i) Upload und
+  Split-löschende Korrektur laufen echt parallel (zwei gleichzeitige Requests) → exakt
+  einer der beiden Endzustände aus D3; in beiden Fällen: keine Orphan-Datei, keine
+  unsichtbare Umlageung, Salden ausschließlich gemäß Korrektur.
+- **Größen** (Review P2): (j) Upload exakt `MaxBytes` → 201; (k) `MaxBytes + 1` → 413;
+  (l) zulässiger Upload mit **Unicode-Dateiname** (Umlaute) + `bookingId` + `splitId` →
   201, `OriginalFilename` korrekt, `filename*` im Download-Header RFC 5987-korrekt;
-  (iv) 413 inkl. UI-Fehlermeldung (host-Test/E2E).
+  (m) 413 inkl. UI-Fehlermeldung (host-Test/E2E).
 - **Entfernen**: DELETE → 204, DB-Zeile weg, Datei weg, Buchung/Konten/Pools unverändert
   (Balances vor/nach identisch); zweite Datei derselben Rechnung bleibt intakt.
 - **404/410**: unbekannte Id; Datei manuell entfernt → 410, Metadaten sichtbar.
@@ -292,7 +308,7 @@ Infrastructure referenzieren (Projektzyklus). Daher:
 | A | A3 | Application: `IAttachmentRepository` + `IAttachmentFileStore` (Schnittstellen), `AttachmentService` (Upload-Flow temp/rename/commit + Cleanup; Download; Delete in D5-Reihenfolge; Reconcile-Orchestrierung), EF-Repository-Implementierung |
 | A | A4 | Infrastructure: `AttachmentFileStore` (`LarioDataPaths.AttachmentDirectory`, `.part`-Namensschema, FSync, Reconcile-Dateioperationen) + DI-Registrierung (Store + Repository) |
 | B | B1 | Host: `AttachmentEndpoints` (POST multipart mit Streaming-Zähler, GET-Liste, GET-Metadaten, GET-Download, DELETE) + abgeleitete Limits in Program.cs (D7: `MultipartBodyLengthLimit`, Kestrel `options.Limits.MaxRequestBodySize`) + Start-Abgleich nach `Migrate()` + README-Config-Eintrag |
-| B | B2 | Api-Tests: alle D9-Fälle (a)–(iv), echte Dateien + SQLite, Neustart mit gleichem DataDirectory |
+| B | B2 | Api-Tests: alle D9-Fälle (a)–(m) inkl. Parallelfall (i) als eigener Integrationstest, echte Dateien + SQLite, Neustart mit gleichem DataDirectory |
 | C | C1 | Frontend: „Belege“-Dialog in der Buchungsliste (Liste, Upload mit Split-Auswahl, Vorschau/Blob, Entfernen, 413-Fehlermeldung) + Client-Regeneration + host-Tests |
 | C | C2 | E2E-Smoke-Test (headless Chromium + echter Host: Upload über UI inkl. 413-Fehlerpfad, Neustart, Download, Entfernen) |
 | D | D1 | Gesamtabnahme: Build/Tests/Lint grün, OpenAPI-Diff-Prüfung, Doku/Task-Datei, Commit |

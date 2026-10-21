@@ -19,7 +19,7 @@ _Status: aktiv · Last updated: 21. Okt. 2026_
 
 **Erweitert nach Designreview PR #12 (21. Okt. 2026):**
 
-- **A7** (Review P1) Split-Korrektur-Lebenszyklus: Korrektur entfernt einen belegten Split → Originaldatei intakt, Beleg auf die Gesamtbuchung umgehängt (SplitId null, OriginalSplitId gesetzt), Salden ausschließlich gemäß Korrektur; gleiche SplitId in anderer Buchung wird beim Upload abgewiesen (Komposit-FK);
+- **A7** (Review P1, nach Nachreview präzisiert) Split-Korrektur-Lebenszyklus: Korrektur entfernt einen belegten Split → Originaldatei intakt, Beleg auf die Gesamtbuchung umgehängt (SplitId null, OriginalSplitId gesetzt), Salden ausschließlich gemäß Korrektur; Split-Bezug: dieselbe SplitId darf in mehreren Buchungen vorkommen (beide Zuordnungen unabhängig gültig), nur ein nicht existierendes (bookingId, splitId)-Tupel wird abgewiesen — **keine** globale SplitId-Eindeutigkeit; Parallelfall Upload vs. Split-Entfernung als eigener Integrationstest (exakt einer der beiden konsistenten Endzustände, keine Orphan-Datei);
 - **A8** (Review P2) Abbruchfestigkeit: Upload-Abbruch vor/nach Rename hinterlässt keine sichtbaren Orphans (Start-Abgleich entfernt `.part`-Dateien und finale Dateien ohne DB-Zeile); fehlgeschlagene Datei-Löschung beim Delete wird beim nächsten Start bereinigt, Metadaten sind bereits weg;
 - **A9** (Review P2) Grenzen: Upload exakt `MaxBytes` wird akzeptiert, `MaxBytes + 1` abgewiesen (413); Upload mit Unicode-Dateiname + beiden Ids funktioniert; 413-Fehler ist in der UI verständlich.
 
@@ -38,6 +38,13 @@ Siehe `.tasks/step-7a-design-paket.md` (D1–D9b). Stand nach Designreview PR #1
     `options.Limits.MaxRequestBodySize` = `MaxBytes + 1 MB` (abgeleitet) — D7.
   - **P2** Schicht: `IAttachmentFileStore` in Application, Implementierung in
     Infrastructure — D9b.
+- **Nachreview (LordStarscream, 21. Okt. 2026): keine blockierenden Befunde** — Design
+  freigegeben als Grundlage für die Implementierung (keine Implementierungsabnahme, kein
+  Merge-Auftrag). Nicht-blockierender Präzisierungshinweis umgesetzt: A7/D3/D9(f) —
+  Komposit-FK erlaubt dieselbe SplitId in mehreren Buchungen (beide unabhängig gültig),
+  abgewiesen wird nur ein nicht existierendes Tupel (Tests f1/f2); Parallelfall Upload vs.
+  Split-Entfernung als eigener Integrationstest (i); beschädigte Platzhalter in D3/D9
+  durch das GUID-/Endungsschema (storedName) ersetzt.
 
 ## Batches / Tasks
 
