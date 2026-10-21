@@ -39,6 +39,11 @@ namespace Lario.Infrastructure.Tests;
 ///      entfallenden Teilposten angehängt → die Korrektur darf nicht
 ///      mit einem ungehandelten FK-Fehler enden, sondern liest den
 ///      frischen Lesezustand und umlagert den Beleg (D1b).
+///   p5 (Review 7a-2, Befund 4): Zwischen dem Laden (Basisrevision 1)
+///      und dem Commit der laufenden Korrektur A commitet eine
+///      parallele Korrektur B die Basisrevision 2 → A muss als
+///      sichtbarer Revisionskonflikt (409) scheitern; B bleibt
+///      vollständig erhalten (kein lost update, keine Teilanlage).
 /// </summary>
 public sealed class Step7aParallelRaceTests
 {
@@ -177,7 +182,8 @@ public sealed class Step7aParallelRaceTests
         }
         catch (Exception ex)
         {
-            return (false, ex.GetType().Name + ": " + ex.Message.Split('\n')[0]);
+            return (false, ex.GetType().Name + ": " + ex.Message.Split('\n')[0]
+                + " | Basis: " + ex.GetBaseException()?.Message);
         }
     }
 
@@ -404,6 +410,149 @@ public sealed class Step7aParallelRaceTests
             DbCommand command, CommandEventData eventData,
             InterceptionResult<DbDataReader> result, CancellationToken cancellationToken)
             => new(MaybeInject(command, result));
+    }
+
+    /// <summary>
+    /// Review 7a-2, Befund 4 (P1, deterministisch): Der erste
+    /// <c>SELECT</c>, der <c>"Attachments"</c> liest — die
+    /// <c>ReplaceSplits</c>-Abfrage innerhalb der Update-Transaktion
+    /// (davor hat die laufende Korrektur A nur die Buchung geladen
+    /// und keine Schreiboperation ausgeführt, hält also noch kein
+    /// Schreiblock) — committet über eine zweite SQLite-Verbindung
+    /// eine echte parallele Korrektur B (Note + Basisrevision 2 +
+    /// Historienzeile) mit ihrem eigenen CAS auf Basisrevision 1.
+    /// A hat die Buchung vor Bs Commit mit Basisrevision 1 geladen;
+    /// ihr Commit muss dann als sichtbarer Revisionskonflikt (409)
+    /// scheitern — statt B stillschweigend zu übersteuern (lost
+    /// update). SQLite-spezifisch: solange As Transaktion nur gelesen
+    /// hat, kann Bs Transaktion commiten; As erstes UPDATE würde B
+    /// ansonsten blockieren (umgekehrt: Bs Commit während As
+    /// Schreibphase ist blockiert, daher der Injektionspunkt).
+    /// </summary>
+    private sealed class MidFlightRevisionCommitter(
+        string connectionString, string bookingId) : IDbCommandInterceptor
+    {
+        private int _committed;
+        private volatile bool _armed;
+
+        public void Arm() => _armed = true;
+
+        public InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result)
+        {
+            MaybeCommit(command);
+            return result;
+        }
+
+        public ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken)
+        {
+            MaybeCommit(command);
+            return new(result);
+        }
+
+        private void MaybeCommit(DbCommand command)
+        {
+            if (!_armed
+                || !command.CommandText.StartsWith("SELECT", StringComparison.Ordinal)
+                || !command.CommandText.Contains("\"Attachments\"", StringComparison.Ordinal)
+                || Interlocked.CompareExchange(ref _committed, 1, 0) != 0)
+            {
+                return;
+            }
+
+            using var connection = new SqliteConnection(connectionString);
+            connection.Open();
+            using var update = connection.CreateCommand();
+            update.CommandText =
+                "UPDATE \"Bookings\" SET \"Note\" = 'B-Notiz', \"BaseRevision\" = 2 " +
+                $"WHERE \"Id\" = '{bookingId}' AND \"BaseRevision\" = 1;";
+            update.ExecuteNonQuery();
+            using var insert = connection.CreateCommand();
+            insert.CommandText =
+                "INSERT INTO \"BookingCorrections\" " +
+                "(OperationId, BookingId, OldSnapshot, NewSnapshot, Note, Payload, " +
+                " CreatedAtUtc) " +
+                $"VALUES ('op-corr-b', '{bookingId}', '{{}}', '{{}}', 'B-Notiz', '{{}}', " +
+                $"'{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff}');";
+            insert.ExecuteNonQuery();
+        }
+    }
+
+    [Fact(DisplayName = "p5: deterministisch — parallele Korrektur zwischen Laden und Commit → 409 statt stiller Übersteuerung (Befund 4)")]
+    public async Task ParallelCorrection_CommittedBetweenLoadAndSaveChanges_Fails_As_Visible_Conflict()
+    {
+        var (db, bookingId, _) = await SeedAsync();
+        await using (db)
+        {
+            // Zweite AddDbContext-Registrierung: Optionen akkumulieren
+            // (EF Core 10, empirisch verifiziert) — der Interceptor
+            // ergänzt die SQLite-Optionen, der Rest kommt aus AddLarioData.
+            var committer = new MidFlightRevisionCommitter(
+                $"Data Source={db.DatabaseFile}", bookingId);
+            var services = new ServiceCollection();
+            services.AddLarioData($"Data Source={db.DatabaseFile}", db.AttachmentsDir);
+            services.AddDbContext<LarioDbContext>(o => o.AddInterceptors(committer));
+            var provider = services.BuildServiceProvider();
+            await using (provider)
+            {
+                committer.Arm();
+                using var scope = provider.CreateScope();
+
+                // A = Split-Entfernung (Basisrevision 1); B (vom
+                // Interceptor) commitet die Basisrevision 2 zwischen
+                // A's Laden und A's Commit.
+                var correction = await RunCorrectionAsync(
+                    scope.ServiceProvider, RemovalSpec(bookingId, "op-corr-race", 1));
+
+                // A scheitert als sichtbarer Revisionskonflikt (409) —
+                // kein interner Fehler (kein DbUpdateException), und
+                // auch keine stille Übersteuerung von B (lost update).
+                Assert.False(correction.Ok);
+                Assert.Contains(
+                    "DomainConflict", correction.Error, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(
+                    "DbUpdate", correction.Error, StringComparison.OrdinalIgnoreCase);
+
+                // Bs Inhalt, Revision, Historie und Splits bleiben
+                // vollständig erhalten — von A wird nichts teilweise
+                // angelegt (sp-1 ist nicht entfernt, Note und Revision
+                // stammen von B, genau eine Historienzeile = B).
+                var booking = await db.Resolve<IBookingRepository>().FindByIdAsync(bookingId);
+                Assert.NotNull(booking);
+                Assert.Equal("B-Notiz", booking!.Note);
+                Assert.Equal(2, booking.BaseRevision);
+                Assert.Equal(
+                    ["sp-1", "sp-2"],
+                    booking.Splits.Select(s => s.Id).OrderBy(s => s, StringComparer.Ordinal).ToArray());
+
+                // A's Korrekturzeile ist durch die Rückrollung weg,
+                // Bs bleibt.
+                await using var history = new SqliteConnection($"Data Source={db.DatabaseFile}");
+                await history.OpenAsync();
+                using var operationQuery = history.CreateCommand();
+                operationQuery.CommandText =
+                    "SELECT OperationId FROM \"BookingCorrections\" " +
+                    $"WHERE BookingId = '{bookingId}' ORDER BY OperationId;";
+                using var operationReader = await operationQuery.ExecuteReaderAsync();
+                var operations = new List<string>();
+                while (await operationReader.ReadAsync())
+                {
+                    operations.Add(operationReader.GetString(0));
+                }
+                Assert.Equal(["op-corr-b"], operations);
+
+                // Beleg-/Datei-Konsistenz des abgewiesenen A: keine
+                // Zeile, keine Datei (A hat hier keine Belege angefasst).
+                await AssertConsistentTerminalStateAsync(
+                    db, bookingId,
+                    expectedAttachments: [],
+                    expectedSplitIds: ["sp-1", "sp-2"],
+                    expectedBaseRevision: 2);
+            }
+        }
     }
 
     [Fact(DisplayName = "p4: deterministisch Race B — Beleg an entfallenden Split zwischen Lese- und Commit → Umlageung statt FK-Fehlern (Befund 3)")]

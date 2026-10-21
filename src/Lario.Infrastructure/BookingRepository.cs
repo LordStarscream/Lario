@@ -221,6 +221,13 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
     /// Nicht-FK-Fehler und Revisionskonflikte
     /// (<see cref="DbUpdateConcurrencyException"/>, eigener Unterfall von
     /// <see cref="DbUpdateException"/>) laufen unverändert weiter.
+    ///
+    /// Review 7a-2, Befund 4 (P1): Zusätzlich prüft jeder Versuch
+    /// (einschließlich Retries mit frischem Lesezustand) exakt die
+    /// erwartete Basisrevision und pinnen den Concurrency-Token darauf
+    /// — eine Revisionsänderung, die zwischen Laden und Commit commitet
+    /// wird, scheitert als sichtbarer Revisionskonflikt (409) statt
+    /// stillschweigend übersteuert zu werden.
     /// </summary>
     public async Task<Booking> UpdateAsync(
         Booking updated,
@@ -228,13 +235,23 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         IReadOnlyCollection<SettlementPosition> settlements,
         CancellationToken cancellationToken = default)
     {
+        // Review 7a-2, Befund 4 (P1): Der Aufrufer (CorrectionService)
+        // garantiert updated.BaseRevision = original.BaseRevision + 1 —
+        // die erwartete Basisrevision für die Revisionsprüfung und den
+        // Concurrency-Token (CAS). Sie wird vor dem Retry-Loop abgeleitet
+        // und jedem Versuch mitgegeben; ein Retry lädt zwar frischen
+        // Lesezustand, darf aber die erwartete Basisrevision nicht
+        // annehmen (sonst würde er eine zwischenzeitlich commitete
+        // Revisionsänderung stillschweigend übersteuern — lost update).
+        var expectedRevision = updated.BaseRevision - 1;
         const int maxAttempts = 3;
         DbUpdateException? lastConflict = null;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             try
             {
-                return await ApplyUpdateAsync(updated, correction, settlements, cancellationToken);
+                return await ApplyUpdateAsync(
+                    updated, correction, settlements, expectedRevision, cancellationToken);
             }
             catch (DbUpdateException ex) when (SqliteConstraintErrors.IsForeignKeyViolation(ex))
             {
@@ -261,6 +278,7 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         Booking updated,
         BookingCorrection correction,
         IReadOnlyCollection<SettlementPosition> settlements,
+        int expectedRevision,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(settlements);
@@ -279,6 +297,23 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
                 $"In-place-Korrektur für unbekannte Buchung '{updated.Id}' — " +
                 "das Original existiert nicht.");
 
+        // Review 7a-2, Befund 4 (P1): Die Basisrevision des geladenen
+        // Zustands muss die erwartete Basisrevision der Fassung sein —
+        // auch nach einem Retry mit neuem Ladevorgang. Der automatisch
+        // generierte Concurrency-Token würde eine Revisionsänderung,
+        // die zwischenzeitlich commitet wurde, stillschweigend
+        // übersteuern (der CAS bezieht sich auf den gerade geladenen
+        // Zustand, und die Fassung schreibt denselben Revisionswert
+        // zurück). Exakte Abweichung → sichtbarer Revisionskonflikt
+        // (409), die Fassung wird nicht angefasst.
+        if (tracked.BaseRevision != expectedRevision)
+        {
+            throw await RevisionConflictAsync(
+                [tracked],
+                new Dictionary<string, int> { [updated.Id] = expectedRevision },
+                cancellationToken);
+        }
+
         // Der Typ bleibt; die übrigen skalaren Felder übernehmen den
         // geprüften Ersatzinhalt (Revisionserhöhung inklusive — sie kommt
         // aus dem Anwendungsfall).
@@ -293,6 +328,15 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         // die Zeile; das partielle eindeutige Index erzwingt die
         // Einmaligkeitsregel atomar).
         tracked.OpeningBalanceAccountId = updated.OpeningBalanceAccountId;
+
+        // Concurrency-Token (Review 7a-2, Befund 4): OriginalValue
+        // explizit auf die erwartete Basisrevision pinnen — selbst eine
+        // Änderung, die zwischen der Prüfung oben und dem Commit
+        // commitet wird, lässt das UPDATE auf 0 Zeilen scheitern
+        // (DbUpdateConcurrencyException → 409) statt zu commiten.
+        db.Entry(tracked)
+            .Property(nameof(Booking.BaseRevision))
+            .OriginalValue = expectedRevision;
 
         ReplaceChildren(tracked, updated);
         db.BookingCorrections.Add(correction);
@@ -311,7 +355,7 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         {
             throw await RevisionConflictAsync(
                 [tracked],
-                new Dictionary<string, int> { [tracked.Id] = tracked.BaseRevision - 1 },
+                new Dictionary<string, int> { [updated.Id] = expectedRevision },
                 cancellationToken);
         }
 
