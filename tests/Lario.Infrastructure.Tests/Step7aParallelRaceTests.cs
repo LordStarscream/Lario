@@ -351,13 +351,22 @@ public sealed class Step7aParallelRaceTests
     /// <summary>
     /// Review 7a, Befund 3 (Race B, deterministisch): Befehls-
     /// Interceptor, der beim ersten <c>"Attachments"</c>-Select — der
-    /// ReplaceSplits-Lesung innerhalb der Update-Transaktion (davor
-    /// liest <c>CorrectionService</c> Attachments nicht) — über eine
-    /// zweite SQLite-Verbindung einen gültigen Beleg an 'sp-1'
-    /// anlegt und committet. Beim anschließenden Split-Löschen
-    /// verletzt das das RESTRICT-FK; die Korrektur muss den frischen
-    /// Lesezustand neu laden und den Beleg umlagern (D1b) statt mit
-    /// einem FK-Fehler zu enden.
+    /// ReplaceSplits-Lesung (Autocommit-Lese, noch vor As
+    /// Update-Transaktion; davor liest <c>CorrectionService</c>
+    /// Attachments nicht) — über eine zweite SQLite-Verbindung einen
+    /// gültigen Beleg an 'sp-1' anlegt und committet. Empirisch
+    /// verifiziert (21.10.): A's Lese-SELECTs sehen jeweils den
+    /// jeweils letzten committierten Zustand (kein über mehrere
+    /// Aussagen haltender Read-Snapshot) — die Lese sieht den Beleg
+    /// und <c>ReplaceSplits</c> hängt ihn an die Gesamtbuchung um
+    /// (Erhaltungsregel, D1b); der Versuch committet im ersten
+    /// Anlauf ohne FK-Fehler. (Der FK-Fehler-Retry in
+    /// <c>BookingRepository.UpdateAsync</c> ist verteidigende
+    /// Tiefe: unter Sqlites Schreib-Lock-Serialisierung — die
+    /// Transaktion hält den Lock bereits vor der ersten DML — kann
+    /// kein paralleler Beleg-Commit zwischen As Lese und As Commit
+    /// landen; das Produktions-Race endet stattdessen in dieser
+    /// Umlageung oder im Upload-FK-Fehler (Race A, p3).)
     /// </summary>
     private sealed class StaleAttachmentInjector(
         string connectionString, string attachmentsDir, string bookingId, string splitId)
@@ -415,19 +424,21 @@ public sealed class Step7aParallelRaceTests
     /// <summary>
     /// Review 7a-2, Befund 4 (P1, deterministisch): Der erste
     /// <c>SELECT</c>, der <c>"Attachments"</c> liest — die
-    /// <c>ReplaceSplits</c>-Abfrage innerhalb der Update-Transaktion
-    /// (davor hat die laufende Korrektur A nur die Buchung geladen
-    /// und keine Schreiboperation ausgeführt, hält also noch kein
-    /// Schreiblock) — committet über eine zweite SQLite-Verbindung
+    /// <c>ReplaceSplits</c>-Abfrage (Autocommit-Lese, noch vor As
+    /// Update-Transaktion; A hat bis dahin nur gelesen und hält
+    /// keinen Schreiblock — die Update-Transaktion lockt erst zu
+    /// Beginn von <c>SaveChanges</c>, empirisch verifiziert 21.10.) — committet über eine zweite SQLite-Verbindung
     /// eine echte parallele Korrektur B (Note + Basisrevision 2 +
     /// Historienzeile) mit ihrem eigenen CAS auf Basisrevision 1.
     /// A hat die Buchung vor Bs Commit mit Basisrevision 1 geladen;
     /// ihr Commit muss dann als sichtbarer Revisionskonflikt (409)
     /// scheitern — statt B stillschweigend zu übersteuern (lost
-    /// update). SQLite-spezifisch: solange As Transaktion nur gelesen
-    /// hat, kann Bs Transaktion commiten; As erstes UPDATE würde B
-    /// ansonsten blockieren (umgekehrt: Bs Commit während As
-    /// Schreibphase ist blockiert, daher der Injektionspunkt).
+    /// update). Empirisch verifiziert (21.10.): Autocommit-Reads
+    /// sehen jeweils den letzten committierten Zustand, und As
+    /// Update-Transaktion akquiriert den Schreiblock bereits zu
+    /// Beginn von <c>SaveChanges</c> (vor der ersten DML) — daher
+    /// ist die Lese-Phase der einzige Injektionspunkt, an dem B
+    /// ohne Blockierung committieren kann.
     /// </summary>
     private sealed class MidFlightRevisionCommitter(
         string connectionString, string bookingId) : IDbCommandInterceptor
