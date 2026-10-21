@@ -114,6 +114,14 @@
                 Erstattung
               </button>
             }
+            @if (item.type === 'Expense') {
+              <!-- Belege (7a): auch bei gestörten Ausgaben öffnen —
+                   Vorschau/Download/Entfernen bleiben möglich, das
+                   Hochladen wird dort im Dialog gesperrt. -->
+              <button type="button" class="btn btn-small" (click)="openAttachments(item)">
+                Belege
+              </button>
+            }
           </td>
         </tr>
       }
@@ -273,6 +281,167 @@
           (click)="submitRefund()"
         >
           {{ rf.busy ? 'Wird gebucht …' : 'Erstattung buchen' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Beleg-Dialog (7a): Liste + Vorschau/Download + Upload mit
+     Client-Vorvalidierung und Split-Zuordnung (nur bei >1 Splits). -->
+@if (attachments(); as att) {
+  <div class="dialog-overlay" (click.self)="closeAttachments()">
+    <div class="dialog" role="dialog" aria-label="Belege">
+      <h3>Belege</h3>
+      <p class="dialog-sub">
+        Belege zu {{ formatDate(att.booking.date) }}
+        ({{ typeLabel(att.booking.type) }}, {{ formatCents(att.booking.totalAmount) }}).
+      </p>
+
+      @if (att.loading) {
+        <p class="muted">Lade Belege …</p>
+      } @else if (att.error; as err) {
+        <div class="banner banner-error" role="alert">
+          <strong>Fehler:</strong> {{ err.message }}
+        </div>
+      } @else {
+        @if (att.attachments.length === 0) {
+          <p class="empty">Noch keine Belege.</p>
+        } @else {
+          <ul class="attachment-list">
+            @for (a of att.attachments; track a.id) {
+              <li class="attachment-item">
+                <div class="attachment-info">
+                  <span class="attachment-name">{{ a.originalFilename }}</span>
+                  <span class="muted">
+                    {{ formatBytes(a.sizeBytes) }} · {{ attachmentSplitLabel(a) }}
+                    @if (a.originalSplitId) {
+                      · umgehängt
+                    }
+                  </span>
+                </div>
+                <div class="attachment-actions">
+                  @if (isImageAttachment(a)) {
+                    <button
+                      type="button"
+                      class="btn btn-small"
+                      [disabled]="att.busyAttachmentId === a.id"
+                      (click)="showPreview(a)"
+                    >
+                      {{ att.previewId === a.id ? 'Vorschau anzeigen' : 'Vorschau' }}
+                    </button>
+                  } @else {
+                    <button
+                      type="button"
+                      class="btn btn-small"
+                      [disabled]="att.busyAttachmentId === a.id"
+                      (click)="openAttachment(a)"
+                    >
+                      {{ att.busyAttachmentId === a.id ? 'Wird geladen …' : 'Öffnen' }}
+                    </button>
+                  }
+                  <button
+                    type="button"
+                    class="btn btn-small"
+                    [disabled]="att.busyAttachmentId === a.id"
+                    (click)="downloadAttachment(a)"
+                  >
+                    Herunterladen
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-small btn-danger"
+                    [disabled]="att.busy"
+                    (click)="requestDeleteAttachment(a)"
+                  >
+                    Entfernen
+                  </button>
+                </div>
+                @if (att.confirmDeleteId === a.id) {
+                  <div class="attachment-confirm" role="alert">
+                    <span>Wirklich entfernen?</span>
+                    <button
+                      type="button"
+                      class="btn btn-small btn-danger"
+                      [disabled]="att.busy"
+                      (click)="confirmDeleteAttachment()"
+                    >
+                      Ja, entfernen
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-small"
+                      [disabled]="att.busy"
+                      (click)="cancelDeleteAttachment()"
+                    >
+                      Abbrechen
+                    </button>
+                  </div>
+                }
+              </li>
+            }
+          </ul>
+        }
+
+        @if (att.previewUrl; as url) {
+          <div class="attachment-preview">
+            <img [src]="url" alt="Belegvorschau" />
+          </div>
+        }
+
+        @if (att.booking.effectivelyReversed) {
+          <div class="banner banner-info" role="status">
+            Diese Ausgabe ist gestört — es werden keine weiteren Belege
+            angenommen.
+          </div>
+        } @else {
+          <div class="attachment-upload">
+            <label class="field">
+              <span class="field-label">Datei (PDF, JPEG, PNG, max. 10 MB)</span>
+              <input
+                type="file"
+                accept="application/pdf,image/jpeg,image/png"
+                [disabled]="att.busy"
+                (change)="onFileSelected($event)"
+              />
+            </label>
+            @if (att.detail && att.detail.splits.length > 1) {
+              <label class="field">
+                <span class="field-label">Zuordnung</span>
+                <select
+                  [ngModel]="att.splitId"
+                  (ngModelChange)="att.splitId = $event"
+                  [disabled]="att.busy"
+                >
+                  <option value="">Gesamte Ausgabe</option>
+                  @for (s of att.detail.splits; track s.id) {
+                    <option [value]="s.id">
+                      {{ s.poolName ?? 'Split' }} ({{ formatCents(s.amount) }})
+                    </option>
+                  }
+                </select>
+              </label>
+            }
+            @if (att.clientError) {
+              <div class="banner banner-error" role="alert">{{ att.clientError }}</div>
+            }
+            <div>
+              <button
+                type="button"
+                class="btn btn-primary"
+                [disabled]="!canUpload()"
+                (click)="uploadAttachment()"
+              >
+                {{ att.busy ? 'Wird hochgeladen …' : 'Beleg hochladen' }}
+              </button>
+            </div>
+          </div>
+        }
+      }
+
+      <div class="dialog-actions">
+        <button type="button" class="btn" (click)="closeAttachments()" [disabled]="att.busy || att.loading">
+          Schließen
         </button>
       </div>
     </div>

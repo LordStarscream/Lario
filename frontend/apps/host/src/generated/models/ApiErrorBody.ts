@@ -7,5 +7,6 @@ export type ApiErrorBody = {
     message: string;
     expectedBaseRevision?: number | string | null;
     actualBaseRevision?: number | string | null;
+    detailCode?: string | null;
 };
 

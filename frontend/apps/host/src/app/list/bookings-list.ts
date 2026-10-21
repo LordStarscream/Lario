@@ -4,10 +4,13 @@ import { FormsModule } from '@angular/forms';
 import type { ApiErrorInfo } from '../../api/api-error';
 import { ApiErrorHandler } from '../../api/error-handler';
 import { CatalogService } from '../../api/catalogs';
-import { formatCents, formatDate, parseEuroToCents, todayIso } from '../../api/money';
+import { formatBytes, formatCents, formatDate, parseEuroToCents, todayIso } from '../../api/money';
+import { fetchAttachmentBlob } from '../../api/attachment-download';
 import { BalancesPanel } from '../shared/balances-panel/balances-panel';
+import { AttachmentEndpointsService } from '../../generated/services/AttachmentEndpointsService';
 import { JournalEndpointsService } from '../../generated/services/JournalEndpointsService';
 import { JournalWriteEndpointsService } from '../../generated/services/JournalWriteEndpointsService';
+import type { AttachmentDto } from '../../generated/models/AttachmentDto';
 import type { BalancesDto } from '../../generated/models/BalancesDto';
 import type { BookingDetailDto } from '../../generated/models/BookingDetailDto';
 import type { BookingListItemDto } from '../../generated/models/BookingListItemDto';
@@ -46,6 +49,15 @@ export interface RefundDialogState {
   error: ApiErrorInfo | null;
 }
 
+/**
+ * Belege (7a): zulässige Content-Types (PDF, JPEG, PNG — Design D7) und
+ * die Client-Vorvalidierung an der Standardgrenze von 10 MB. Der Server
+ * bleibt maßgeblich — bei abweichend konfiguriertem MaxBytes kommt 413
+ * mit verständlicher Meldung.
+ */
+const ATTACHMENT_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+
 const TYPE_LABELS: Record<string, string> = {
   Income: 'Einnahme',
   Expense: 'Ausgabe',
@@ -59,6 +71,30 @@ const TYPE_LABELS: Record<string, string> = {
   BalanceCorrection: 'Korrektur Kontostand',
   OpeningBalance: 'Anfangsbestand',
 };
+
+export interface AttachmentDialogState {
+  booking: BookingListItemDto;
+  /** Lade Zustand: Buchungsdetail + Belegliste. */
+  loading: boolean;
+  /** Schreibaktion läuft (Hochladen, Entfernen, Vorschau laden). */
+  busy: boolean;
+  detail: BookingDetailDto | null;
+  attachments: AttachmentDto[];
+  selectedFile: File | null;
+  /** Leer = gesamte Ausgabe; sonst der gewählte Split (nur bei >1 Splits). */
+  splitId: string;
+  /** Client-Vorvalidierung (Typ/Große) am gewählten File. */
+  clientError: string | null;
+  error: ApiErrorInfo | null;
+  /** Beleg, für den gerade ein Preview-/Download-Blob geladen wird. */
+  busyAttachmentId: string | null;
+  /** Beleg, dessen Bildvorschau angezeigt wird (nur Bilder). */
+  previewId: string | null;
+  /** Blob-URL der angezeigten Vorschau (gehört zu `previewId`). */
+  previewUrl: string | null;
+  /** Beleg, für den gerade die Löschbestätigung angezeigt wird. */
+  confirmDeleteId: string | null;
+}
 
 const FILTER_TYPES = [
   { value: 'all', label: 'Alle Typen' },
@@ -168,6 +204,7 @@ export class BookingsList implements OnInit {
 
   readonly reversal = signal<ReversalDialogState | null>(null);
   readonly refund = signal<RefundDialogState | null>(null);
+  readonly attachments = signal<AttachmentDialogState | null>(null);
 
   private readonly router = inject(Router);
   readonly catalog = inject(CatalogService);
@@ -401,8 +438,244 @@ export class BookingsList implements OnInit {
     this.refund.update((d) => (d && d.booking.id === state.booking.id ? { ...d, ...patch } : d));
   }
 
+  // ---------- Belege (7a) ----------
+
+  openAttachments(booking: BookingListItemDto): void {
+    const state: AttachmentDialogState = {
+      booking,
+      loading: true,
+      busy: false,
+      detail: null,
+      attachments: [],
+      selectedFile: null,
+      splitId: '',
+      clientError: null,
+      error: null,
+      busyAttachmentId: null,
+      previewId: null,
+      previewUrl: null,
+      confirmDeleteId: null,
+    };
+    this.attachments.set(state);
+    void this.loadAttachmentDialog(state);
+  }
+
+  closeAttachments(): void {
+    const url = this.attachments()?.previewUrl;
+    if (url) {
+      URL.revokeObjectURL(url);
+    }
+    this.attachments.set(null);
+  }
+
+  private async loadAttachmentDialog(state: AttachmentDialogState): Promise<void> {
+    try {
+      const [detail, list] = await Promise.all([
+        JournalEndpointsService.getBooking(state.booking.id),
+        AttachmentEndpointsService.getBookingAttachments(state.booking.id),
+      ]);
+      this.patchAttachments(state, {
+        loading: false,
+        detail,
+        attachments: list,
+        // Split-Zuordnung nur wählbar bei mehreren Splits (R7a-2);
+        // ansonsten gehört der Beleg zur gesamten Ausgabe.
+        splitId: detail.splits.length > 1 ? state.splitId : '',
+      });
+    } catch (error) {
+      this.patchAttachments(state, { loading: false, error: this.errors.handle(error) });
+    }
+  }
+
+  private patchAttachments(state: AttachmentDialogState, patch: Partial<AttachmentDialogState>): void {
+    this.attachments.update(
+      (d) => (d && d.booking.id === state.booking.id ? { ...d, ...patch } : d),
+    );
+  }
+
+  private patchCurrentAttachment(patch: Partial<AttachmentDialogState>): void {
+    this.attachments.update((d) => (d ? { ...d, ...patch } : d));
+  }
+
+  /** Client-Vorvalidierung (D8): Typ und Größe, bevor etwas gesendet wird. */
+  private validateFile(file: File): string | null {
+    if (!ATTACHMENT_TYPES.has(file.type)) {
+      return 'Erlaubt sind nur PDF-, JPEG- und PNG-Dateien.';
+    }
+    if (file.size > ATTACHMENT_MAX_BYTES) {
+      return `Die Datei ist größer als ${formatBytes(ATTACHMENT_MAX_BYTES)}.`;
+    }
+    return null;
+  }
+
+  onFileSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    this.attachments.update((d) =>
+      d
+        ? { ...d, selectedFile: file, clientError: file ? this.validateFile(file) : null }
+        : d,
+    );
+  }
+
+  canUpload(): boolean {
+    const dialog = this.attachments();
+    return (
+      !!dialog &&
+      !dialog.loading &&
+      !dialog.busy &&
+      dialog.selectedFile !== null &&
+      dialog.clientError === null
+    );
+  }
+
+  async uploadAttachment(): Promise<void> {
+    const dialog = this.attachments();
+    const file = dialog?.selectedFile;
+    if (!dialog || !file || dialog.busy || this.validateFile(file) !== null) {
+      return;
+    }
+    this.patchCurrentAttachment({ busy: true, error: null });
+    try {
+      // `File` ist ein `Blob` (generierter Typ IFormFile = Blob); als File
+      // übergeben bleibt der Original-Dateiname im Multipart-Body erhalten.
+      await AttachmentEndpointsService.uploadAttachment({
+        file,
+        bookingId: dialog.booking.id,
+        splitId: dialog.splitId || undefined,
+      });
+      this.patchCurrentAttachment({
+        busy: false,
+        selectedFile: null,
+        clientError: null,
+        error: null,
+      });
+      await this.loadAttachmentDialog(dialog);
+    } catch (error) {
+      this.patchCurrentAttachment({ busy: false, error: this.errors.handle(error) });
+    }
+  }
+
+  isImageAttachment(attachment: AttachmentDto): boolean {
+    return attachment.contentType.startsWith('image/');
+  }
+
+  isPdfAttachment(attachment: AttachmentDto): boolean {
+    return attachment.contentType.startsWith('application/pdf');
+  }
+
+  /** Zuordnung eines Belegs zum Split als Anzeige-Label. */
+  attachmentSplitLabel(attachment: AttachmentDto): string {
+    if (attachment.splitId === null) {
+      return 'Gesamte Ausgabe';
+    }
+    const split = this.attachments()?.detail?.splits.find((s) => s.id === attachment.splitId);
+    return split ? `${split.poolName ?? 'Split'} (${formatCents(split.amount)})` : 'Split';
+  }
+
+  /** Bildvorschau über Blob-URL (Design D4). */
+  async showPreview(attachment: AttachmentDto): Promise<void> {
+    if (!this.isImageAttachment(attachment)) {
+      return;
+    }
+    this.patchCurrentAttachment({ busyAttachmentId: attachment.id, error: null });
+    try {
+      const blob = await fetchAttachmentBlob(attachment.id);
+      const url = URL.createObjectURL(blob);
+      this.attachments.update((d) => {
+        if (!d) {
+          return d;
+        }
+        if (d.previewUrl && d.previewUrl !== url) {
+          URL.revokeObjectURL(d.previewUrl);
+        }
+        return { ...d, busyAttachmentId: null, previewId: attachment.id, previewUrl: url };
+      });
+    } catch (error) {
+      this.patchCurrentAttachment({ busyAttachmentId: null, error: this.errors.handle(error) });
+    }
+  }
+
+  /** PDF im neuen Tab öffnen (Blob-URL; wird bewusst nicht revokiert,
+   *  weil der neue Tab sie noch braucht). */
+  async openAttachment(attachment: AttachmentDto): Promise<void> {
+    if (!this.isPdfAttachment(attachment)) {
+      return;
+    }
+    this.patchCurrentAttachment({ busyAttachmentId: attachment.id, error: null });
+    try {
+      const blob = await fetchAttachmentBlob(attachment.id);
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      this.patchCurrentAttachment({ busyAttachmentId: null });
+    } catch (error) {
+      this.patchCurrentAttachment({ busyAttachmentId: null, error: this.errors.handle(error) });
+    }
+  }
+
+  /** Download über temporäre <a download>-Brücke. */
+  async downloadAttachment(attachment: AttachmentDto): Promise<void> {
+    this.patchCurrentAttachment({ busyAttachmentId: attachment.id, error: null });
+    try {
+      const blob = await fetchAttachmentBlob(attachment.id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = attachment.originalFilename || `beleg-${attachment.id.slice(0, 8)}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      this.patchCurrentAttachment({ busyAttachmentId: null });
+    } catch (error) {
+      this.patchCurrentAttachment({ busyAttachmentId: null, error: this.errors.handle(error) });
+    }
+  }
+
+  requestDeleteAttachment(attachment: AttachmentDto): void {
+    this.patchCurrentAttachment({ confirmDeleteId: attachment.id, error: null });
+  }
+
+  cancelDeleteAttachment(): void {
+    this.patchCurrentAttachment({ confirmDeleteId: null });
+  }
+
+  async confirmDeleteAttachment(): Promise<void> {
+    const dialog = this.attachments();
+    const id = dialog?.confirmDeleteId;
+    if (!dialog || !id || dialog.busy) {
+      return;
+    }
+    this.patchCurrentAttachment({ busy: true, error: null });
+    try {
+      await AttachmentEndpointsService.deleteAttachment(id);
+      this.attachments.update((d) => {
+        if (!d) {
+          return d;
+        }
+        // Gelöschter Beleg war die angezeigte Vorschau → Vorschau aufräumen.
+        const previewCleared = d.previewId === id;
+        if (previewCleared && d.previewUrl) {
+          URL.revokeObjectURL(d.previewUrl);
+        }
+        return {
+          ...d,
+          busy: false,
+          confirmDeleteId: null,
+          previewId: previewCleared ? null : d.previewId,
+          previewUrl: previewCleared ? null : d.previewUrl,
+        };
+      });
+      await this.loadAttachmentDialog(dialog);
+    } catch (error) {
+      this.patchCurrentAttachment({ busy: false, error: this.errors.handle(error) });
+    }
+  }
+
   // ---------- Anzeige ----------
 
+  formatBytes = formatBytes;
   formatCents = formatCents;
   formatDate = formatDate;
 }
