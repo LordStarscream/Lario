@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 7a — PDF-/Bildnachweise in der Hauptanwendung
-_Status: aktiv · Last updated: 21. Okt. 2026_
+_Status: aktiv · Batch A fertig (513/513 .NET-Tests) · Last updated: 21. Okt. 2026_
 
 **Branches:**
 - Lario → `step/7a-attachments-belege` (Worktree `/home/mario/Projects/Lario-worktrees/step-7a`; Haupt-Checkout bleibt auf `main`)
@@ -50,7 +50,8 @@ Siehe `.tasks/step-7a-design-paket.md` (D1–D9b). Stand nach Designreview PR #1
 
 | Batch | Tasks | Status |
 |---|---|---|
-| A | A1 Domain/Mapping/Migration · A2 Korrektur-Integration · A3 Application (Interfaces + Service + EF-Repo) · A4 Infrastructure (FileStore + DI) | offen |
+| A | A1 Domain/Mapping/Migration · A2 Korrektur-Integration · A3 Application (Interfaces + Service + EF-Repo) · A4 Infrastructure (FileStore + DI) | **fertig** (21. Okt. 2026): 513/513 .NET-Tests (214 Domain, 195 Infrastructure, 104 Api); Löschreihenfolge DB-Zeile → Datei gemäß Design D5; Migration `20261021061626_Step7aAttachments`; Tests h1–h9, a1–a20, f1–f2, g1–g3, i1–i3 |
+| B (Teil) | B1-Vorbereitung: Host-DI (Ablageverzeichnis), Start-Abgleich nach Migrate, API-Fehlercodes D3 | **fertig** (21. Okt. 2026); Rest von B1 (Endpoints, Limits, README) + B2 offen |
 | B | B1 Host-Endpunkte + Limits + Start-Abgleich + README · B2 Api-Tests (a)–(iv) | offen |
 | C | C1 Frontend-Dialog + Client-Regeneration + host-Tests · C2 E2E-Smoke-Test | offen |
 | D | D1 Gesamtabnahme + Commit | offen |

@@ -61,7 +61,9 @@ var dataPaths = LarioDataPaths.Resolve(builder.Configuration["Lario:DataDirector
 
 // Datenschicht (Schritt 3): EF Core / SQLite + Repositories +
 // Anwendungsfälle. Die produktive REST-API folgt in Schritt 7.
-builder.Services.AddLarioData($"Data Source={dataPaths.DatabaseFilePath}");
+builder.Services.AddLarioData(
+    $"Data Source={dataPaths.DatabaseFilePath}",
+    dataPaths.AttachmentsDirectory);
 
 // Lokale Authentifizierung (Schritt 7, Design D1/D2): ein lokaler
 // Benutzer, Bearer-Token für /api/v1. Sind Username/Password
@@ -94,6 +96,20 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine(
             $"Lario: {backfilledRows} offene Ausgleichsposition(en) nachgeführt (Upgrade-Backfill)." +
             " Siehe docs/step-5/ — die Datenbasis war vor der Positionsverwaltung angelegt.");
+    }
+
+    // Beleg-Abgleich beim Serverstart (Schritt 7a, Design D9b): finale
+    // Dateien ohne Metadatenzeile (Waisen) und offene .part-Dateien
+    // (Abbruch-Reste) werden entfernt; Metadaten ohne Datei bleiben
+    // (Download liefert 410).
+    var reconcile = scope.ServiceProvider.GetRequiredService<Lario.Application.Attachments.AttachmentService>();
+    var reconcileResult = await reconcile.ReconcileAsync();
+    if (reconcileResult.OrphanedFilesDeleted > 0 || reconcileResult.PartFilesDeleted > 0)
+    {
+        Console.WriteLine(
+            $"Lario: Beleg-Abgleich: {reconcileResult.OrphanedFilesDeleted} Waisen-Datei(en) und " +
+            $"{reconcileResult.PartFilesDeleted} Abbruch-Rest(e) entfernt, " +
+            $"{reconcileResult.MetadataWithoutFile} Metadatenzeile(n) ohne Datei (Download liefert 410).");
     }
 }
 

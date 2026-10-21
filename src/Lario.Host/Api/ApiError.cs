@@ -1,3 +1,4 @@
+using Lario.Application.Attachments;
 using Lario.Domain;
 
 namespace Lario.Host.Api;
@@ -5,12 +6,17 @@ namespace Lario.Host.Api;
 /// <summary>
 /// Verbindliches API-Fehlerformat (Schritt 7, Design §2.3):
 /// <c>{ "error": { "code": "...", "message": "...", ... } }</c>.
+/// <see cref="DetailCode"/> verfeinert einen generischen Code für die
+/// Beleg-Validierung (Schritt 7a, Design D3: z. B.
+/// <c>validation_error</c> + <c>detailCode=attachment_too_large</c>);
+/// bei allen anderen Fehlern null.
 /// </summary>
 public sealed record ApiErrorBody(
     string Code,
     string Message,
     int? ExpectedBaseRevision = null,
-    int? ActualBaseRevision = null);
+    int? ActualBaseRevision = null,
+    string? DetailCode = null);
 
 /// <summary>Antworthülle für alle API-Fehler.</summary>
 public sealed record ErrorResponse(ApiErrorBody Error);
@@ -41,6 +47,21 @@ public static class ApiExceptionMapping
                 return (
                     StatusCodes.Status400BadRequest,
                     new ErrorResponse(new ApiErrorBody("invalid_reference", reference.Message)));
+
+            // Beleg-Validierung (Schritt 7a, Design D3): der generische
+            // Code bleibt <c>validation_error</c>, der Detailcode sagt
+            // aus, welche Prüfung fehlgeschlagen ist.
+            case UnsupportedAttachmentTypeException type:
+                return (
+                    StatusCodes.Status400BadRequest,
+                    new ErrorResponse(new ApiErrorBody(
+                        "validation_error", type.Message, DetailCode: "unsupported_attachment_type")));
+
+            case AttachmentTooLargeException tooLarge:
+                return (
+                    StatusCodes.Status413PayloadTooLarge,
+                    new ErrorResponse(new ApiErrorBody(
+                        "validation_error", tooLarge.Message, DetailCode: "attachment_too_large")));
 
             case CycleDetectedException cycle:
                 return (
