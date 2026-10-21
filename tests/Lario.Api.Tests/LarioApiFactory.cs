@@ -20,15 +20,21 @@ public sealed class LarioApiFactory : WebApplicationFactory<Program>
     private readonly bool _ownsDataDirectory;
     private readonly string? _username;
     private readonly string? _password;
+    private readonly IReadOnlyDictionary<string, string> _settings;
 
     /// <param name="dataDirectory">Bestehendes Verzeichnis (z. B. für Neustart-Test); Default: neue Temp-Ablage.</param>
     /// <param name="configuredCredentials">true: Test-Credentials per Konfiguration (keine credentials.json); false: Host erzeugt selbst.</param>
-    public LarioApiFactory(string? dataDirectory = null, bool configuredCredentials = true)
+    /// <param name="settings">Weitere Host-Konfiguration (z. B. <c>Lario:Attachments:MaxBytes</c> für Größen-Tests).</param>
+    public LarioApiFactory(
+        string? dataDirectory = null,
+        bool configuredCredentials = true,
+        IReadOnlyDictionary<string, string>? settings = null)
     {
         _ownsDataDirectory = dataDirectory is null;
         _dataDirectory = dataDirectory ?? Directory.CreateTempSubdirectory("lario-api-test-").FullName;
         _username = configuredCredentials ? TestUsername : null;
         _password = configuredCredentials ? TestPassword : null;
+        _settings = settings ?? new Dictionary<string, string>();
     }
 
     public string DataDirectory => _dataDirectory;
@@ -42,6 +48,10 @@ public sealed class LarioApiFactory : WebApplicationFactory<Program>
         {
             builder.UseSetting("Lario:Auth:Username", _username);
             builder.UseSetting("Lario:Auth:Password", _password);
+        }
+        foreach (var (key, value) in _settings)
+        {
+            builder.UseSetting(key, value);
         }
     }
 

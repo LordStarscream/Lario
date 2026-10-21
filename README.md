@@ -54,6 +54,12 @@ frontend/                  Angular-Workspace
 dotnet build Lario.slnx
 dotnet test Lario.slnx
 
+# Hinweis (Umgebung mit zwei .NET-Installationen): Fehlt der Systeminstallation
+# (/usr/share/dotnet) die Microsoft.AspNetCore.App-Runtime, bricht der
+# API-Testhost beim parallelen Solution-Testlauf ab. In diesem Fall:
+#   dotnet test Lario.slnx -m:1   (ein Prozess, nutzt ~/.dotnet)
+# oder die Testprojekte einzeln: dotnet test tests/Lario.Api.Tests/Lario.Api.Tests.csproj
+
 # Frontend: Abhängigkeiten, Lint, Build beider Apps, Tests
 cd frontend
 npm ci
@@ -131,6 +137,15 @@ Wird beim Host-Start angelegt (idempotent — Neustart erzeugt keine zweite Abla
 3. sonst `~/.local/share/lario`
 
 Die SQLite-Datei (`lario.sqlite`) erscheint dort ab Schritt 3.
+
+Ab Schritt 7a liegen Beleg-Originaldateien zusätzlich in
+`<Datenverzeichnis>/attachments/` (serverseitig erzeugte Namen, außerhalb
+der öffentlich ausgelieferten Weboberfläche; Zugriff nur über
+authentifizierte API-Endpunkte). Die maximale Bilddateigröße ist über
+`Lario:Attachments:MaxBytes` konfigurierbar (Default 10.000.000 Byte =
+10 MB); Kestrel- und Multipart-Limits leitet der Host davon ab
+(`MaxBytes + 1 MB`), damit überdimensionierte Uploads bereits vor dem
+Puffern mit 413 abgewiesen werden.
 
 ## OpenAPI-Client generieren
 
