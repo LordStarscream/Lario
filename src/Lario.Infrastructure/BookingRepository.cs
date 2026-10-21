@@ -406,6 +406,24 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
         // Entfallene Teilposten (mit Kennzeichnung) werden gelöscht.
         foreach (var stale in current.Where(s => !seen.Contains(s.Id)).ToList())
         {
+            // Beleg-Umlageung (Design 7a D1b, Review P1): Belege, die den
+            // entfallenden Split belegen, wandern in derselben Transaktion
+            // auf die Gesamtbuchung — sonst würde der FK (Restrict) das
+            // Löschen blockieren, und ohne Umlageung würden Metadaten auf
+            // einen gelöschten Split zeigen. Die alte Id bleibt in
+            // OriginalSplitId nachvollziehbar; Datei und Buchung bleiben
+            // unverändert.
+            // BookingId ist eine Schatten-Spalte des Komposit-Keys —
+            // über die Buchung wird gefiltert (alle Splits von 'tracked').
+            var staleId = stale.Id;
+            var bookingId = tracked.Id;
+            foreach (var attachment in db.Attachments
+                .Where(a => a.BookingId == bookingId && a.SplitId == staleId)
+                .ToList())
+            {
+                attachment.SplitId = null;
+                attachment.OriginalSplitId = staleId;
+            }
             db.Remove(stale);
         }
     }

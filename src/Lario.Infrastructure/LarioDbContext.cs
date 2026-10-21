@@ -1,4 +1,5 @@
 using Lario.Domain;
+using Lario.Domain.Attachments;
 using Lario.Domain.Journal;
 using Lario.Domain.MasterData;
 using Microsoft.EntityFrameworkCore;
@@ -41,6 +42,7 @@ public class LarioDbContext : DbContext
     public DbSet<SettlementPosition> SettlementPositions => Set<SettlementPosition>();
     public DbSet<ReversalDeltaRow> ReversalDeltas => Set<ReversalDeltaRow>();
     public DbSet<BookingCorrection> BookingCorrections => Set<BookingCorrection>();
+    public DbSet<Attachment> Attachments => Set<Attachment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -357,6 +359,53 @@ public class LarioDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.BookingId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Beleg-Metadaten (Schritt 7a, Design D1): die Datei selbst liegt
+        // außerhalb der Datenbank (Ablageverzeichnis, serverseitiger
+        // Name); hier nur Metadaten + Zuordnung. Die Buchungszugehörigkeit
+        // ist erforderlich (Restrict — Buchungen werden in Version 1
+        // nicht gelöscht); der Split-Bezug ist ein Komposit-FK
+        // (BookingId, SplitId) auf ExpenseSplits, weil die Teilposten-Id
+        // nur innerhalb der Buchung eindeutig ist (Muster: SplitTaxMarkings
+        // nutzt denselben Komposit-Schlüssel). OnDelete(Restrict) an beiden
+        // Stellen: unbeabsichtigtes Löschen von Buchung/Split ohne
+        // Umlageung (Design D1b) schlägt laut fehl statt dass Metadaten
+        // verschwinden und die Datei zurückbleibt. OriginalSplitId ist
+        // bewusst eine einfache Spalte ohne FK — sie referenziert
+        // gelöschte Splits (Nachvollziehbarkeit der Umlageung).
+        modelBuilder.Entity<Attachment>(e =>
+        {
+            e.ToTable("Attachments");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(128);
+            e.Property(x => x.OriginalFilename).HasMaxLength(255).IsRequired();
+            e.Property(x => x.ContentType).HasMaxLength(64).IsRequired();
+            e.Property(x => x.SizeBytes).IsRequired();
+            e.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+            e.Property(x => x.StoredName).HasMaxLength(255).IsRequired();
+            e.Property(x => x.BookingId).HasMaxLength(128).IsRequired();
+            e.Property(x => x.SplitId).HasMaxLength(128);
+            e.Property(x => x.OriginalSplitId).HasMaxLength(128);
+            e.Property(x => x.CreatedAtUtc).IsRequired();
+            e.HasOne<Booking>()
+                .WithMany()
+                .HasForeignKey(x => x.BookingId)
+                .OnDelete(DeleteBehavior.Restrict);
+            // Reihenfolge muss den Principal-Key (BookingId, Id) von
+            // ExpenseSplit positionsmäßig treffen: Spalte BookingId ->
+            // Principal-BookingId, Spalte SplitId -> Principal-Id.
+            // null SplitId = Beleg für die gesamte Ausgabe.
+            e.HasOne<ExpenseSplit>()
+                .WithMany()
+                .HasForeignKey(new[] { "BookingId", "SplitId" })
+                .OnDelete(DeleteBehavior.Restrict);
+            // Ein Dateiname darf höchstens eine Metadatenzeile tragen
+            // (StoredName wird aus der eindeutigen Id abgeleitet; der
+            // Index ist defensiv und unterstützt den Start-Abgleich).
+            e.HasIndex(x => x.StoredName)
+                .IsUnique()
+                .HasDatabaseName("UX_Attachments_StoredName");
         });
 
         // Korrektur-Historie (Design Schritt 6 §2.4/§2.5): Vorher/
