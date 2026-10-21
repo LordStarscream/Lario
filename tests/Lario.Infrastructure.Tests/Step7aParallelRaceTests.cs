@@ -1,11 +1,16 @@
+using System.Data.Common;
 using Lario.Application;
 using Lario.Application.Attachments;
 using Lario.Application.Journal;
 using Lario.Domain;
+using Lario.Domain.Attachments;
 using Lario.Domain.Journal;
 using Lario.Domain.MasterData;
 using Lario.Infrastructure;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Lario.Infrastructure.Tests;
 
@@ -23,6 +28,17 @@ namespace Lario.Infrastructure.Tests;
 ///      SQLITE_BUSY → Split bleibt unverändert, der Beleg ist gültig.
 /// In keinem Fall darf eine Orphan-Datei, eine Zeile ohne Datei oder
 /// eine Referenz auf einen gelöschten Split zurückbleiben.
+///
+/// Review 7a, Befund 3 — zusätzlich zwei deterministische
+/// Reproduktionen der Race-Fenster (kein Timing-Glück):
+///   p3 (Race A): Der Split wird zwischen der Referenzprüfung des
+///      Services und dem Metadaten-Insert gelöscht → der Komposit-FK
+///      muss eine saubere 400-Referenzausnahme liefern, keine 500.
+///   p4 (Race B): Ein Beleg wird zwischen der Attachment-Abfrage in
+///      <c>ReplaceSplits</c> und dem Commit der Korrektur an den
+///      entfallenden Teilposten angehängt → die Korrektur darf nicht
+///      mit einem ungehandelten FK-Fehler enden, sondern liest den
+///      frischen Lesezustand und umlagert den Beleg (D1b).
 /// </summary>
 public sealed class Step7aParallelRaceTests
 {
@@ -31,9 +47,10 @@ public sealed class Step7aParallelRaceTests
         0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34, 0x0A,
     ];
 
-    private static async Task<(TestDatabase Db, string BookingId, string SplitId)> SeedAsync()
+    private static async Task<(TestDatabase Db, string BookingId, string SplitId)> SeedAsync(
+        Action<ServiceCollection, string>? configureServices = null)
     {
-        var db = new TestDatabase();
+        var db = new TestDatabase(configureServices: configureServices);
         var admin = db.Resolve<MasterDataAdmin>();
         await admin.CreateAccountAsync("acc-haupt", "Hauptkonto", AccountType.Bank);
         await admin.CreatePoolAsync("pool-flex", "Flex");
@@ -56,14 +73,15 @@ public sealed class Step7aParallelRaceTests
         return (db, "aus-race", "sp-1");
     }
 
-    /// <summary>Korrektur, die genau sp-1 entfernt (Gesamtbetrag wird 4000).</summary>
-    private static CorrectionSpec RemovalSpec(string bookingId) => new(
-        bookingId, "op-corr-race", ExpectedBaseRevision: 1,
-        TotalAmount: new Money(4_000),
-        Splits:
-        [
-            new ExpenseSplitSpec { Id = "sp-2", Amount = new Money(4_000), PoolId = "pool-flex", CategoryId = "cat-miete" },
-        ]);
+    /// <summary>Korrektur, die genau sp-1 entfernt.</summary>
+    private static CorrectionSpec RemovalSpec(string bookingId, string operationId, int expectedRevision)
+        => new(
+            bookingId, operationId, ExpectedBaseRevision: expectedRevision,
+            TotalAmount: new Money(4_000),
+            Splits:
+            [
+                new ExpenseSplitSpec { Id = "sp-2", Amount = new Money(4_000), PoolId = "pool-flex", CategoryId = "cat-miete" },
+            ]);
 
     private static async Task<byte[]> ReadAllAsync(Stream stream)
     {
@@ -73,13 +91,17 @@ public sealed class Step7aParallelRaceTests
     }
 
     /// <summary>
-    /// Prüft die Endzustands-Invarianten für eine Runden-Kombination:
-    /// keine Orphan-Dateien, keine Zeile ohne Datei, keine Referenz auf
-    /// gelöschte Splits, Split-Zustand passend zum Korrekturergebnis und
-    /// Upload-Ergebnis passend zu Datei/Zeile.
+    /// Prüft die Endzustands-Invarianten: keine Orphan-Datei, keine
+    /// Zeile ohne Datei, keine Referenz auf gelöschte Splits, exakte
+    /// Beleg-Zuordnung (SplitId/OriginalSplitId), exakter Split-Zustand
+    /// und exakte Buchungs-Revision.
     /// </summary>
     private static async Task AssertConsistentTerminalStateAsync(
-        TestDatabase db, string bookingId, bool uploadOk, bool correctionOk)
+        TestDatabase db,
+        string bookingId,
+        (string? SplitId, string? OriginalSplitId)[] expectedAttachments,
+        string[] expectedSplitIds,
+        int expectedBaseRevision)
     {
         var rows = await db.Resolve<IAttachmentRepository>().GetAllAsync();
         var storeFiles = await db.Resolve<IAttachmentFileStore>().ListStoredFilesAsync();
@@ -94,6 +116,10 @@ public sealed class Step7aParallelRaceTests
         {
             Assert.Contains(row.StoredName, storeFiles);
             Assert.Equal(bookingId, row.BookingId);
+            var file = await db.Resolve<IAttachmentFileStore>().ReadAsync(row.StoredName);
+            Assert.True(file.Exists, $"Datei für Zeile '{row.Id}' fehlt: {row.StoredName}");
+            Assert.Equal(Pdf, await ReadAllAsync(file.Content!));
+            file.Content!.Dispose();
         }
 
         // Keine Referenz auf einen gelöschten Split.
@@ -101,49 +127,37 @@ public sealed class Step7aParallelRaceTests
         foreach (var row in rows)
         {
             if (row.SplitId is not null)
+            {
                 Assert.Contains(row.SplitId, splitIds);
+            }
         }
 
-        // Split-Zustand passt exakt zum Korrekturergebnis (atomar:
+        // Exakte Zuordnung (Umlageung vs. ursprüngliche Split-Id).
+        var actualPairs = rows
+            .Select(r => (S: r.SplitId ?? "", O: r.OriginalSplitId ?? ""))
+            .OrderBy(p => p.S, StringComparer.Ordinal)
+            .ThenBy(p => p.O, StringComparer.Ordinal)
+            .ToArray();
+        var expectedPairs = expectedAttachments
+            .Select(p => (S: p.SplitId ?? "", O: p.OriginalSplitId ?? ""))
+            .OrderBy(p => p.S, StringComparer.Ordinal)
+            .ThenBy(p => p.O, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(expectedPairs, actualPairs);
+
+        // Split-Zustand und Revision exakt wie erwartet (atomar:
         // sp-1 und der Ursprungszustand können nie beide fehlen).
-        var actualSplits = booking.Splits.Select(s => s.Id).OrderBy(s => s).ToArray();
-        if (correctionOk)
-        {
-            Assert.Equal(["sp-2"], actualSplits);
-        }
-        else
-        {
-            Assert.Equal(["sp-1", "sp-2"], actualSplits);
-        }
-
-        // Upload-Ergebnis passt zu Datei und Metadaten.
-        if (uploadOk)
-        {
-            var row = Assert.Single(rows);
-            Assert.True(
-                row.SplitId == "sp-1" || (row.SplitId is null && row.OriginalSplitId == "sp-1"),
-                $"Unerwartete Beleg-Zuordnung: SplitId={row.SplitId}, OriginalSplitId={row.OriginalSplitId}");
-            var file = await db.Resolve<IAttachmentFileStore>().ReadAsync(row.StoredName);
-            Assert.True(file.Exists);
-            Assert.Equal(Pdf, await ReadAllAsync(file.Content!));
-            file.Content!.Dispose();
-        }
-        else
-        {
-            Assert.Empty(rows);
-            Assert.Empty(storeFiles);
-        }
-
-        // Beide Operationen dürfen nicht gleichzeitig fehlschlagen:
-        // Wer das Schreib-Lock hält, commitet; der andere verliert.
-        Assert.True(uploadOk || correctionOk, "Beide Operationen sind fehlgeschlagen — kein konsistender Gewinner.");
+        Assert.Equal(expectedSplitIds,
+            booking.Splits.Select(s => s.Id).OrderBy(s => s, StringComparer.Ordinal).ToArray());
+        Assert.Equal(expectedBaseRevision, booking.BaseRevision);
     }
 
-    private static async Task<(bool Ok, string? Error)> RunUploadAsync(IServiceProvider services, string bookingId, string splitId)
+    private static async Task<(bool Ok, string? Error)> RunUploadAsync(
+        IServiceProvider services, string bookingId, string? splitId)
     {
         try
         {
-            var attachment = await services.GetRequiredService<AttachmentService>()
+            await services.GetRequiredService<AttachmentService>()
                 .UploadAsync("quittung.pdf", "application/pdf", new MemoryStream(Pdf), bookingId, splitId, maxBytes: 10_000);
             return (true, null);
         }
@@ -153,11 +167,12 @@ public sealed class Step7aParallelRaceTests
         }
     }
 
-    private static async Task<(bool Ok, string? Error)> RunCorrectionAsync(IServiceProvider services, string bookingId)
+    private static async Task<(bool Ok, string? Error)> RunCorrectionAsync(
+        IServiceProvider services, CorrectionSpec spec)
     {
         try
         {
-            var result = await services.GetRequiredService<CorrectionService>().CorrectAsync(RemovalSpec(bookingId));
+            var result = await services.GetRequiredService<CorrectionService>().CorrectAsync(spec);
             return (result.Created, null);
         }
         catch (Exception ex)
@@ -179,7 +194,8 @@ public sealed class Step7aParallelRaceTests
                 using var correctionScope = db.Services.CreateScope();
 
                 var uploadTask = Task.Run(() => RunUploadAsync(uploadScope.ServiceProvider, bookingId, splitId));
-                var correctionTask = Task.Run(() => RunCorrectionAsync(correctionScope.ServiceProvider, bookingId));
+                var correctionTask = Task.Run(() => RunCorrectionAsync(
+                    correctionScope.ServiceProvider, RemovalSpec(bookingId, "op-corr-race", 1)));
 
                 var results = await Task.WhenAll(uploadTask, correctionTask);
                 var (upload, correction) = (results[0], results[1]);
@@ -191,7 +207,37 @@ public sealed class Step7aParallelRaceTests
                     (upload.Error is null ? "" : $" upload: {upload.Error}") +
                     (correction.Error is null ? "" : $" korrektur: {correction.Error}"));
 
-                await AssertConsistentTerminalStateAsync(db, bookingId, upload.Ok, correction.Ok);
+                // Review 7a, Befund 3 (Verstärkung): Auf den Ergebnisstand
+                // der parallelen Runde folgen ein zweiter Upload
+                // (Buchungsebene) und eine zweite Korrektur auf der neuen
+                // Revision. Beide müssen Erfolg haben — ein veralteter
+                // Lesezustand (alte Revision, alter Split-Zustand) darf
+                // weder als Revisionskonflikt noch als FK-Fehler
+                // durchkommen.
+                var secondUpload = await RunUploadAsync(
+                    uploadScope.ServiceProvider, bookingId, splitId: null);
+                Assert.True(secondUpload.Ok,
+                    $"Zweiter Upload (Buchungsebene) fehlgeschlagen: {secondUpload.Error}");
+
+                var secondRevision = correction.Ok ? 2 : 1;
+                var secondCorrection = await RunCorrectionAsync(correctionScope.ServiceProvider,
+                    RemovalSpec(bookingId, "op-corr-race-2", secondRevision));
+                Assert.True(secondCorrection.Ok,
+                    $"Zweite Korrektur (erwartete Revision {secondRevision}) fehlgeschlagen: " +
+                    $"{secondCorrection.Error}");
+
+                // Endzustand nach allen vier Operationen: sp-1 ist in
+                // jedem Fall entfernt (erste oder zweite Korrektur),
+                // die Revision ist entsprechend erhöht.
+                var expectedAttachments = correction.Ok
+                    ? (upload.Ok
+                        ? new (string?, string?)[] { (null, "sp-1"), (null, null) }
+                        : new (string?, string?)[] { (null, null) })
+                    : new (string?, string?)[] { ("sp-1", null), (null, null) };
+                await AssertConsistentTerminalStateAsync(
+                    db, bookingId, expectedAttachments,
+                    expectedSplitIds: ["sp-2"],
+                    expectedBaseRevision: correction.Ok ? 3 : 2);
             }
         }
 
@@ -209,14 +255,193 @@ public sealed class Step7aParallelRaceTests
             using var scope = db.Services.CreateScope();
             var sp = scope.ServiceProvider;
 
-            var result = await sp.GetRequiredService<CorrectionService>().CorrectAsync(RemovalSpec(bookingId));
+            var result = await sp.GetRequiredService<CorrectionService>()
+                .CorrectAsync(RemovalSpec(bookingId, "op-corr-race", 1));
             Assert.True(result.Created);
 
             var upload = await RunUploadAsync(sp, bookingId, splitId);
             Assert.False(upload.Ok);
             Assert.Contains("InvalidReference", upload.Error, StringComparison.OrdinalIgnoreCase);
 
-            await AssertConsistentTerminalStateAsync(db, bookingId, uploadOk: false, correctionOk: true);
+            await AssertConsistentTerminalStateAsync(
+                db, bookingId,
+                expectedAttachments: [],
+                expectedSplitIds: ["sp-2"],
+                expectedBaseRevision: 2);
+        }
+    }
+
+    /// <summary>
+    /// Review 7a, Befund 3 (Race A, deterministisch): Dekorierendes
+    /// <see cref="IAttachmentRepository"/> — <c>AddAsync</c> löscht
+    /// 'sp-1' über eine zweite SQLite-Verbindung, also exakt zwischen
+    /// der Referenzprüfung des Services (Buchung und Split existieren
+    /// noch) und dem Metadaten-Insert (Komposit-FK verletzt). Alles
+    /// Weitere wird an das echte Repository delegiert.
+    /// </summary>
+    private sealed class SplitDeletingAttachmentRepository(
+        IAttachmentRepository inner, string connectionString) : IAttachmentRepository
+    {
+        public async Task AddAsync(Attachment attachment, CancellationToken cancellationToken = default)
+        {
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM ExpenseSplits WHERE Id = 'sp-1';";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            await inner.AddAsync(attachment, cancellationToken);
+        }
+
+        public Task<Attachment?> FindByIdAsync(string id, CancellationToken cancellationToken = default)
+            => inner.FindByIdAsync(id, cancellationToken);
+
+        public Task<IReadOnlyList<Attachment>> GetByBookingAsync(string bookingId, CancellationToken cancellationToken = default)
+            => inner.GetByBookingAsync(bookingId, cancellationToken);
+
+        public Task<IReadOnlyList<Attachment>> GetAllAsync(CancellationToken cancellationToken = default)
+            => inner.GetAllAsync(cancellationToken);
+
+        public Task RemoveAsync(string id, CancellationToken cancellationToken = default)
+            => inner.RemoveAsync(id, cancellationToken);
+
+        public Task UpdateSplitReferenceAsync(
+            string id, string? splitId, string? originalSplitId, CancellationToken cancellationToken = default)
+            => inner.UpdateSplitReferenceAsync(id, splitId, originalSplitId, cancellationToken);
+    }
+
+    [Fact(DisplayName = "p3: deterministisch Race A — Split zwischen Referenzprüfung und Insert gelöscht → saubere Referenzausnahme, keine Waise")]
+    public async Task RaceA_SplitDeletedBetweenCheckAndInsert_Fails_Cleanly()
+    {
+        var (db, bookingId, splitId) = await SeedAsync(configureServices: (services, connectionString) =>
+        {
+            var original = Assert.Single(services, d => d.ServiceType == typeof(IAttachmentRepository));
+            services.Remove(original);
+            services.AddScoped<IAttachmentRepository>(sp => new SplitDeletingAttachmentRepository(
+                new AttachmentRepository(sp.GetRequiredService<LarioDbContext>()), connectionString));
+        });
+        await using (db)
+        {
+            using var scope = db.Services.CreateScope();
+            var upload = await RunUploadAsync(scope.ServiceProvider, bookingId, splitId);
+
+            // Die Referenzprüfung war erfolgreich (Split existierte),
+            // das Insert scheitert am Komposit-FK → fachliche
+            // Referenzausnahme (400), kein interner Fehler (500).
+            Assert.False(upload.Ok);
+            Assert.Contains("InvalidReference", upload.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("DbUpdateException", upload.Error, StringComparison.OrdinalIgnoreCase);
+
+            // Keine Waise: keine Datei, keine Metadatenzeile; der Split
+            // ist (durch die simulierte parallele Operation) weg, die
+            // Buchung selbst unverändert.
+            await AssertConsistentTerminalStateAsync(
+                db, bookingId,
+                expectedAttachments: [],
+                expectedSplitIds: ["sp-2"],
+                expectedBaseRevision: 1);
+        }
+    }
+
+    /// <summary>
+    /// Review 7a, Befund 3 (Race B, deterministisch): Befehls-
+    /// Interceptor, der beim ersten <c>"Attachments"</c>-Select — der
+    /// ReplaceSplits-Lesung innerhalb der Update-Transaktion (davor
+    /// liest <c>CorrectionService</c> Attachments nicht) — über eine
+    /// zweite SQLite-Verbindung einen gültigen Beleg an 'sp-1'
+    /// anlegt und committet. Beim anschließenden Split-Löschen
+    /// verletzt das das RESTRICT-FK; die Korrektur muss den frischen
+    /// Lesezustand neu laden und den Beleg umlagern (D1b) statt mit
+    /// einem FK-Fehler zu enden.
+    /// </summary>
+    private sealed class StaleAttachmentInjector(
+        string connectionString, string attachmentsDir, string bookingId, string splitId)
+        : IDbCommandInterceptor
+    {
+        private readonly string _storedName =
+            "0123456789abcdef0123456789abcdef.pdf";
+
+        private int _injected;
+        private volatile bool _armed;
+
+        public void Arm() => _armed = true;
+
+        private InterceptionResult<DbDataReader> MaybeInject(
+            DbCommand command, InterceptionResult<DbDataReader> result)
+        {
+            if (_armed
+                && Volatile.Read(ref _injected) == 0
+                && command.CommandText.Contains("\"Attachments\"", StringComparison.Ordinal))
+            {
+                if (Interlocked.CompareExchange(ref _injected, 1, 0) == 0)
+                {
+                    Directory.CreateDirectory(attachmentsDir);
+                    File.WriteAllBytes(
+                        System.IO.Path.Combine(attachmentsDir, _storedName), Pdf);
+                    using var connection = new SqliteConnection(connectionString);
+                    connection.Open();
+                    using var insert = connection.CreateCommand();
+                    insert.CommandText =
+                        "INSERT INTO \"Attachments\" " +
+                        "(Id, OriginalFilename, ContentType, SizeBytes, Sha256, StoredName, " +
+                        " BookingId, SplitId, OriginalSplitId, CreatedAtUtc) " +
+                        "VALUES ('stale0123456789abcdef0123456789', 'quittung.pdf', " +
+                        "'application/pdf', 10, " +
+                        "'0000000000000000000000000000000000000000000000000000000000000000', " +
+                        $"'{_storedName}', '{bookingId}', '{splitId}', NULL, " +
+                        $"'{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff}');";
+                    insert.ExecuteNonQuery();
+                }
+            }
+            return result;
+        }
+
+        public InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result)
+            => MaybeInject(command, result);
+
+        public ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken)
+            => new(MaybeInject(command, result));
+    }
+
+    [Fact(DisplayName = "p4: deterministisch Race B — Beleg an entfallenden Split zwischen Lese- und Commit → Umlageung statt FK-Fehlern (Befund 3)")]
+    public async Task RaceB_AttachmentLandsBetweenReadAndCommit_Correction_Relayouts()
+    {
+        var (db, bookingId, splitId) = await SeedAsync();
+        await using (db)
+        {
+            // Zweite AddDbContext-Registrierung: Optionen akkumulieren
+            // (EF Core 10, empirisch verifiziert) — der Interceptor
+            // ergänzt die SQLite-Optionen, der Rest kommt aus AddLarioData.
+            var injector = new StaleAttachmentInjector(
+                $"Data Source={db.DatabaseFile}", db.AttachmentsDir, bookingId, splitId);
+            var services = new ServiceCollection();
+            services.AddLarioData($"Data Source={db.DatabaseFile}", db.AttachmentsDir);
+            services.AddDbContext<LarioDbContext>(o => o.AddInterceptors(injector));
+            var provider = services.BuildServiceProvider();
+            await using (provider)
+            {
+                injector.Arm();
+                using var scope = provider.CreateScope();
+                var sp = scope.ServiceProvider;
+
+                var correction = await RunCorrectionAsync(
+                    sp, RemovalSpec(bookingId, "op-corr-race", 1));
+
+                // Die Korrektur hat den FK-Konflikt intern aufgelöst
+                // (frischer Lesezustand, Umlageung) — kein ungehandelter
+                // DbUpdateException, kein sichtbarer Konflikt.
+                Assert.True(correction.Ok,
+                    $"Korrektur fehlgeschlagen (Race B nicht beherrscht): {correction.Error}");
+
+                await AssertConsistentTerminalStateAsync(
+                    db, bookingId,
+                    expectedAttachments: [(null, "sp-1")],
+                    expectedSplitIds: ["sp-2"],
+                    expectedBaseRevision: 2);
+            }
         }
     }
 }

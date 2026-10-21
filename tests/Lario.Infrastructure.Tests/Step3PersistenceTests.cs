@@ -28,14 +28,25 @@ public sealed class TestDatabase : IAsyncDisposable
 
     public ServiceProvider Services { get; }
 
-    public TestDatabase(string? migrateTo = null)
+    /// <summary>
+    /// <paramref name="configureServices"/> ermöglicht Test-Dekoratoren
+    /// (z. B. deterministische Race-Reproduktionen, Schritt 7a Review
+    /// Befund 3): die Registrierung wird nach <c>AddLarioData</c>,
+    /// vor dem Build angepasst. <c>connectionString</c> ist die bereits
+    /// festgelegte <c>Data Source=…</c>-Zeile.
+    /// </summary>
+    public TestDatabase(
+        string? migrateTo = null,
+        Action<ServiceCollection, string>? configureServices = null)
     {
         TempDir = System.IO.Directory.CreateTempSubdirectory("lario-test-").FullName;
         DatabaseFile = Path.Combine(TempDir, "lario.sqlite");
         AttachmentsDir = Path.Combine(TempDir, "attachments");
+        var connectionString = $"Data Source={DatabaseFile}";
 
         var builder = new ServiceCollection();
-        builder.AddLarioData($"Data Source={DatabaseFile}", AttachmentsDir);
+        builder.AddLarioData(connectionString, AttachmentsDir);
+        configureServices?.Invoke(builder, connectionString);
         Services = builder.BuildServiceProvider();
 
         // Migrationen auf die neue Datei anwenden (wie beim Host-Start).

@@ -208,11 +208,60 @@ public sealed class BookingRepository(LarioDbContext db) : IBookingRepository
             .FirstOrDefaultAsync(c => c.OperationId == operationId, cancellationToken);
     }
 
+    /// <summary>
+    /// Review 7a, Befund 3 (Race B): Ein paralleler Beleg-Upload kann
+    /// zwischen der Attachment-Abfrage in <c>ReplaceSplits</c> und dem
+    /// Commit dieser Korrektur einen Beleg an einen entfallenden
+    /// Teilposten legen — das RESTRICT-FK (Attachment → ExpenseSplit)
+    /// blockt dann die Teilposten-Löschung. Erwartbarer, kontrollierbarer
+    /// Konflikt: frischen Lesezustand laden und die Update-Befehle erneut
+    /// aufbauen. Der frische Lesezustand sieht den Beleg, und
+    /// <c>ReplaceSplits</c> hängt ihn an die Gesamtbuchung um
+    /// (Erhaltungsregel, Design D1b) — der Versuch committet dann sauber.
+    /// Nicht-FK-Fehler und Revisionskonflikte
+    /// (<see cref="DbUpdateConcurrencyException"/>, eigener Unterfall von
+    /// <see cref="DbUpdateException"/>) laufen unverändert weiter.
+    /// </summary>
     public async Task<Booking> UpdateAsync(
         Booking updated,
         BookingCorrection correction,
         IReadOnlyCollection<SettlementPosition> settlements,
         CancellationToken cancellationToken = default)
+    {
+        const int maxAttempts = 3;
+        DbUpdateException? lastConflict = null;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                return await ApplyUpdateAsync(updated, correction, settlements, cancellationToken);
+            }
+            catch (DbUpdateException ex) when (SqliteConstraintErrors.IsForeignKeyViolation(ex))
+            {
+                // SQLite hat die Transaktion bereits zurückgerollt; den
+                // Change-Tracker leeren, damit der nächste Versuch einen
+                // frischen Lesezustand lädt (sonst würde er die stale
+                // Attachment-Liste aus dem ersten Versuch wiederverwenden).
+                lastConflict = ex;
+                if (attempt < maxAttempts)
+                {
+                    db.ChangeTracker.Clear();
+                }
+            }
+        }
+
+        throw new DomainConflictException(
+            $"Korrektur der Buchung '{updated.Id}': sie kollidierte mit einer " +
+            "parallelen Änderung (z. B. wurde während der Korrektur ein Beleg " +
+            "an einen entfallenden Teilposten angehängt). Die Buchung bleibt " +
+            $"im letzten konsistenten Zustand (SQLite: {lastConflict!.GetBaseException()?.Message}) — bitte erneut versuchen.");
+    }
+
+    private async Task<Booking> ApplyUpdateAsync(
+        Booking updated,
+        BookingCorrection correction,
+        IReadOnlyCollection<SettlementPosition> settlements,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(settlements);
         ArgumentNullException.ThrowIfNull(updated);
