@@ -2,9 +2,11 @@ using System.Net;
 using System.Reflection;
 using Lario.Application.Journal;
 using Lario.Host.Api;
+using Lario.Host.Api.Attachments;
 using Lario.Host.Api.Journal;
 using Lario.Host.Api.MasterData;
 using Lario.Infrastructure;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 
 // Content-Root auf den App-Output legen, damit die statische Weboberfläche
@@ -42,14 +44,26 @@ var httpsCertificate = useHttps
         .CreateFromPemFile(certificateFile!, certificateKeyFile!)
     : null;
 
+// Beleg-Upload-Limit (Schritt 7a, Design D3): die maximale Bilddatei
+// (Default 10 MB) bestimmt zusätzlich das Request-Body-Limit (Datei plus
+// Multipart-Overhead), damit überdimensionierte Uploads bereits in Kestrel
+// mit 413 abgewiesen werden, bevor sie gepuffert oder verarbeitet werden.
+var attachmentMaxBytes = builder.Configuration.GetValue("Lario:Attachments:MaxBytes", 10_000_000L);
+var maxRequestBodySize = attachmentMaxBytes + 1_000_000;
+
 builder.WebHost.UseKestrel(options =>
 {
     options.Listen(IPAddress.Parse(httpAddress), httpPort);
+    options.Limits.MaxRequestBodySize = maxRequestBodySize;
     if (useHttps && httpsCertificate is not null)
     {
         options.Listen(IPAddress.Parse(httpsAddress), httpsPort, listen => listen.UseHttps(httpsCertificate));
     }
 });
+
+// Multipart-Parsing auf dasselbe Limit ausrichten (sonst Default 128 MB).
+builder.Services.Configure<FormOptions>(options =>
+    options.MultipartBodyLengthLimit = maxRequestBodySize);
 
 builder.Services.AddOpenApi();
 
@@ -124,6 +138,9 @@ app.MapAuth();
 
 // Stammdaten (Schritt 7, T2) — /api/v1/accounts|pools|categories|tax-categories.
 app.MapMasterData();
+
+// Belege (Schritt 7a, Design D3) — /api/v1/attachments + bookings/{id}/attachments.
+app.MapAttachments();
 
 // Journal-Leseendpunkte (Schritt 7, T3) — /api/v1/bookings|balances|settlements.
 app.MapJournalRead();

@@ -1,5 +1,6 @@
 using Lario.Application.Attachments;
 using Lario.Domain;
+using Microsoft.AspNetCore.Http;
 
 namespace Lario.Host.Api;
 
@@ -62,6 +63,27 @@ public static class ApiExceptionMapping
                     StatusCodes.Status413PayloadTooLarge,
                     new ErrorResponse(new ApiErrorBody(
                         "validation_error", tooLarge.Message, DetailCode: "attachment_too_large")));
+
+            // Überdimensionierter Multipart-Body (Kestrel bzw. Multipart-
+            // Parser, Schritt 7a): gleicher Fehlerkanal wie die fachliche
+            // Größenprüfung im AttachmentService (Design D3: 413 mit
+            // detailCode attachment_too_large).
+            case BadHttpRequestException { StatusCode: 413 }:
+                return (
+                    StatusCodes.Status413PayloadTooLarge,
+                    new ErrorResponse(new ApiErrorBody(
+                        "validation_error",
+                        "Die Bilddatei ist zu groß.",
+                        DetailCode: "attachment_too_large")));
+
+            // Sonstige fehlerhafte Anfrage (z. B. kaputtes Multipart-Format)
+            // → generische 400 im Standardformat.
+            case BadHttpRequestException badRequest:
+                return (
+                    StatusCodes.Status400BadRequest,
+                    new ErrorResponse(new ApiErrorBody(
+                        "validation_error",
+                        $"Fehlerhafte Anfrage: {badRequest.Message}")));
 
             case CycleDetectedException cycle:
                 return (
