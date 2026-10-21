@@ -45,10 +45,11 @@ var httpsCertificate = useHttps
     : null;
 
 // Beleg-Upload-Limit (Schritt 7a, Design D3): die maximale Bilddatei
-// (Default 10 MB) bestimmt zusätzlich das Request-Body-Limit (Datei plus
-// Multipart-Overhead), damit überdimensionierte Uploads bereits in Kestrel
-// mit 413 abgewiesen werden, bevor sie gepuffert oder verarbeitet werden.
-var attachmentMaxBytes = builder.Configuration.GetValue("Lario:Attachments:MaxBytes", 10_000_000L);
+// (Default 20 MB dezimal = 20_000_000 Byte) bestimmt zusätzlich das
+// Request-Body-Limit (Datei plus Multipart-Overhead), damit
+// überdimensionierte Uploads bereits in Kestrel mit 413 abgewiesen
+// werden, bevor sie gepuffert oder verarbeitet werden.
+var attachmentMaxBytes = builder.Configuration.GetValue("Lario:Attachments:MaxBytes", 20_000_000L);
 var maxRequestBodySize = attachmentMaxBytes + 1_000_000;
 
 builder.WebHost.UseKestrel(options =>

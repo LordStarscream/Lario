@@ -301,6 +301,12 @@
       @if (att.loading) {
         <p class="muted">Lade Belege …</p>
       } @else if (att.error; as err) {
+        @if (att.success) {
+          <!-- Upload war erfolgreich, der anschließende Listen-Refresh
+               ist fehlgeschlagen: beide Zustände bleiben sichtbar, damit
+               der bestätigte Upload erkennbar ist. -->
+          <div class="banner banner-success" role="status">{{ att.success }}</div>
+        }
         <div class="banner banner-error" role="alert">
           <strong>Fehler:</strong> {{ err.message }}
         </div>
@@ -397,7 +403,7 @@
         } @else {
           <div class="attachment-upload">
             <label class="field">
-              <span class="field-label">Datei (PDF, JPEG, PNG, max. 10 MB)</span>
+              <span class="field-label">Datei (PDF, JPEG, PNG, max. 20 MB)</span>
               <input
                 type="file"
                 accept="application/pdf,image/jpeg,image/png"

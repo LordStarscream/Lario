@@ -16,8 +16,11 @@ import type { BookingListItemDto } from '../../generated/models/BookingListItemD
  * Browser-APIs (fetch, Blob-URLs, window.open) sind simuliert.
  * Geprüft werden die Abnahmen: Dialog lädt Belegliste, Upload mit
  * Client-Vorvalidierung (Typ/Große) und Split-Zuordnung, Serverfehler
- * (413) verständlich, Vorschau/Download über Blob-URLs, Löschen mit
- * Bestätigung.
+ * (413/404/410) verständlich, Vorschau/Download über Blob-URLs, Löschen
+ * mit Bestätigung — sowie die Dialog-Generation: verzögerte Antworten
+ * eines älteren Dialogs (nach Dialogwechsel/-schließung) überschreiben
+ * den aktuellen Dialog nicht, und ein erfolgreicher Upload bleibt bei
+ * fehlgeschlagenem Listen-Refresh als bestätigt erkennbar.
  */
 
 function listItem(bookingId: string, effectivelyReversed = false): BookingListItemDto {
@@ -260,7 +263,7 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
     expect(AttachmentEndpointsService.uploadAttachment).not.toHaveBeenCalled();
   });
 
-  it('Client-Vorvalidierung: Datei über 10 MB wird ohne API-Call abgelehnt', () => {
+  it('Client-Vorvalidierung: Datei über 20 MB (dezimal) wird ohne API-Call abgelehnt', () => {
     const component = createComponent();
     component.openAttachments(listItem('b1'));
 
@@ -268,11 +271,14 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
       type: 'application/pdf',
     });
     // size ist read-only — für die Vorvalidierung reicht ein Stub.
-    const bigFile = Object.defineProperty(file, 'size', { value: 11 * 1024 * 1024 });
+    // 20_000_000 ist die dezimale Standardgrenze (Server-Default).
+    const bigFile = Object.defineProperty(file, 'size', { value: 20_000_001 });
 
     component.onFileSelected(fileInputEvent(bigFile));
 
-    expect(component.attachments()?.clientError).toMatch(/größer/);
+    expect(component.attachments()?.clientError).toMatch(
+      /zu groß \(maximal 20\.000\.000 Byte\)/,
+    );
     expect(component.canUpload()).toBe(false);
     expect(AttachmentEndpointsService.uploadAttachment).not.toHaveBeenCalled();
   });
@@ -456,5 +462,228 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
     expect(component.attachments()?.previewId).toBeNull();
     expect(component.attachments()?.previewUrl).toBeNull();
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:test-1');
+  });
+
+  // ---------- Dialog-Generation (Review: verzögerte Antworten) ----------
+
+  /** Ein Makro-Tick, damit verspänte Promise-Ketten abarbeiten dürfen. */
+  function tick(): Promise<void> {
+    return new Promise((r) => setTimeout(r, 0));
+  }
+
+  /**
+   * Buchungen 'a' und 'b'; die Antworten für 'a' hängen an einem
+   * Deferred, das der Test manuell auflöst — so lässt sich eine
+   * verzögerte Antwort nach Dialogwechsel/-schließung simulieren.
+   */
+  function deferredLoadsForA(): (value: [BookingDetailDto, AttachmentDto[]]) => void {
+    let resolve!: (value: [BookingDetailDto, AttachmentDto[]]) => void;
+    const done = new Promise<[BookingDetailDto, AttachmentDto[]]>((r) => {
+      resolve = r;
+    });
+    // Die generierten Signaturen liefern CancelablePromise<T> — die
+    // Deferred-Stubs werden daher als `never` gecastet.
+    vi.mocked(JournalEndpointsService.getBooking).mockImplementation(
+      ((id: string) =>
+        id === 'a' ? done.then((x) => x[0]) : Promise.resolve(detail())) as never,
+    );
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockImplementation(
+      ((id: string) =>
+        (id === 'a'
+          ? done.then((x) => x[1])
+          : Promise.resolve([attachment()]))) as never,
+    );
+    return resolve;
+  }
+
+  it('verzögerte Ladeantwort nach Dialogwechsel überschreibt den neuen Dialog nicht', async () => {
+    const resolveA = deferredLoadsForA();
+
+    const component = createComponent();
+    component.openAttachments(listItem('a'));
+    component.openAttachments(listItem('b'));
+    await vi.waitFor(() => {
+      expect(component.attachments()?.loading).toBe(false);
+      expect(component.attachments()?.booking.id).toBe('b');
+    });
+
+    // Antwort für 'a' kommt jetzt verspätet an:
+    resolveA([detail({ id: 'a' }), []]);
+    await tick();
+
+    const state = component.attachments();
+    expect(state?.booking.id).toBe('b');
+    expect(state?.attachments).toHaveLength(1); // Liste von 'b' bleibt intakt
+    expect(state?.error).toBeNull();
+  });
+
+  it('verzögerte Ladeantwort nach Dialogschließung öffnet keinen Zustand nach', async () => {
+    const resolveA = deferredLoadsForA();
+
+    const component = createComponent();
+    component.openAttachments(listItem('a'));
+    component.closeAttachments();
+    expect(component.attachments()).toBeNull();
+
+    resolveA([detail({ id: 'a' }), []]);
+    await tick();
+
+    expect(component.attachments()).toBeNull(); // Dialog bleibt geschlossen
+  });
+
+  it('verzögerte Vorschau-Antwort nach Dialogwechsel setzt keine Vorschau im neuen Dialog', async () => {
+    const { createObjectURL } = stubObjectUrls();
+    let resolveFetch!: (response: Response) => void;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((r) => {
+            resolveFetch = r;
+          }),
+      ),
+    );
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockResolvedValue([
+      attachment({ contentType: 'image/png' }),
+    ]);
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    const image = component.attachments()!.attachments[0];
+    const previewCall = component.showPreview(image);
+
+    // Dialog wechseln, während der Blob-Download von 'b1' noch läuft:
+    component.openAttachments(listItem('b2'));
+    await vi.waitFor(() => {
+      expect(component.attachments()?.booking.id).toBe('b2');
+      expect(component.attachments()?.loading).toBe(false);
+    });
+
+    resolveFetch(new Response(new Blob(['daten']), { status: 200 }));
+    await previewCall;
+    await tick();
+
+    const state = component.attachments()!;
+    expect(state.booking.id).toBe('b2');
+    expect(state.previewId).toBeNull();
+    expect(state.previewUrl).toBeNull();
+    expect(createObjectURL).not.toHaveBeenCalled(); // keine neue (leakende) URL
+  });
+
+  it('verzögerte Lösch-Antwort nach Dialogwechsel verändert den neuen Dialog nicht', async () => {
+    let resolveDelete!: () => void;
+    const deleteMock = vi.mocked(AttachmentEndpointsService.deleteAttachment);
+    // Die generierte Signatur liefert CancelablePromise<void> — der
+    // Deferred-Stub wird daher als `never` gecastet.
+    deleteMock.mockImplementation(
+      (() =>
+        new Promise<void>((r) => {
+          resolveDelete = r;
+        })) as never,
+    );
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockResolvedValue([
+      attachment({ id: 'att-1' }),
+      attachment({ id: 'att-2' }),
+    ]);
+
+    const component = createComponent();
+    component.openAttachments(listItem('a'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    component.requestDeleteAttachment(attachment({ id: 'att-1' }));
+    const deleteCall = component.confirmDeleteAttachment();
+
+    // Dialog wechseln, während der Delete noch läuft:
+    component.openAttachments(listItem('b'));
+    await vi.waitFor(() => {
+      expect(component.attachments()?.booking.id).toBe('b');
+      expect(component.attachments()?.loading).toBe(false);
+    });
+
+    resolveDelete();
+    await deleteCall;
+    await tick();
+
+    const state = component.attachments()!;
+    expect(state.booking.id).toBe('b');
+    expect(state.attachments.map((x) => x.id)).toEqual(['att-1', 'att-2']);
+    expect(state.busy).toBe(false);
+    expect(state.confirmDeleteId).toBeNull();
+    expect(state.error).toBeNull();
+  });
+
+  it('Upload: Erfolg + fehlgeschlagener Listen-Refresh bleiben als bestätigter Erfolg erkennbar', async () => {
+    const upload = vi.mocked(AttachmentEndpointsService.uploadAttachment);
+    upload.mockResolvedValue(attachment() as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([]) // initiales Laden
+      .mockRejectedValueOnce(new Error('Netzwerk')) // Refresh nach dem Upload
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+
+    const file = new File(['%PDF-1.4'], 'quittung.pdf', {
+      type: 'application/pdf',
+    });
+    component.onFileSelected(fileInputEvent(file));
+    await component.uploadAttachment();
+
+    expect(upload).toHaveBeenCalledTimes(1);
+    const state = component.attachments()!;
+    expect(state.success).toBe('Beleg hochgeladen.');
+    expect(state.error?.message).toMatch(/Netzwerk/);
+    expect(state.selectedFile).toBeNull(); // kein erneuter Upload derselben Datei
+    expect(state.busy).toBe(false);
+  });
+
+  it('Download-Fehler 404 wird im Dialog verständlich angezeigt', async () => {
+    stubObjectUrls();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 404, statusText: 'Not Found' })),
+    );
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockResolvedValue([
+      attachment({ contentType: 'image/png' }),
+    ]);
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    const image = component.attachments()!.attachments[0];
+
+    await component.showPreview(image);
+
+    const state = component.attachments()!;
+    expect(state.error?.message).toMatch(/nicht gefunden oder wurde bereits entfernt/);
+    expect(state.previewUrl).toBeNull();
+    expect(state.busyAttachmentId).toBeNull();
+  });
+
+  it('Download-Fehler 410 wird im Dialog verständlich angezeigt', async () => {
+    stubObjectUrls();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 410, statusText: 'Gone' })),
+    );
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockResolvedValue([
+      attachment(),
+    ]);
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    const pdf = component.attachments()!.attachments[0];
+
+    await component.downloadAttachment(pdf);
+
+    const state = component.attachments()!;
+    expect(state.error?.message).toMatch(/nicht mehr verfügbar \(410\)/);
+    expect(state.busyAttachmentId).toBeNull();
   });
 });

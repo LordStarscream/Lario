@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject, OnInit, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, OnDestroy, OnInit, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import type { ApiErrorInfo } from '../../api/api-error';
@@ -51,12 +51,14 @@ export interface RefundDialogState {
 
 /**
  * Belege (7a): zulässige Content-Types (PDF, JPEG, PNG — Design D7) und
- * die Client-Vorvalidierung an der Standardgrenze von 10 MB. Der Server
- * bleibt maßgeblich — bei abweichend konfiguriertem MaxBytes kommt 413
- * mit verständlicher Meldung.
+ * die Client-Vorvalidierung an der Standardgrenze von 20 MB (dezimal,
+ * 20_000_000 Byte — identisch zum Server-Default `Lario:Attachments:MaxBytes`
+ * in Program.cs/AttachmentEndpoints.cs). Der Server bleibt maßgeblich —
+ * bei abweichend konfiguriertem MaxBytes kommt 413 mit verständlicher
+ * Meldung.
  */
 const ATTACHMENT_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
-const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const ATTACHMENT_MAX_BYTES = 20_000_000;
 
 const TYPE_LABELS: Record<string, string> = {
   Income: 'Einnahme',
@@ -74,6 +76,13 @@ const TYPE_LABELS: Record<string, string> = {
 
 export interface AttachmentDialogState {
   booking: BookingListItemDto;
+  /** Dialog-Generation: wird bei jedem Öffnen erhöht. Alle asynchronen
+   *  Antworten werden nur auf die Generation angewendet, in der sie
+   *  gestartet wurden — eine verzögerte Antwort eines älteren Dialogs
+   *  (nach Dialogwechsel oder -schließung) ist ein No-op und kann
+   *  Detail, Liste, Vorschau oder Erfolgs-/Fehlerzustand des aktuellen
+   *  Dialogs nicht überschreiben. */
+  generation: number;
   /** Lade Zustand: Buchungsdetail + Belegliste. */
   loading: boolean;
   /** Schreibaktion läuft (Hochladen, Entfernen, Vorschau laden). */
@@ -86,6 +95,12 @@ export interface AttachmentDialogState {
   /** Client-Vorvalidierung (Typ/Große) am gewählten File. */
   clientError: string | null;
   error: ApiErrorInfo | null;
+  /** Erfolgszustand des letzten Uploads — bleibt auch dann sichtbar,
+   *  wenn der anschließende Listen-Refresh fehlschlägt, damit der
+   *  bestätigte Upload erkennbar bleibt (die Dateiauswahl wird
+   *  zurückgesetzt, sodass kein unbedachter erneuter Upload derselben
+   *  Datei möglich ist). */
+  success: string | null;
   /** Beleg, für den gerade ein Preview-/Download-Blob geladen wird. */
   busyAttachmentId: string | null;
   /** Beleg, dessen Bildvorschau angezeigt wird (nur Bilder). */
@@ -182,7 +197,7 @@ export function refundLinesFromDetail(detail: BookingDetailDto): {
   templateUrl: './bookings-list.html',
   styleUrl: './bookings-list.css',
 })
-export class BookingsList implements OnInit {
+export class BookingsList implements OnInit, OnDestroy {
   readonly typeLabels = TYPE_LABELS;
   readonly filterTypes = FILTER_TYPES;
   readonly todayIso = todayIso;
@@ -206,9 +221,23 @@ export class BookingsList implements OnInit {
   readonly refund = signal<RefundDialogState | null>(null);
   readonly attachments = signal<AttachmentDialogState | null>(null);
 
+  /** Zählt die Dialog-Generationen (siehe AttachmentDialogState). */
+  private attachmentGeneration = 0;
+
   private readonly router = inject(Router);
   readonly catalog = inject(CatalogService);
   readonly errors = inject(ApiErrorHandler);
+
+  ngOnDestroy(): void {
+    // Beleg-Vorschau (Blob-URL) bei Zerstörung der Komponente freigeben
+    // (Dialogwechsel/-schließung räumen in closeAttachments auf — hier
+    // für den Fall, dass der Dialog noch offen ist, z. B. Navigation
+    // weg von der Buchungsliste).
+    const url = this.attachments()?.previewUrl;
+    if (url) {
+      URL.revokeObjectURL(url);
+    }
+  }
 
   async ngOnInit(): Promise<void> {
     await this.catalog.load();
@@ -441,8 +470,10 @@ export class BookingsList implements OnInit {
   // ---------- Belege (7a) ----------
 
   openAttachments(booking: BookingListItemDto): void {
+    const generation = ++this.attachmentGeneration;
     const state: AttachmentDialogState = {
       booking,
+      generation,
       loading: true,
       busy: false,
       detail: null,
@@ -451,13 +482,14 @@ export class BookingsList implements OnInit {
       splitId: '',
       clientError: null,
       error: null,
+      success: null,
       busyAttachmentId: null,
       previewId: null,
       previewUrl: null,
       confirmDeleteId: null,
     };
     this.attachments.set(state);
-    void this.loadAttachmentDialog(state);
+    void this.loadAttachmentDialog(generation, booking.id, '');
   }
 
   closeAttachments(): void {
@@ -468,33 +500,50 @@ export class BookingsList implements OnInit {
     this.attachments.set(null);
   }
 
-  private async loadAttachmentDialog(state: AttachmentDialogState): Promise<void> {
+  /** Patch nur für den Dialog der übergebenen Generation — verzögerte
+   *  Antworten eines geschlossenen oder gewechselten Dialogs sind damit
+   *  automatisch No-ops (Review-Befind: Dialog-Generation). */
+  private patchAttachmentDialog(
+    generation: number,
+    patch: Partial<AttachmentDialogState>,
+  ): void {
+    this.attachments.update((d) => (d?.generation === generation ? { ...d, ...patch } : d));
+  }
+
+  /** Patch für den aktuell angezeigten Dialog — nur für synchrone
+   *  Nutzeraktionen ohne laufende asynchrone Antwort (z. B. Lösch-
+   *  bestätigung ein-/ausblenden). */
+  private patchCurrentAttachment(patch: Partial<AttachmentDialogState>): void {
+    this.attachments.update((d) => (d ? { ...d, ...patch } : d));
+  }
+
+  private async loadAttachmentDialog(
+    generation: number,
+    bookingId: string,
+    splitId: string,
+  ): Promise<void> {
     try {
       const [detail, list] = await Promise.all([
-        JournalEndpointsService.getBooking(state.booking.id),
-        AttachmentEndpointsService.getBookingAttachments(state.booking.id),
+        JournalEndpointsService.getBooking(bookingId),
+        AttachmentEndpointsService.getBookingAttachments(bookingId),
       ]);
-      this.patchAttachments(state, {
+      this.patchAttachmentDialog(generation, {
         loading: false,
         detail,
         attachments: list,
         // Split-Zuordnung nur wählbar bei mehreren Splits (R7a-2);
         // ansonsten gehört der Beleg zur gesamten Ausgabe.
-        splitId: detail.splits.length > 1 ? state.splitId : '',
+        splitId: detail.splits.length > 1 ? splitId : '',
+        // Eine frisch geladene Liste ersetzt den Erfolgshinweis (der neue
+        // Beleg ist dann selbst in der Liste sichtbar).
+        success: null,
       });
     } catch (error) {
-      this.patchAttachments(state, { loading: false, error: this.errors.handle(error) });
+      this.patchAttachmentDialog(generation, {
+        loading: false,
+        error: this.errors.handle(error),
+      });
     }
-  }
-
-  private patchAttachments(state: AttachmentDialogState, patch: Partial<AttachmentDialogState>): void {
-    this.attachments.update(
-      (d) => (d && d.booking.id === state.booking.id ? { ...d, ...patch } : d),
-    );
-  }
-
-  private patchCurrentAttachment(patch: Partial<AttachmentDialogState>): void {
-    this.attachments.update((d) => (d ? { ...d, ...patch } : d));
   }
 
   /** Client-Vorvalidierung (D8): Typ und Größe, bevor etwas gesendet wird. */
@@ -503,7 +552,9 @@ export class BookingsList implements OnInit {
       return 'Erlaubt sind nur PDF-, JPEG- und PNG-Dateien.';
     }
     if (file.size > ATTACHMENT_MAX_BYTES) {
-      return `Die Datei ist größer als ${formatBytes(ATTACHMENT_MAX_BYTES)}.`;
+      // Explizit in Byte (dezimal): formatBytes würde die dezimale
+      // 20-MB-Grenze in Binäreinheiten als „19,1 MB“ anzeigen.
+      return `Die Datei ist zu groß (maximal ${ATTACHMENT_MAX_BYTES.toLocaleString('de-DE')} Byte).`;
     }
     return null;
   }
@@ -536,7 +587,8 @@ export class BookingsList implements OnInit {
     if (!dialog || !file || dialog.busy || this.validateFile(file) !== null) {
       return;
     }
-    this.patchCurrentAttachment({ busy: true, error: null });
+    const generation = dialog.generation;
+    this.patchAttachmentDialog(generation, { busy: true, error: null, success: null });
     try {
       // `File` ist ein `Blob` (generierter Typ IFormFile = Blob); als File
       // übergeben bleibt der Original-Dateiname im Multipart-Body erhalten.
@@ -545,15 +597,20 @@ export class BookingsList implements OnInit {
         bookingId: dialog.booking.id,
         splitId: dialog.splitId || undefined,
       });
-      this.patchCurrentAttachment({
+      // Upload ist bestätigt — der Erfolgshinweis bleibt auch sichtbar,
+      // wenn der anschließende Refresh fehlschlägt (Dateiauswahl ist
+      // zurückgesetzt, d. h. kein unbedachter erneuter Upload derselben
+      // Datei).
+      this.patchAttachmentDialog(generation, {
         busy: false,
         selectedFile: null,
         clientError: null,
         error: null,
+        success: 'Beleg hochgeladen.',
       });
-      await this.loadAttachmentDialog(dialog);
+      await this.loadAttachmentDialog(generation, dialog.booking.id, dialog.splitId);
     } catch (error) {
-      this.patchCurrentAttachment({ busy: false, error: this.errors.handle(error) });
+      this.patchAttachmentDialog(generation, { busy: false, error: this.errors.handle(error) });
     }
   }
 
@@ -576,15 +633,22 @@ export class BookingsList implements OnInit {
 
   /** Bildvorschau über Blob-URL (Design D4). */
   async showPreview(attachment: AttachmentDto): Promise<void> {
-    if (!this.isImageAttachment(attachment)) {
+    const dialog = this.attachments();
+    if (!dialog || !this.isImageAttachment(attachment)) {
       return;
     }
-    this.patchCurrentAttachment({ busyAttachmentId: attachment.id, error: null });
+    const generation = dialog.generation;
+    this.patchAttachmentDialog(generation, { busyAttachmentId: attachment.id, error: null });
     try {
       const blob = await fetchAttachmentBlob(attachment.id);
+      // Verzögerte Antwort für einen älteren Dialog (bereits gewechselt
+      // oder geschlossen): keine Vorschau setzen, keine neue URL anlegen.
+      if (this.attachments()?.generation !== generation) {
+        return;
+      }
       const url = URL.createObjectURL(blob);
       this.attachments.update((d) => {
-        if (!d) {
+        if (d?.generation !== generation) {
           return d;
         }
         if (d.previewUrl && d.previewUrl !== url) {
@@ -593,32 +657,57 @@ export class BookingsList implements OnInit {
         return { ...d, busyAttachmentId: null, previewId: attachment.id, previewUrl: url };
       });
     } catch (error) {
-      this.patchCurrentAttachment({ busyAttachmentId: null, error: this.errors.handle(error) });
+      if (this.attachments()?.generation !== generation) {
+        return;
+      }
+      this.patchAttachmentDialog(generation, {
+        busyAttachmentId: null,
+        error: this.errors.handle(error),
+      });
     }
   }
 
   /** PDF im neuen Tab öffnen (Blob-URL; wird bewusst nicht revokiert,
    *  weil der neue Tab sie noch braucht). */
   async openAttachment(attachment: AttachmentDto): Promise<void> {
-    if (!this.isPdfAttachment(attachment)) {
+    const dialog = this.attachments();
+    if (!dialog || !this.isPdfAttachment(attachment)) {
       return;
     }
-    this.patchCurrentAttachment({ busyAttachmentId: attachment.id, error: null });
+    const generation = dialog.generation;
+    this.patchAttachmentDialog(generation, { busyAttachmentId: attachment.id, error: null });
     try {
       const blob = await fetchAttachmentBlob(attachment.id);
+      if (this.attachments()?.generation !== generation) {
+        return;
+      }
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank', 'noopener');
-      this.patchCurrentAttachment({ busyAttachmentId: null });
+      this.patchAttachmentDialog(generation, { busyAttachmentId: null });
     } catch (error) {
-      this.patchCurrentAttachment({ busyAttachmentId: null, error: this.errors.handle(error) });
+      if (this.attachments()?.generation !== generation) {
+        return;
+      }
+      this.patchAttachmentDialog(generation, {
+        busyAttachmentId: null,
+        error: this.errors.handle(error),
+      });
     }
   }
 
   /** Download über temporäre <a download>-Brücke. */
   async downloadAttachment(attachment: AttachmentDto): Promise<void> {
-    this.patchCurrentAttachment({ busyAttachmentId: attachment.id, error: null });
+    const dialog = this.attachments();
+    if (!dialog) {
+      return;
+    }
+    const generation = dialog.generation;
+    this.patchAttachmentDialog(generation, { busyAttachmentId: attachment.id, error: null });
     try {
       const blob = await fetchAttachmentBlob(attachment.id);
+      if (this.attachments()?.generation !== generation) {
+        return;
+      }
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -627,9 +716,15 @@ export class BookingsList implements OnInit {
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      this.patchCurrentAttachment({ busyAttachmentId: null });
+      this.patchAttachmentDialog(generation, { busyAttachmentId: null });
     } catch (error) {
-      this.patchCurrentAttachment({ busyAttachmentId: null, error: this.errors.handle(error) });
+      if (this.attachments()?.generation !== generation) {
+        return;
+      }
+      this.patchAttachmentDialog(generation, {
+        busyAttachmentId: null,
+        error: this.errors.handle(error),
+      });
     }
   }
 
@@ -647,11 +742,12 @@ export class BookingsList implements OnInit {
     if (!dialog || !id || dialog.busy) {
       return;
     }
-    this.patchCurrentAttachment({ busy: true, error: null });
+    const generation = dialog.generation;
+    this.patchAttachmentDialog(generation, { busy: true, error: null });
     try {
       await AttachmentEndpointsService.deleteAttachment(id);
       this.attachments.update((d) => {
-        if (!d) {
+        if (d?.generation !== generation) {
           return d;
         }
         // Gelöschter Beleg war die angezeigte Vorschau → Vorschau aufräumen.
@@ -667,9 +763,9 @@ export class BookingsList implements OnInit {
           previewUrl: previewCleared ? null : d.previewUrl,
         };
       });
-      await this.loadAttachmentDialog(dialog);
+      await this.loadAttachmentDialog(generation, dialog.booking.id, dialog.splitId);
     } catch (error) {
-      this.patchCurrentAttachment({ busy: false, error: this.errors.handle(error) });
+      this.patchAttachmentDialog(generation, { busy: false, error: this.errors.handle(error) });
     }
   }
 

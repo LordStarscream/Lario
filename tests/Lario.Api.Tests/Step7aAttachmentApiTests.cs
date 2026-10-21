@@ -324,6 +324,29 @@ public sealed class Step7aAttachmentApiTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task Default_Limit_ist_20_MB_dezimal()
+    {
+        // Review 7a: das Default ist 20 MB (dezimal, 20.000.000 Byte) —
+        // exakt 20.000.000 Byte wird akzeptiert, 20.000.001 abgewiesen.
+        // Ohne Konfiguration läuft der Test gegen den Host-Default.
+        const int defaultMax = 20_000_000;
+        var (bookingId, _) = await SeedExpenseAsync();
+
+        var ok = await UploadAsync(
+            _client, "grenze.pdf", ValidPdfOfLength(defaultMax),
+            "application/pdf", bookingId);
+        Assert.Equal(System.Net.HttpStatusCode.Created, ok.StatusCode);
+
+        var tooBig = await UploadAsync(
+            _client, "grenze_plus_1.pdf", ValidPdfOfLength(defaultMax + 1),
+            "application/pdf", bookingId);
+        Assert.Equal((System.Net.HttpStatusCode)413, tooBig.StatusCode);
+        var body = (await tooBig.Content.ReadFromJsonAsync<JsonElement>())!;
+        Assert.Equal("attachment_too_large",
+            body.GetProperty("error").GetProperty("detailCode").GetString());
+    }
+
     // ---------- Unicode-Dateiname (B2 l) ----------
 
     [Fact]

@@ -62,7 +62,11 @@ public static class AttachmentEndpoints
     /// <summary>
     /// Multipart-Upload (Design D3: Felder file, bookingId, splitId). Die
     /// maximale Dateigröße kommt aus der Host-Konfiguration
-    /// (<c>Lario:Attachments:MaxBytes</c>, Default 10 MB).
+    /// (<c>Lario:Attachments:MaxBytes</c>, Default 20 MB dezimal).
+    /// <remarks>
+    /// 20 MB ist dezimal (20_000_000 Byte), nicht 20 × 1024². Die UI
+    /// validiert an derselben Grenze vorab (bookings-list.ts).
+    /// </remarks>
     ///
     /// Die Formularfelder werden explizit als <c>[FromForm]</c> gebunden
     /// (keine <c>HttpRequest</c>-Parameter): so erzeugt der OpenAPI-Generator
@@ -98,7 +102,7 @@ public static class AttachmentEndpoints
             file.OpenReadStream(),
             bookingId,
             string.IsNullOrWhiteSpace(splitId) ? null : splitId,
-            configuration.GetValue("Lario:Attachments:MaxBytes", 10_000_000L),
+            configuration.GetValue("Lario:Attachments:MaxBytes", 20_000_000L),
             cancellationToken);
 
         return Results.Created($"/api/v1/attachments/{attachment.Id}", ToDto(attachment));
