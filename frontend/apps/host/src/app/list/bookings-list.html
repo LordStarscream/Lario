@@ -372,6 +372,38 @@
                     Entfernen
                   </button>
                 </div>
+                <!-- Zuordnung bestehender Belege ändern (Nachtrag N1):
+                     Auswahl pro Zeile, erst mit „Anwenden“ wirksam
+                     (PATCH). Fehler (z. B. Ziel-Split entfallen) laufen
+                     über das Fehlerbanner oben — danach zeigt die
+                     Liste den aktuellen Buchungszustand. -->
+                @if (att.detail && (att.detail.splits.length > 0 || a.splitId !== null)) {
+                  <div class="attachment-reassign">
+                    <label class="field">
+                      <span class="field-label">Zuordnung</span>
+                      <select
+                        [value]="att.reassign[a.id] ?? ''"
+                        [disabled]="att.busy"
+                        (change)="onReassignSelected(a, $event)"
+                      >
+                        <option value="">Gesamte Ausgabe</option>
+                        @for (s of att.detail.splits; track s.id) {
+                          <option [value]="s.id">
+                            {{ s.poolName ?? 'Split' }} ({{ formatCents(s.amount) }})
+                          </option>
+                        }
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      class="btn btn-small"
+                      [disabled]="att.busy || !reassignDirty(a)"
+                      (click)="reassignAttachment(a)"
+                    >
+                      {{ att.busy ? 'Wird gespeichert …' : 'Anwenden' }}
+                    </button>
+                  </div>
+                }
                 @if (att.confirmDeleteId === a.id) {
                   <div class="attachment-confirm" role="alert">
                     <span>Wirklich entfernen?</span>

@@ -111,6 +111,13 @@ export interface AttachmentDialogState {
   previewUrl: string | null;
   /** Beleg, für den gerade die Löschbestätigung angezeigt wird. */
   confirmDeleteId: string | null;
+  /**
+   * Ausgewählte Zuordnung pro Belegzeile (Nachtrag N1): attachmentId →
+   * gewählte Split-Id, leer = gesamte Ausgabe. Wird bei jedem Laden der
+   * Liste aus der serverseitigen Zuordnung neu initialisiert; die
+   * Auswahl in der Zeile ist erst mit „Anwenden“ wirksam (PATCH).
+   */
+  reassign: Record<string, string>;
 }
 
 const FILTER_TYPES = [
@@ -489,6 +496,7 @@ export class BookingsList implements OnInit, OnDestroy {
       previewId: null,
       previewUrl: null,
       confirmDeleteId: null,
+      reassign: {},
     };
     this.attachments.set(state);
     void this.loadAttachmentDialog(generation, booking.id, '');
@@ -539,6 +547,10 @@ export class BookingsList implements OnInit, OnDestroy {
         // Eine frisch geladene Liste ersetzt den Erfolgshinweis (der neue
         // Beleg ist dann selbst in der Liste sichtbar).
         success: null,
+        // Zuordnungsauswahl pro Zeile aus dem serverseitigen Zustand
+        // neu initialisieren (Nachtrag N1) — auch nach einer
+        // Umzuordnung oder einem Fehler-Refresh.
+        reassign: Object.fromEntries(list.map((a) => [a.id, a.splitId ?? ''])),
       });
     } catch (error) {
       this.patchAttachmentDialog(generation, {
@@ -785,6 +797,65 @@ export class BookingsList implements OnInit, OnDestroy {
       await this.loadAttachmentDialog(generation, dialog.booking.id, dialog.splitId);
     } catch (error) {
       this.patchAttachmentDialog(generation, { busy: false, error: this.errors.handle(error) });
+    }
+  }
+
+  // ---------- Umzuordnung bestehender Belege (Nachtrag N1) ----------
+
+  /** Auswahl in einer Belegzeile ändern — Signal-Update (zoneless +
+   *  OnPush: nur so wird die „Anwenden“-Sperrung neu gerendert). */
+  onReassignSelected(attachment: AttachmentDto, event: Event): void {
+    const value = (event.target as HTMLSelectElement).value;
+    this.attachments.update((d) =>
+      d ? { ...d, reassign: { ...d.reassign, [attachment.id]: value } } : d,
+    );
+  }
+
+  /** true, wenn die Zeilenauswahl von der serverseitigen Zuordnung
+   *  abweicht (nur dann ist „Anwenden“ wirksam). */
+  reassignDirty(attachment: AttachmentDto): boolean {
+    const dialog = this.attachments();
+    if (!dialog) {
+      return false;
+    }
+    return (dialog.reassign[attachment.id] ?? '') !== (attachment.splitId ?? '');
+  }
+
+  /**
+   * Gewählte Zuordnung anwenden (PATCH, Nachtrag N1): Erfolg →
+   * Hinweis + Listen-Refresh; Fehler (z. B. 400 invalid_reference,
+   * weil der Ziel-Split zwischen Auswahl und Anwenden entfernt wurde)
+   * → Fehlerbanner neben dem Inhalt + Listen-Refresh, damit die
+   * Optionen den aktuellen Buchungszustand zeigen (kein Dialog-
+   * neustart, Design D7).
+   */
+  async reassignAttachment(attachment: AttachmentDto): Promise<void> {
+    const dialog = this.attachments();
+    if (!dialog || dialog.busy || !dialog.detail) {
+      return;
+    }
+    const selected = dialog.reassign[attachment.id] ?? '';
+    if (selected === (attachment.splitId ?? '')) {
+      return;
+    }
+    const generation = dialog.generation;
+    this.patchAttachmentDialog(generation, { busy: true, error: null, success: null });
+    try {
+      await AttachmentEndpointsService.reassignAttachmentSplit(attachment.id, {
+        splitId: selected || null,
+      });
+      // Bestätigte Umzuordnung: Hinweis bleibt auch sichtbar, wenn der
+      // anschließende Refresh fehlschlägt (wie beim Upload).
+      this.patchAttachmentDialog(generation, {
+        busy: false,
+        success: 'Zuordnung aktualisiert.',
+      });
+      await this.loadAttachmentDialog(generation, dialog.booking.id, dialog.splitId);
+    } catch (error) {
+      this.patchAttachmentDialog(generation, { busy: false, error: this.errors.handle(error) });
+      // Zustand konsistent halten: Ziel-Split kann zwischen Auswahl und
+      // Anwenden entfallen (Korrektur) — aktuelle Splits/Belege laden.
+      await this.loadAttachmentDialog(generation, dialog.booking.id, dialog.splitId);
     }
   }
 
