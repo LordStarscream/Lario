@@ -376,15 +376,25 @@
                      Auswahl pro Zeile, erst mit „Anwenden“ wirksam
                      (PATCH). Fehler (z. B. Ziel-Split entfallen) laufen
                      über das Fehlerbanner oben — danach zeigt die
-                     Liste den aktuellen Buchungszustand. -->
+                     Liste den aktuellen Buchungszustand.
+                     [ngModel] statt [value] (Review 7a-N1, Befund 1):
+                     [value] wird während des CD-Durchlaufs geschrieben,
+                     bevor der @for die dynamischen Split-Optionen
+                     erzeugt — ein Wert ohne passendes Option-Element
+                     verwirft der native Select, und der unveränderte
+                     Binding-Wert wird in späteren CD-Durchläufen nicht
+                     neu geschrieben. NgModel führt das writeValue
+                     dagegen in einem Microtask aus, der erst NACH dem
+                     Erzeugen der Optionen läuft — der serverseitige
+                     Zustand wird zuverlässig vorausgewählt. -->
                 @if (att.detail && (att.detail.splits.length > 0 || a.splitId !== null)) {
                   <div class="attachment-reassign">
                     <label class="field">
                       <span class="field-label">Zuordnung</span>
                       <select
-                        [value]="att.reassign[a.id] ?? ''"
+                        [ngModel]="att.reassign[a.id] ?? ''"
                         [disabled]="att.busy"
-                        (change)="onReassignSelected(a, $event)"
+                        (ngModelChange)="onReassignSelected(a, $event)"
                       >
                         <option value="">Gesamte Ausgabe</option>
                         @for (s of att.detail.splits; track s.id) {

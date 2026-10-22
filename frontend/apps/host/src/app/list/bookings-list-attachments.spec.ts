@@ -913,9 +913,7 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
     await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
 
     const att = component.attachments()!.attachments[0];
-    component.onReassignSelected(att, {
-      target: { value: 's2' },
-    } as unknown as Event);
+    component.onReassignSelected(att, 's2');
     expect(component.reassignDirty(att)).toBe(true);
 
     await component.reassignAttachment(att);
@@ -950,7 +948,7 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
 
     const att = component.attachments()!.attachments[0];
     expect(att.splitId).toBe('s1');
-    component.onReassignSelected(att, { target: { value: '' } } as unknown as Event);
+    component.onReassignSelected(att, '');
     expect(component.reassignDirty(att)).toBe(true);
 
     await component.reassignAttachment(att);
@@ -984,9 +982,7 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
     // Auswahl = serverseitiger Zustand → keine Abweichung → gesperrt.
     expect(apply().disabled).toBe(true);
 
-    component.onReassignSelected(att, {
-      target: { value: 's2' },
-    } as unknown as Event);
+    component.onReassignSelected(att, 's2');
     fixture.detectChanges();
     expect(apply().disabled).toBe(false);
 
@@ -1054,13 +1050,15 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
 
     const att = component.attachments()!.attachments[0];
     select.value = 's2';
-    component.onReassignSelected(att, {
-      target: { value: 's2' },
-    } as unknown as Event);
+    component.onReassignSelected(att, 's2');
     fixture.detectChanges();
 
     await component.reassignAttachment(att);
     fixture.detectChanges();
+    // NgModel schreibt den (neu initialisierten) serverseitigen Zustand
+    // per writeValue in einem Microtask — NACH dem Rebuild der Optionen,
+    // der die Auswahl „s2“ verworfen hat (Option weg → Wert '').
+    await tick();
 
     // Fehlerbanner NEBEN dem Inhalt — Dialog bleibt offen, Belegzeile
     // bleibt sichtbar (kein Dialogneustart, Design D7).
@@ -1074,5 +1072,152 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
     expect(refreshed.options.length).toBe(2); // gesamte Ausgabe + s1
     expect(refreshed.value).toBe('s1');
     expect(component.reassignDirty(attachment({ splitId: 's1' }))).toBe(false);
+  });
+
+  // ---------- Review 7a-N1: Befund 1 (Vorauswahl) + Befund 2 (busy-Fenster) ----------
+
+  it('Vorauswahl: serverseitig zu s2 zugewiesener Beleg zeigt s2 in der Auswahl (Review 7a-N1, Befund 1)', async () => {
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockResolvedValue(
+      [attachment({ splitId: 's2' })],
+    );
+
+    const { component, fixture, el } = createRendered();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    fixture.detectChanges();
+
+    const select = el.querySelector('.attachment-reassign select') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    // Vor der Korrektur: [value] wurde während des CD-Durchlaufs
+    // geschrieben, bevor der @for die Split-Optionen erzeugt hatte —
+    // der native Select verwarf den Wert ohne passendes Option-Element
+    // und zeigte „Gesamte Ausgabe“ (leerer Wert). Mit [ngModel] führt
+    // der ValueAccessor das writeValue erst nach dem Erzeugen der
+    // Optionen aus — die serverseitige Zuordnung s2 ist vorausgewählt.
+    expect(select.value).toBe('s2');
+    expect(component.reassignDirty(component.attachments()!.attachments[0])).toBe(false);
+  });
+
+  it('Umzuordnung: Sperre bleibt während des Refresh nach bestätigtem PATCH gesetzt (Review 7a-N1, Befund 2)', async () => {
+    const reassign = vi.mocked(AttachmentEndpointsService.reassignAttachmentSplit);
+    reassign.mockResolvedValue(attachment({ splitId: 's2' }) as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    let resolveRefresh!: (attachments: unknown[]) => void;
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([attachment()]) // initiales Laden
+      .mockImplementation(
+        (() =>
+          new Promise((r) => {
+            resolveRefresh = r;
+          })) as never,
+      );
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+
+    const att = component.attachments()!.attachments[0];
+    component.onReassignSelected(att, 's2');
+    const reassignCall = component.reassignAttachment(att);
+
+    // PATCH ist bestätigt (Erfolgshinweis gesetzt), der anschließende
+    // Refresh läuft noch — die Sperre muss HIER aktiv bleiben: ein
+    // zweiter Schreibvorgang in diesem Fenster würde von der älteren
+    // Refresh-Antwort (dieselbe Dialog-Generation!) überschrieben.
+    await vi.waitFor(() =>
+      expect(component.attachments()?.success).toBe('Zuordnung aktualisiert.'),
+    );
+    expect(reassign).toHaveBeenCalledTimes(1);
+    expect(component.attachments()?.busy).toBe(true);
+
+    // Zweiter Schreibvorgang im Fenster wird ignoriert (busy-Guard).
+    void component.reassignAttachment(att);
+    await tick();
+    expect(reassign).toHaveBeenCalledTimes(1);
+
+    resolveRefresh([attachment({ splitId: 's2' })]);
+    await reassignCall;
+
+    expect(component.attachments()?.busy).toBe(false);
+    expect(component.attachments()?.attachments[0].splitId).toBe('s2');
+  });
+
+  it('Upload: Sperre bleibt während des Refresh nach bestätigtem Upload gesetzt (Review 7a-N1, Befund 2)', async () => {
+    const upload = vi.mocked(AttachmentEndpointsService.uploadAttachment);
+    upload.mockResolvedValue(attachment() as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    let resolveRefresh!: (attachments: unknown[]) => void;
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([]) // initiales Laden
+      .mockImplementation(
+        (() =>
+          new Promise((r) => {
+            resolveRefresh = r;
+          })) as never,
+      );
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+
+    const file = new File(['%PDF-1.4'], 'quittung.pdf', {
+      type: 'application/pdf',
+    });
+    component.onFileSelected(fileInputEvent(file));
+    const uploadCall = component.uploadAttachment();
+
+    // Upload bestätigt, Refresh läuft noch — Sperre aktiv.
+    await vi.waitFor(() =>
+      expect(component.attachments()?.success).toBe('Beleg hochgeladen.'),
+    );
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(component.attachments()?.busy).toBe(true);
+
+    resolveRefresh([attachment()]);
+    await uploadCall;
+
+    expect(component.attachments()?.busy).toBe(false);
+    expect(component.attachments()?.attachments).toHaveLength(1);
+  });
+
+  it('Löschen: Sperre bleibt während des Refresh nach bestätigtem Delete gesetzt (Review 7a-N1, Befund 2)', async () => {
+    const del = vi.mocked(AttachmentEndpointsService.deleteAttachment);
+    del.mockResolvedValue(undefined as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    let resolveRefresh!: (attachments: unknown[]) => void;
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([attachment({ id: 'att-1' })]) // initiales Laden
+      .mockImplementation(
+        (() =>
+          new Promise((r) => {
+            resolveRefresh = r;
+          })) as never,
+      );
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+
+    component.requestDeleteAttachment(attachment({ id: 'att-1' }));
+    expect(component.attachments()?.confirmDeleteId).toBe('att-1');
+    const deleteCall = component.confirmDeleteAttachment();
+
+    // Synchronisationspunkt: Delete ist bestätigt — confirmDeleteId wird
+    // erst NACH der bestellten Löschung auf null gesetzt, der
+    // anschließende Refresh läuft dann noch — Sperre aktiv.
+    // (loading ist dabei bewusst kein Indikator: der Refresh setzt es
+    // nicht neu auf true.)
+    await vi.waitFor(() =>
+      expect(component.attachments()?.confirmDeleteId).toBeNull(),
+    );
+    expect(del).toHaveBeenCalledTimes(1);
+    expect(component.attachments()?.busy).toBe(true);
+
+    resolveRefresh([]);
+    await deleteCall;
+
+    expect(component.attachments()?.busy).toBe(false);
+    expect(component.attachments()?.attachments).toHaveLength(0);
   });
 });

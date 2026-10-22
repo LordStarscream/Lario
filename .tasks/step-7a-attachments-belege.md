@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 7a — PDF-/Bildnachweise in der Hauptanwendung
-_Status: implementiert, Nachträge N1 + N2 umgesetzt · Last updated: 22. Okt. 2026_
+_Status: implementiert, Nachträge N1 + N2 umgesetzt, Review N1 (Befunde 1+2) behoben · Last updated: 22. Okt. 2026_
 
 **Branches:**
 - Lario → `step/7a-belege-impl` (Worktree `/home/mario/Projects/Lario-worktrees/step-7a`; Haupt-Checkout bleibt auf `main`). Basis `666a9ce` (Merge PR #12, Design).
@@ -133,3 +133,11 @@ Siehe `.tasks/step-7a-design-paket.md` (D1–D9b). Stand nach Designreview PR #1
 - **Keine Finanzwirkung:** Zuordnung ist reine Metadaten; Konten/Pools/Salden bleiben unverändert (A5-Regel bleibt gelten).
 
 **Prüfstand (22. Okt. 2026, final nach N1 + N2):** .NET **648/648** (Domain 214, Infrastructure 200, Api 134 — +9 N1) + Host **126/126** (+5 N1 Umzuordnung, +2 N2 Login), Mobile 23/23, Lint 0 (host+mobile), Builds grün (host+mobile), **E2E-Smoke N1 (22. Okt. 2026, echter Host + frische SQLite-DB) grün** (Login, Stammdaten, Ausgabe mit 2 Splits, Upload, PATCH → Split, PATCH → null, No-Op, **fremder Split → 400 `invalid_reference`**, 404, 401). Hinweis: `dotnet test Lario.slnx` schlägt auf dieser Maschine bei Api.Tests fehl (vstest setzt `DOTNET_ROOT_X64=/usr/share/dotnet`, dort fehlt AspNetCore.App) — **besteht auf `main` identisch** (vor 7a), kein 7a-Problem; Einzelprojekt-Runs sind zuverlässig grün.
+
+## Review N1 (LordStarscream, 22. Okt. 2026) — zwei Befunde, beide behoben
+
+**Befund 1 (Vorauswahl, P2):** Ein serverseitig einem Split zugeordneter Beleg zeigte im Auswahlfeld „Gesamte Ausgabe“ statt des serverseitigen Zustands. **Root-Cause:** `[value]` wird während des CD-Durchlaufs geschrieben, bevor der `@for` die dynamischen Split-Optionen erzeugt — ein Wert ohne passendes Option-Element wird vom nativen Select verworfen, und der unveränderte Binding-Wert wird in späteren CD-Durchläufen nicht neu geschrieben. **Fix:** `[ngModel]` + `(ngModelChange)` — der `ValueAccessor` führt das `writeValue` in einem Microtask aus, der erst **nach** dem Erzeugen der Optionen läuft; `onReassignSelected` erhält den ausgewählten Wert als String (leer = gesamte Ausgabe) statt des DOM-Events. **Rot-Check (22. Okt. 2026):** der neue Vorauswahl-Test am gerenderten DOM schlägt auf dem alten `[value]`-Stand mit `expected '' to be 's2'` (temporäres Standalone-Spec, danach gelöscht), auf dem fixierten Stand grün — bestätigt die vom Reviewer manuell beobachtete Reproduktion.
+
+**Befund 2 (busy-Fenster, P2):** Nach bestätigtem PATCH wurde `busy` **vor** dem anschließenden Refresh gelöst — im Refresh-Fenster konnte ein zweiter Schreibvorgang (Umzuordnung/Upload/Löschung) starten; die ältere Refresh-Antwort (dieselbe Dialog-Generation!) konnte den neueren Zustand überschreiben (der D6-Generation-Schutz hilft nicht: beide Antworten gehören zur selben Generation). **Fix:** in **allen drei** Schreibpfaden (`reassignAttachment`, `uploadAttachment`, `confirmDeleteAttachment`) bleibt `busy` während des API-Verkehrs **und** des anschließenden Refreshes gesetzt; gelöst wird erst in einem `finally`, das über die Dialog-Generation guardet (geschlossener/gewechselter Dialog erhält den Patch nicht — kein hängendes Sperren-Flag). Die bestehenden busy-Guards am Kopf der Schreibpfade machen einen zweiten Start im Fenster wirkungslos.
+
+**Tests:** +4 host-Tests (Vorauswahl am gerenderten DOM; busy-Fenster je Schreibpfad — im PATCH-Test zusätzlich: zweiter Schreibversuch im Fenster wird vom busy-Guard ignoriert). **Prüfstand (22. Okt. 2026, final nach Review N1):** .NET **648/648** (unverändert, keine API-Änderung), host **130/130** (vorher 126, +4), mobile 23/23, Lint 0 (host+mobile), Builds grün (host+mobile).

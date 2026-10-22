@@ -631,9 +631,9 @@ export class BookingsList implements OnInit, OnDestroy {
       // Upload ist bestätigt — der Erfolgshinweis bleibt auch sichtbar,
       // wenn der anschließende Refresh fehlschlägt (Dateiauswahl ist
       // zurückgesetzt, d. h. kein unbedachter erneuter Upload derselben
-      // Datei).
+      // Datei). Die Sperre wird HIER nicht gelöst (Review 7a-N1,
+      // Befund 2) — erst in finally, nach dem Refresh.
       this.patchAttachmentDialog(generation, {
-        busy: false,
         selectedFile: null,
         clientError: null,
         error: null,
@@ -641,7 +641,15 @@ export class BookingsList implements OnInit, OnDestroy {
       });
       await this.loadAttachmentDialog(generation, dialog.booking.id, dialog.splitId);
     } catch (error) {
-      this.patchAttachmentDialog(generation, { busy: false, error: this.errors.handle(error) });
+      this.patchAttachmentDialog(generation, { error: this.errors.handle(error) });
+    } finally {
+      // Die Sperre fällt erst, wenn der anschließende Refresh abgeschlossen
+      // ist (Review 7a-N1, Befund 2): sonst könnte im Refresh-Fenster ein
+      // zweiter Schreibvorgang starten und die ältere Refresh-Antwort
+      // (dieselbe Dialog-Generation!) den neueren Zustand überschreiben.
+      // Generationsgeschützt: ein geschlossener/gechselter Dialog erhält
+      // diesen Patch nicht.
+      this.patchAttachmentDialog(generation, { busy: false });
     }
   }
 
@@ -782,13 +790,14 @@ export class BookingsList implements OnInit, OnDestroy {
           return d;
         }
         // Gelöschter Beleg war die angezeigte Vorschau → Vorschau aufräumen.
+        // Die Sperre wird HIER nicht gelöst (Review 7a-N1, Befund 2) —
+        // erst in finally, nach dem Refresh.
         const previewCleared = d.previewId === id;
         if (previewCleared && d.previewUrl) {
           URL.revokeObjectURL(d.previewUrl);
         }
         return {
           ...d,
-          busy: false,
           confirmDeleteId: null,
           previewId: previewCleared ? null : d.previewId,
           previewUrl: previewCleared ? null : d.previewUrl,
@@ -796,16 +805,22 @@ export class BookingsList implements OnInit, OnDestroy {
       });
       await this.loadAttachmentDialog(generation, dialog.booking.id, dialog.splitId);
     } catch (error) {
-      this.patchAttachmentDialog(generation, { busy: false, error: this.errors.handle(error) });
+      this.patchAttachmentDialog(generation, { error: this.errors.handle(error) });
+    } finally {
+      // Die Sperre fällt erst, wenn der anschließende Refresh abgeschlossen
+      // ist (Review 7a-N1, Befund 2); generationsgeschützt, siehe
+      // uploadAttachment.
+      this.patchAttachmentDialog(generation, { busy: false });
     }
   }
 
   // ---------- Umzuordnung bestehender Belege (Nachtrag N1) ----------
 
   /** Auswahl in einer Belegzeile ändern — Signal-Update (zoneless +
-   *  OnPush: nur so wird die „Anwenden“-Sperrung neu gerendert). */
-  onReassignSelected(attachment: AttachmentDto, event: Event): void {
-    const value = (event.target as HTMLSelectElement).value;
+   *  OnPush: nur so wird die „Anwenden“-Sperrung neu gerendert).
+   *  Bindung über (ngModelChange) (Review 7a-N1, Befund 1): $event ist
+   *  der ausgewählte Wert (leer = gesamte Ausgabe), kein DOM-Event. */
+  onReassignSelected(attachment: AttachmentDto, value: string): void {
     this.attachments.update((d) =>
       d ? { ...d, reassign: { ...d.reassign, [attachment.id]: value } } : d,
     );
@@ -845,17 +860,26 @@ export class BookingsList implements OnInit, OnDestroy {
         splitId: selected || null,
       });
       // Bestätigte Umzuordnung: Hinweis bleibt auch sichtbar, wenn der
-      // anschließende Refresh fehlschlägt (wie beim Upload).
+      // anschließende Refresh fehlschlägt (wie beim Upload). Die Sperre
+      // wird HIER nicht gelöst (Review 7a-N1, Befund 2) — erst in
+      // finally, nach dem Refresh.
       this.patchAttachmentDialog(generation, {
-        busy: false,
         success: 'Zuordnung aktualisiert.',
       });
       await this.loadAttachmentDialog(generation, dialog.booking.id, dialog.splitId);
     } catch (error) {
-      this.patchAttachmentDialog(generation, { busy: false, error: this.errors.handle(error) });
+      this.patchAttachmentDialog(generation, { error: this.errors.handle(error) });
       // Zustand konsistent halten: Ziel-Split kann zwischen Auswahl und
       // Anwenden entfallen (Korrektur) — aktuelle Splits/Belege laden.
       await this.loadAttachmentDialog(generation, dialog.booking.id, dialog.splitId);
+    } finally {
+      // Die Sperre bleibt während des PATCH UND des anschließenden
+      // Refresh gesetzt (Review 7a-N1, Befund 2): sonst könnte im
+      // Refresh-Fenster ein zweiter Schreibvorgang starten und die
+      // ältere Refresh-Antwort (dieselbe Dialog-Generation!) den
+      // neueren Zustand überschreiben. Generationsgeschützt: ein
+      // geschlossener/gechselter Dialog erhält diesen Patch nicht.
+      this.patchAttachmentDialog(generation, { busy: false });
     }
   }
 
