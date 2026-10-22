@@ -26,7 +26,7 @@ _Status: implementiert, Abnahme ausstehend · Last updated: 21. Okt. 2026_
 - A9 (bewusst): **Keine unabhängige Client-Größensperre** (Review 7a Nachgang D7): die Größe entscheidet ausschließlich der Server (`MaxBytes`, Default **20 MB dezimal**, konfigurierbar); die Client-Vorvalidierung prüft nur den Dateityp, ein zu großer Upload wird mit verständlichem 413 abgewiesen und danach bleibt eine kleinere Datei im selben Dialog auswählbar. Smoke nutzt 50-KB-Limit + 60-KB-Datei (A15) — beide verifiziert.
 - Smoke-B14 „Konsole frei“: headless Chromium ohne DevTools-UI; `pageerror`-Events + fehlende UI-Zustände als Fehlerindikatoren.
 
-**Offene manuelle/gerätebezogene Abnahmen:** A1 (Host-Neustart mit echten Dateien — im Smoke als Persistenz + Start-Abgleich API-seitig abgedeckt, manuelle UI-Prüfung nach Neustart), A2 (mehrere Dateien an derselben Rechnung — im Smoke API-seitig; UI-Prüfung), A3 (abgebrochener Upload — Infrastructure-Tests; UI-Abbruch-Prüfung), A6 (vollständige Restore-Abnahme folgt in Schritt 17). Browser-Prüfung ≠ Geräte-/manuelle Abnahme.
+**Offene manuelle/gerätebezogene Abnahmen:** A1–A3 **manuell abgenommen vom Nutzer (22. Okt. 2026)** — „hat alles soweit funktioniert“; verbleibt: A6 (vollständige Restore-Abnahme folgt in Schritt 17). Browser-Prüfung ≠ Geräte-/manuelle Abnahme. **Nachtrag N1 (22. Okt. 2026, Nutzer-Feedback):** Zuordnung bestehender Belege änderbar — siehe unten.
 
 **Gestartet:** 21. Okt. 2026 (Basis `d15f452`, main)
 
@@ -83,9 +83,9 @@ Siehe `.tasks/step-7a-design-paket.md` (D1–D9b). Stand nach Designreview PR #1
 
 | # | Status | Nachweis |
 |---|---|---|
-| A1 | ⏳ manuell (Nutzer) | API-Persistenz + Start-Abgleich im Smoke; UI-Prüfung nach Host-Neustart offengelassen |
-| A2 | ⏳ manuell (Nutzer) | API: mehrere Dateien an derselben Buchung (A11: 2 Belege); UI: Upload + Vorschau |
-| A3 | ⏳ manuell (Nutzer) | Infrastructure-Tests (`.part`-Cleanup, Delete-Order); UI-Abbruch offen |
+| A1 | ✅ manuell abgenommen (Nutzer, 22. Okt. 2026) | PDF + Bild angehängt, Host neu gestartet, Metadaten/Datei vorhanden, Vorschau/Download funktioniert |
+| A2 | ✅ manuell abgenommen (Nutzer, 22. Okt. 2026) | Mehrere Dateien an derselben Ausgabe; Split-Zuordnung über UI (ganze Ausgabe + Split) |
+| A3 | ✅ manuell abgenommen (Nutzer, 22. Okt. 2026) | Abgebrochener Upload: keine Belegzeile ohne Datei, Bereinigung sichtbar |
 | A4 | ✅ | Smoke A14/A15/A16 (Typ/Größe/Magic), A2 (401); Api-Tests |
 | A5 | ✅ | Smoke A20–A22 (Delete, 404, Liste); Api-Tests (Zweit-Zuordnung intakt) |
 | A6 | ⏳ Schritt 17 | Vollständige Restore-Abnahme folgt in Schritt 17; Belege-Ordner im Backup (README) |
@@ -93,6 +93,18 @@ Siehe `.tasks/step-7a-design-paket.md` (D1–D9b). Stand nach Designreview PR #1
 | A8 | ✅ | Api-Tests Start-Abgleich (`.part` + finale Datei ohne DB-Zeile); Infrastructure-Tests |
 | A9 | ✅ | Server-Default 20 MB dezimal (Api-Test `Default_Limit_ist_20_MB_dezimal`), konfigurierbares Server-Limit (Smoke A15, Api-Tests exakt/+1) verifiziert; „413 in der UI verständlich“ — UI zeigt `attachment_too_large`/`max_content_length`-Meldung + D4-Fallback für Kestrel-413 ohne Body; **keine Client-Größensperre** (D7: höheres Server-Limit wird nicht ausgehebelt — host-Test: 25-MB-Datei erreicht den Upload-Aufruf); 413 lässt Upload/Dateiauswahl bedienbar (D7-DOM-Test) |
 
-**Stand: 22. Okt. 2026 — gemerged in `main` (Merge-Commit `fe4b60f`, PR #13; finaler Code-Stand `d2f1f89`, Merge-Diff nur `.tasks/_index.md`, keine Code-Änderung durch den Merge). Review-Befunde 1/2/3/4 umgesetzt (D2/D4), D5 (empirische SQLite-Semantik-Verifikation, Test-Doku-Korrektur p4/p5), D6 (Befund 1: Default-Limit 20 MB; Befund 2: Dialog-Generation + Download-404/410-Meldungen), D7 (Befund „Größenlimit“: keine Client-Größensperre; Befund „Aktionsfehler“: Fehler/Erfolg neben Inhalt, „Erneut laden“-Zweig, Blob-Buttons gemeinsam gesperrt); Abnahme A1–A3 manuell beim Nutzer, A6 folgt in Schritt 17.**
+**Stand: 22. Okt. 2026 — gemerged in `main` (Merge-Commit `fe4b60f`, PR #13; finaler Code-Stand `d2f1f89`, Merge-Diff nur `.tasks/_index.md`, keine Code-Änderung durch den Merge). Review-Befunde 1/2/3/4 umgesetzt (D2/D4), D5 (empirische SQLite-Semantik-Verifikation, Test-Doku-Korrektur p4/p5), D6 (Befund 1: Default-Limit 20 MB; Befund 2: Dialog-Generation + Download-404/410-Meldungen), D7 (Befund „Größenlimit“: keine Client-Größensperre; Befund „Aktionsfehler“: Fehler/Erfolg neben Inhalt, „Erneut laden“-Zweig, Blob-Buttons gemeinsam gesperrt); **A1–A3 manuell abgenommen (Nutzer, 22. Okt. 2026)**; A6 folgt in Schritt 17; **offen: Nachtrag N1 (Zuordnung bestehender Belege änderbar).**
+
+## Nachtrag N1 (22. Okt. 2026, Nutzer-Feedback) — Zuordnung bestehender Belege änderbar
+
+**Anforderung:** In der Belegübersicht (Beleg-Dialog) soll die Zuordnung eines bereits hochgeladenen Belegs änderbar sein (gesamte Ausgabe ↔ einzelner Split, inkl. „Zuordnung entfernen“), ohne dass der Beleg gelöscht und erneut hochgeladen werden muss — für den Fall eines Verklickens oder späterer Korrektur.
+
+**Skizze (noch nicht umgesetzt):**
+- **API:** neuer Endpunkt `PATCH /api/v1/attachments/{id}` mit `{ "splitId": string | null }` (null = Buchungsebene). Referenzprüfung wie beim Upload (Split muss zur Buchung des Belegs gehören; sonst 400 `invalid_reference`); Auth wie die übrigen Beleg-Endpunkte.
+- **Konfliktfall:** Split wird parallel zur Zuordnungsänderung entfernt → FK-Constraint/Referenzprüfung wie im Upload-Race (400 `invalid_reference`, Zustand konsistent, UI lädt neu).
+- **OriginalSplitId:** explizite manuelle Umzuordnung setzt die automatische Umlageungs-Provenienz (`OriginalSplitId`) zurück (menschliche Intention ersetzt die automatische Regel) — Designentscheidung bei der Umsetzung finalisieren.
+- **UI:** pro Belegzeile ein Auswahlfeld „Zuordnung“ (Gesamtausgabe + die Splits der Buchung, Daten aus dem vorhandenen Buchungsdetail) + anwenden; Fehler über das bestehende Banner neben dem Inhalt (D7), kein Dialogneustart.
+- **Tests:** Api-Tests (gültige Änderung, auf null, fremder Split → 400, Split einer anderen Buchung → 400, Auth, parallele Split-Entfernung), host-Tests (Dialog-Verhalten inkl. Fehler neben Inhalt).
+- **Keine Finanzwirkung:** Zuordnung ist reine Metadaten; Konten/Pools/Salden bleiben unverändert (A5-Regel bleibt gelten).
 
 **Prüfstand (22. Okt. 2026, Worktree; .NET-Zahlen von 21. Okt., nach D7 keine .NET-Änderung):** .NET 539/539 (Domain 214, Infrastructure 200, Api 125) + Host 119/119, Mobile 23/23, Lint 0, Web-/Mobile-Production-Builds ok, E2E-Smoke 36/36 (headless Chromium/CDP gegen echten Host + frische SQLite-DB, keine Konsolen-/Seitenfehler). Hinweis: `dotnet test Lario.slnx` schlägt auf dieser Maschine bei Api.Tests fehl (vstest setzt `DOTNET_ROOT_X64=/usr/share/dotnet`, dort fehlt AspNetCore.App) — **besteht auf `main` identisch** (vor 7a), kein 7a-Problem; Einzelprojekt-Runs sind zuverlässig grün.
