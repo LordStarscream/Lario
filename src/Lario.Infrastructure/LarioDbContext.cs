@@ -388,6 +388,8 @@ public class LarioDbContext : DbContext
             e.Property(x => x.SplitId).HasMaxLength(128);
             e.Property(x => x.OriginalSplitId).HasMaxLength(128);
             e.Property(x => x.CreatedAtUtc).IsRequired();
+            // Null bis zur ersten manuellen Umzuordnung (Nachtrag N1).
+            e.Property(x => x.UpdatedAtUtc);
             e.HasOne<Booking>()
                 .WithMany()
                 .HasForeignKey(x => x.BookingId)

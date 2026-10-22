@@ -732,6 +732,10 @@ internal sealed class FailingAddRepository(IAttachmentRepository inner) : IAttac
     public Task UpdateSplitReferenceAsync(
         string id, string? splitId, string? originalSplitId, CancellationToken cancellationToken = default)
         => inner.UpdateSplitReferenceAsync(id, splitId, originalSplitId, cancellationToken);
+
+    public Task UpdateSplitAssignmentAsync(
+        string id, string? splitId, DateTime updatedAtUtc, CancellationToken cancellationToken = default)
+        => inner.UpdateSplitAssignmentAsync(id, splitId, updatedAtUtc, cancellationToken);
 }
 
 /// <summary>

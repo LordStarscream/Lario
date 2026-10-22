@@ -79,4 +79,34 @@ public sealed class AttachmentRepository(LarioDbContext db) : IAttachmentReposit
         attachment.OriginalSplitId = originalSplitId;
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// Manuelle Umzuordnung (Nachtrag N1): Teilposten-Zuordnung und
+    /// Änderungszeitstempel; <c>OriginalSplitId</c> bleibt unberührt.
+    /// Wie bei <see cref="AddAsync"/> ist die Referenz zwischen der
+    /// fachlichen Prüfung im Service und diesem Commit parallel wegfallen
+    /// können (Korrektur entfernt den Ziel-Split) — der Komposit-FK
+    /// schlägt dann fehl und wird als ungültige Referenz (400) gemeldet,
+    /// nicht als interner Fehler.
+    /// </summary>
+    public async Task UpdateSplitAssignmentAsync(
+        string id, string? splitId, DateTime updatedAtUtc, CancellationToken cancellationToken = default)
+    {
+        var attachment = await db.Attachments.FirstOrDefaultAsync(a => a.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException($"Beleg '{id}' existiert nicht.");
+        attachment.SplitId = splitId;
+        attachment.UpdatedAtUtc = updatedAtUtc;
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (SqliteConstraintErrors.IsForeignKeyViolation(ex))
+        {
+            var sqlite = ex.GetBaseException() is SqliteException s ? s.Message : ex.Message;
+            throw new InvalidReferenceException(
+                $"Teilposten '{splitId}' der Buchung '{attachment.BookingId}' existiert " +
+                $"nicht mehr — eine parallele Änderung wurde zwischenzeitlich übernommen " +
+                $"(SQLite: {sqlite}).");
+        }
+    }
 }

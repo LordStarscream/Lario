@@ -140,6 +140,44 @@ public sealed class AttachmentService(
         => repository.GetByBookingAsync(bookingId, cancellationToken);
 
     /// <summary>
+    /// Umzuordnung eines vorhandenen Belegs (Nachtrag N1, Review 7a):
+    /// der Beleg darf nur innerhalb seiner Buchung umgeordnet werden —
+    /// dieselbe Referenzprüfung wie beim Upload (unbekannter Teilposten
+    /// der Buchung → <see cref="InvalidReferenceException"/>),
+    /// <c>null</c> = Zuordnung auf die gesamte Ausgabe.
+    /// <see cref="Attachment.OriginalSplitId"/> bleibt unberührt — es
+    /// dokumentiert ausschließlich die systemseitige Umlageung bei
+    /// Split-Entfernung (Design D1b). Bei unveränderter Referenz findet
+    /// kein Schreibvorgang statt (<see cref="Attachment.UpdatedAtUtc"/>
+    /// bleibt, wie es war). null wenn der Beleg unbekannt ist (404).
+    /// </summary>
+    public async Task<Attachment?> ReassignSplitAsync(
+        string id, string? splitId, CancellationToken cancellationToken = default)
+    {
+        var attachment = await repository.FindByIdAsync(id, cancellationToken);
+        if (attachment is null)
+            return null;
+        if (string.Equals(attachment.SplitId, splitId, StringComparison.Ordinal))
+            return attachment;
+
+        if (splitId is not null)
+        {
+            var booking = await bookingRepository.FindByIdAsync(attachment.BookingId, cancellationToken)
+                ?? throw new InvalidOperationException(
+                    $"Buchung '{attachment.BookingId}' des Belegs '{id}' existiert nicht mehr.");
+            if (booking.Splits.FirstOrDefault(s => s.Id == splitId) is null)
+                throw new InvalidReferenceException(
+                    $"Unbekannter Teilposten '{splitId}' der Buchung '{attachment.BookingId}'.");
+        }
+
+        var updatedAtUtc = DateTime.UtcNow;
+        attachment.SplitId = splitId;
+        attachment.UpdatedAtUtc = updatedAtUtc;
+        await repository.UpdateSplitAssignmentAsync(id, splitId, updatedAtUtc, cancellationToken);
+        return attachment;
+    }
+
+    /// <summary>
     /// Löscht Beleg (Design D5, festgelegte Reihenfolge): Metadaten-
     /// Zeile zuerst committen, dann Datei löschen (fehlende Datei ist
     /// Erfolg). Umgekehrte Reihenfolge würde bei einem Abbruch zwischen

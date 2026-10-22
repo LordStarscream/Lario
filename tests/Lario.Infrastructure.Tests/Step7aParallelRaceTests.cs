@@ -220,13 +220,26 @@ public sealed class Step7aParallelRaceTests
                 // Lesezustand (alte Revision, alter Split-Zustand) darf
                 // weder als Revisionskonflikt noch als FK-Fehler
                 // durchkommen.
+                //
+                // Beide Operationen laufen in frischen Scopes (neuer
+                // DbContext) — wie neue Anfragen in der Produktion.
+                // Ein wiederverwendeter Scope würde den Fehlstatus der
+                // ersten Operation im Change-Tracker behalten und beim
+                // nächsten SaveChanges erneut einsenden: in Ergebnis-B
+                // resubmittet der zweite Upload das FK-betroffene
+                // Entity der ersten Runde, in Ergebnis-D liest die
+                // zweite Korrektur das stale Identity-Map-Objekt der
+                // ersten Korrektur (falsche Revision) statt des
+                // commitierten Zustands.
+                using var secondUploadScope = db.Services.CreateScope();
                 var secondUpload = await RunUploadAsync(
-                    uploadScope.ServiceProvider, bookingId, splitId: null);
+                    secondUploadScope.ServiceProvider, bookingId, splitId: null);
                 Assert.True(secondUpload.Ok,
                     $"Zweiter Upload (Buchungsebene) fehlgeschlagen: {secondUpload.Error}");
 
                 var secondRevision = correction.Ok ? 2 : 1;
-                var secondCorrection = await RunCorrectionAsync(correctionScope.ServiceProvider,
+                using var secondCorrectionScope = db.Services.CreateScope();
+                var secondCorrection = await RunCorrectionAsync(secondCorrectionScope.ServiceProvider,
                     RemovalSpec(bookingId, "op-corr-race-2", secondRevision));
                 Assert.True(secondCorrection.Ok,
                     $"Zweite Korrektur (erwartete Revision {secondRevision}) fehlgeschlagen: " +
@@ -313,6 +326,10 @@ public sealed class Step7aParallelRaceTests
         public Task UpdateSplitReferenceAsync(
             string id, string? splitId, string? originalSplitId, CancellationToken cancellationToken = default)
             => inner.UpdateSplitReferenceAsync(id, splitId, originalSplitId, cancellationToken);
+
+        public Task UpdateSplitAssignmentAsync(
+            string id, string? splitId, DateTime updatedAtUtc, CancellationToken cancellationToken = default)
+            => inner.UpdateSplitAssignmentAsync(id, splitId, updatedAtUtc, cancellationToken);
     }
 
     [Fact(DisplayName = "p3: deterministisch Race A — Split zwischen Referenzprüfung und Insert gelöscht → saubere Referenzausnahme, keine Waise")]
