@@ -39,7 +39,13 @@ Kein Senden (Schritt 9/10), keine mobile Saldenengine (AGENTS.md).
   tax_category_id, tax_category_name, marked_amount_cents, tax_note)`;
   `outbox(operation_id PK, device_id, type, booking_id, payload, payload_hash,
   expected_base_revision, status, created_at_utc, updated_at_utc)` (Modell Schritt 0);
-  `drafts(id,name,data,created_at_utc,updated_at_utc)`.
+  `drafts(id,name,data,created_at_utc,updated_at_utc)`. **D2a FK-Pragma:** Das
+  Capacitor-Plugin aktiviert `PRAGMA foreign_keys` nicht (Android-Quelle 8.1.1
+  geprüft) — SQLite hält FKs pro Verbindung standardmäßig AUS. `LocalDatabase.init()`
+  führt daher nach `open()` `PRAGMA foreign_keys = ON` aus (pro neuem Prozess,
+  nicht persistiert); node:sqlite-Tests setzen dasselbe Pragma (D10). Zusätzlich
+  bleibt die explizite Lösch-Reihenfolge (Splits vor Buchung) in der Verwerfen-
+  Transaktion als Verteidigungstiefe.
 - **D3 Snapshot:** Setup-View mit Host-URL + User/Passwort (lokal gemerkt) →
   `POST /api/v1/auth/login` → Token in `meta`; `GET /accounts|/pools|/categories|
   /tax-categories` → Snapshot-Tabellen in **einer** `executeSet`-Transaktion atomar
@@ -79,8 +85,9 @@ Kein Senden (Schritt 9/10), keine mobile Saldenengine (AGENTS.md).
   Einrichtung zur Laufzeit, `OpenAPI.TOKEN` aus `meta`.
 - **D10 Tests:** Plugin-Fake um `executeSet` mit Transaktions-/Constraint-Semantik
   erweitert; **echte SQLite-Tests über `node:sqlite`** (Node 26 eingebaut,
-  `@types/node` devDependency, `// @vitest-environment node`): Schema, FK-Cascade,
-  Unique-Constraints, Atomarität der Statement-Sequenzen aus `statements.ts`;
+  `@types/node` devDependency, `// @vitest-environment node`, `PRAGMA foreign_keys = ON`
+  wie auf dem Gerät (D2a): Schema, FK-Cascade, Unique-Constraints, Atomarität der
+  Statement-Sequenzen aus `statements.ts`;
   SHA-256 NIST; Validierung; Doppeltippen (DOM); Neustart mit 20 Ausgaben; Abbruch
   ohne Teilzustand; Zoneless-DOM-Tests.
 - **D11 Geräte-Abnahme (manuell):** APK, Setup gegen LAN-Host, Flugmodus: 20 Ausgaben
