@@ -50,15 +50,17 @@ export interface RefundDialogState {
 }
 
 /**
- * Belege (7a): zulässige Content-Types (PDF, JPEG, PNG — Design D7) und
- * die Client-Vorvalidierung an der Standardgrenze von 20 MB (dezimal,
- * 20_000_000 Byte — identisch zum Server-Default `Lario:Attachments:MaxBytes`
- * in Program.cs/AttachmentEndpoints.cs). Der Server bleibt maßgeblich —
- * bei abweichend konfiguriertem MaxBytes kommt 413 mit verständlicher
- * Meldung.
+ * Belege (7a): zulässige Content-Types (PDF, JPEG, PNG — Design D7).
+ * Es gibt bewusst KEINE unabhängige Client-Größensperre (Review 7a,
+ * Befund „Serverlimit“): das konfigurierbare Server-Limit
+ * (`Lario:Attachments:MaxBytes`, Default 20.000.000 Byte) bleibt
+ * maßgeblich — ein über das Client-Default hinausgehendes Server-Limit
+ * muss über die UI nutzbar sein. Zu große Dateien werden serverseitig
+ * abgewiesen (Byte-Zähler / Multipart- / Kestrel-Limit) und die 413-
+ * Meldung ist im Dialog verständlich, danach bleibt eine kleinere
+ * Datei auswählbar.
  */
 const ATTACHMENT_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
-const ATTACHMENT_MAX_BYTES = 20_000_000;
 
 const TYPE_LABELS: Record<string, string> = {
   Income: 'Einnahme',
@@ -546,15 +548,32 @@ export class BookingsList implements OnInit, OnDestroy {
     }
   }
 
-  /** Client-Vorvalidierung (D8): Typ und Größe, bevor etwas gesendet wird. */
+  /** Retry für das initiale Laden (Ladefehler → Detail fehlt): dieselbe
+   *  Generation, Fehlerhinweis wird zurückgesetzt und die Daten werden
+   *  erneut geladen. Bei einem Aktionsfehler ist der Retry nicht nötig —
+   *  der geladene Dialoginhalt (Liste, Eingaben, Aktionen) bleibt
+   *  bedienbar. */
+  retryAttachmentDialog(): void {
+    const dialog = this.attachments();
+    if (!dialog || dialog.loading || dialog.detail) {
+      return;
+    }
+    this.patchAttachmentDialog(dialog.generation, {
+      loading: true,
+      error: null,
+    });
+    void this.loadAttachmentDialog(
+      dialog.generation,
+      dialog.booking.id,
+      dialog.splitId,
+    );
+  }
+
+  /** Client-Vorvalidierung (D8): nur der Dateityp wird lokal geprüft;
+   *  die Größe entscheidet der Server (siehe ATTACHMENT_TYPES-Kommentar). */
   private validateFile(file: File): string | null {
     if (!ATTACHMENT_TYPES.has(file.type)) {
       return 'Erlaubt sind nur PDF-, JPEG- und PNG-Dateien.';
-    }
-    if (file.size > ATTACHMENT_MAX_BYTES) {
-      // Explizit in Byte (dezimal): formatBytes würde die dezimale
-      // 20-MB-Grenze in Binäreinheiten als „19,1 MB“ anzeigen.
-      return `Die Datei ist zu groß (maximal ${ATTACHMENT_MAX_BYTES.toLocaleString('de-DE')} Byte).`;
     }
     return null;
   }

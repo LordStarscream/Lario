@@ -298,19 +298,24 @@
         ({{ typeLabel(att.booking.type) }}, {{ formatCents(att.booking.totalAmount) }}).
       </p>
 
-      @if (att.loading) {
-        <p class="muted">Lade Belege …</p>
-      } @else if (att.error; as err) {
-        @if (att.success) {
-          <!-- Upload war erfolgreich, der anschließende Listen-Refresh
-               ist fehlgeschlagen: beide Zustände bleiben sichtbar, damit
-               der bestätigte Upload erkennbar ist. -->
-          <div class="banner banner-success" role="status">{{ att.success }}</div>
-        }
+      <!-- Aktionsfehler (z. B. 413 beim Upload, 410 beim Download) und
+           Erfolgshinweise werden NEBEN den geladenen Inhalt gerendert
+           und verbergen weder Belegliste noch Eingaben: danach kann
+           direkt weitergearbeitet werden (kleinere Datei wählen, Beleg
+           entfernen) — ohne Dialogneustart (Review 7a, Befund
+           „Aktionsfehler“). Ein fehlgeschlagenes initiales Laden
+           (Detail fehlt) hat einen eigenen „Erneut laden“-Zweig. -->
+      @if (att.error; as err) {
         <div class="banner banner-error" role="alert">
           <strong>Fehler:</strong> {{ err.message }}
         </div>
-      } @else {
+      }
+      @if (att.success; as ok) {
+        <div class="banner banner-success" role="status">{{ ok }}</div>
+      }
+      @if (att.loading) {
+        <p class="muted">Lade Belege …</p>
+      } @else if (att.detail) {
         @if (att.attachments.length === 0) {
           <p class="empty">Noch keine Belege.</p>
         } @else {
@@ -328,10 +333,14 @@
                 </div>
                 <div class="attachment-actions">
                   @if (isImageAttachment(a)) {
+                    <!-- Globale Sperre während eines laufenden
+                         Blob-Requests (egal für welchen Beleg): eine
+                         ältere Antwort kann so keine neuere Vorschau
+                         innerhalb derselben Dialog-Generation ersetzen. -->
                     <button
                       type="button"
                       class="btn btn-small"
-                      [disabled]="att.busyAttachmentId === a.id"
+                      [disabled]="att.busyAttachmentId !== null"
                       (click)="showPreview(a)"
                     >
                       {{ att.previewId === a.id ? 'Vorschau anzeigen' : 'Vorschau' }}
@@ -340,7 +349,7 @@
                     <button
                       type="button"
                       class="btn btn-small"
-                      [disabled]="att.busyAttachmentId === a.id"
+                      [disabled]="att.busyAttachmentId !== null"
                       (click)="openAttachment(a)"
                     >
                       {{ att.busyAttachmentId === a.id ? 'Wird geladen …' : 'Öffnen' }}
@@ -349,7 +358,7 @@
                   <button
                     type="button"
                     class="btn btn-small"
-                    [disabled]="att.busyAttachmentId === a.id"
+                    [disabled]="att.busyAttachmentId !== null"
                     (click)="downloadAttachment(a)"
                   >
                     Herunterladen
@@ -403,7 +412,10 @@
         } @else {
           <div class="attachment-upload">
             <label class="field">
-              <span class="field-label">Datei (PDF, JPEG, PNG, max. 20 MB)</span>
+              <span class="field-label">
+                Datei (PDF, JPEG oder PNG — Größenlimit laut
+                Serverkonfiguration)
+              </span>
               <input
                 type="file"
                 accept="application/pdf,image/jpeg,image/png"
@@ -443,6 +455,20 @@
             </div>
           </div>
         }
+      } @else {
+        <!-- Initiales Laden fehlgeschlagen: Detail/Liste fehlen —
+             „Erneut laden“ ist erreichbar (Fehlerbanner darüber). -->
+        <div class="attachment-retry">
+          <p class="muted">Die Belege konnten nicht geladen werden.</p>
+          <button
+            type="button"
+            class="btn"
+            [disabled]="att.busy"
+            (click)="retryAttachmentDialog()"
+          >
+            Erneut laden
+          </button>
+        </div>
       }
 
       <div class="dialog-actions">

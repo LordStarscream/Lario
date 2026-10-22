@@ -1,5 +1,5 @@
 import { signal } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BookingsList } from './bookings-list';
@@ -15,12 +15,18 @@ import type { BookingListItemDto } from '../../generated/models/BookingListItemD
  * Beleg-Dialog (Schritt 7a): echte Komponentenklasse, API-Ebene und
  * Browser-APIs (fetch, Blob-URLs, window.open) sind simuliert.
  * Geprüft werden die Abnahmen: Dialog lädt Belegliste, Upload mit
- * Client-Vorvalidierung (Typ/Große) und Split-Zuordnung, Serverfehler
- * (413/404/410) verständlich, Vorschau/Download über Blob-URLs, Löschen
- * mit Bestätigung — sowie die Dialog-Generation: verzögerte Antworten
- * eines älteren Dialogs (nach Dialogwechsel/-schließung) überschreiben
- * den aktuellen Dialog nicht, und ein erfolgreicher Upload bleibt bei
- * fehlgeschlagenem Listen-Refresh als bestätigt erkennbar.
+ * Client-Vorvalidierung (Dateityp; die Größe entscheidet bewusst der
+ * Server — keine unabhängige Client-Größensperre) und Split-Zuordnung,
+ * Serverfehler (413/404/410) verständlich, Vorschau/Download über
+ * Blob-URLs, Löschen mit Bestätigung — sowie die Dialog-Generation:
+ * verzögerte Antworten eines älteren Dialogs (nach Dialogwechsel/
+ * -schließung) überschreiben den aktuellen Dialog nicht, und ein
+ * erfolgreicher Upload bleibt bei fehlgeschlagenem Listen-Refresh als
+ * bestätigt erkennbar. Zusätzlich (Review 7a, Befund „Aktionsfehler“):
+ * mit gerendertem Template wird geprüft, dass Aktionsfehler den
+ * Dialoginhalt nicht verbergen — nach 413 bleibt eine kleinere Datei
+ * auswählbar/sendbar, nach 410 der Entfernen-Button bedienbar, und
+ * bei initialem Ladefehler ist „Erneut laden“ erreichbar.
  */
 
 function listItem(bookingId: string, effectivelyReversed = false): BookingListItemDto {
@@ -114,6 +120,18 @@ function catalogStub(): CatalogService {
 }
 
 function createComponent(): BookingsList {
+  const { component } = createRendered();
+  return component;
+}
+
+/** Komponente gerendert (detectChanges) anlegen — für
+ *  Bedienbarkeits-Tests am tatsächlichen DOM (Review 7a, Befund
+ *  „Aktionsfehler“: Fehler dürfen den Dialoginhalt nicht verbergen). */
+function createRendered(): {
+  component: BookingsList;
+  fixture: ComponentFixture<BookingsList>;
+  el: HTMLElement;
+} {
   TestBed.resetTestingModule();
   TestBed.configureTestingModule({
     imports: [BookingsList],
@@ -125,7 +143,13 @@ function createComponent(): BookingsList {
       { provide: CatalogService, useValue: catalogStub() },
     ],
   });
-  return TestBed.createComponent(BookingsList).componentInstance;
+  const fixture = TestBed.createComponent(BookingsList);
+  fixture.detectChanges();
+  return {
+    component: fixture.componentInstance,
+    fixture,
+    el: fixture.nativeElement as HTMLElement,
+  };
 }
 
 function fileInputEvent(file: File | null): Event {
@@ -263,24 +287,37 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
     expect(AttachmentEndpointsService.uploadAttachment).not.toHaveBeenCalled();
   });
 
-  it('Client-Vorvalidierung: Datei über 20 MB (dezimal) wird ohne API-Call abgelehnt', () => {
+  it('Client-Vorvalidierung: keine Client-Größensperre — Datei über 20 MB erreicht den Upload-Aufruf (Server entscheidet)', async () => {
+    // Review 7a: ein höher konfiguriertes Server-Limit (z. B.
+    // 30.000.000) darf nicht durch eine feste Client-Grenze ausgehebelt
+    // werden — die Datei erreicht den Upload; ein zu großer Upload wird
+    // serverseitig mit verständlichem 413 abgewiesen.
+    const upload = vi.mocked(AttachmentEndpointsService.uploadAttachment);
+    upload.mockResolvedValue(attachment() as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([]) // initiales Laden
+      .mockResolvedValueOnce([attachment()]); // Refresh nach Erfolg
+
     const component = createComponent();
     component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
 
-    const file = new File(['x'], 'gross.pdf', {
+    const file = new File(['%PDF-1.4'], 'gross.pdf', {
       type: 'application/pdf',
     });
-    // size ist read-only — für die Vorvalidierung reicht ein Stub.
-    // 20_000_000 ist die dezimale Standardgrenze (Server-Default).
-    const bigFile = Object.defineProperty(file, 'size', { value: 20_000_001 });
+    // 25 MB > Server-Default 20.000.000 — wird clientseitig NICHT
+    // gesperrt (size ist read-only, für den Stub reicht defineProperty).
+    const bigFile = Object.defineProperty(file, 'size', { value: 25_000_000 });
 
     component.onFileSelected(fileInputEvent(bigFile));
 
-    expect(component.attachments()?.clientError).toMatch(
-      /zu groß \(maximal 20\.000\.000 Byte\)/,
-    );
-    expect(component.canUpload()).toBe(false);
-    expect(AttachmentEndpointsService.uploadAttachment).not.toHaveBeenCalled();
+    expect(component.attachments()?.clientError).toBeNull();
+    expect(component.canUpload()).toBe(true);
+    await component.uploadAttachment();
+
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect((upload.mock.calls[0][0] as { file: File }).file).toBe(bigFile);
   });
 
   it('Serverfehler 413 wird im Dialog verständlich angezeigt, Dialog bleibt offen', async () => {
@@ -685,5 +722,176 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
     const state = component.attachments()!;
     expect(state.error?.message).toMatch(/nicht mehr verfügbar \(410\)/);
     expect(state.busyAttachmentId).toBeNull();
+  });
+
+  // ---------- Aktionsfehler lassen den Dialog bedienbar (Review 7a) ----------
+  //
+  // Diese Tests prüfen nicht nur Zustandsfelder/Meldungstexte, sondern
+  // das gerenderte Template: nach einem Aktionsfehler müssen Datei-
+  // auswahl, Upload- und Entfernen-Buttons vorhanden und nicht gesperrt
+  // sein.
+
+  it('Aktionsfehler 413: Belegliste und Upload bleiben bedienbar — kleinere Datei kann ausgewählt und gesendet werden', async () => {
+    const upload = vi.mocked(AttachmentEndpointsService.uploadAttachment);
+    upload
+      .mockRejectedValueOnce(
+        new ApiError(
+          {} as never,
+          {
+            url: '/api/v1/attachments',
+            ok: false,
+            status: 413,
+            statusText: 'Payload Too Large',
+            body: {
+              error: {
+                code: 'validation_error',
+                message: 'Die Datei überschreitet die maximale Größe von 104857600 Byte.',
+              },
+            },
+          } as never,
+          'Payload Too Large',
+        ) as never,
+      )
+      .mockResolvedValueOnce(attachment() as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([]) // initiales Laden
+      .mockResolvedValueOnce([attachment()]); // Refresh nach Erfolg
+
+    const { component, fixture, el } = createRendered();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    fixture.detectChanges();
+
+    const big = new File(['%PDF-1.4'], 'gross.pdf', {
+      type: 'application/pdf',
+    });
+    component.onFileSelected(fileInputEvent(big));
+    await component.uploadAttachment();
+    fixture.detectChanges();
+
+    // Fehlerbanner ist da — aber die Inhalte werden NICHT ersetzt:
+    expect(el.querySelector('.banner-error')?.textContent).toMatch(
+      /maximale Größe/,
+    );
+    const fileInput = el.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(fileInput).not.toBeNull();
+    expect(fileInput.disabled).toBe(false);
+    const uploadButton = [...el.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Beleg hochladen'),
+    );
+    expect(uploadButton).toBeTruthy();
+    expect(uploadButton?.disabled).toBe(false);
+
+    // Kleinere Datei auswählen und erneut senden — der Upload-Aufruf
+    // erreicht die API.
+    const small = new File(['%PDF-1.4'], 'klein.pdf', {
+      type: 'application/pdf',
+    });
+    component.onFileSelected(fileInputEvent(small));
+    fixture.detectChanges();
+    expect(
+      (el.querySelector('input[type="file"]') as HTMLInputElement).disabled,
+    ).toBe(false);
+    await component.uploadAttachment();
+
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect((upload.mock.calls[1][0] as { file: File }).file).toBe(small);
+    expect(component.attachments()?.error).toBeNull();
+    expect(component.attachments()?.attachments).toHaveLength(1);
+  });
+
+  it('Aktionsfehler 410 (Vorschau): Belegliste und Entfernen-Buttons bleiben bedienbar — betroffener Beleg kann entfernt werden', async () => {
+    stubObjectUrls();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 410, statusText: 'Gone' })),
+    );
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockResolvedValue(
+      [
+        attachment({
+          id: 'att-1',
+          contentType: 'image/png',
+          originalFilename: 'scan.png',
+        }),
+        attachment({ id: 'att-2', originalFilename: 'zweit.pdf' }),
+      ],
+    );
+    vi.mocked(AttachmentEndpointsService.deleteAttachment).mockResolvedValue(
+      undefined as never,
+    );
+
+    const { component, fixture, el } = createRendered();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    fixture.detectChanges();
+
+    await component.showPreview(component.attachments()!.attachments[0]);
+    fixture.detectChanges();
+
+    expect(el.querySelector('.banner-error')?.textContent).toMatch(/410/);
+    // Beide Belege bleiben in der Liste …
+    expect(el.querySelectorAll('.attachment-item')).toHaveLength(2);
+    // … und alle Entfernen-Buttons sind bedienbar (nicht gesperrt).
+    const deleteButtons = [...el.querySelectorAll('button')].filter(
+      (b) => b.textContent?.trim() === 'Entfernen',
+    );
+    expect(deleteButtons).toHaveLength(2);
+    expect(deleteButtons.every((b) => !b.disabled)).toBe(true);
+
+    // Betroffenenen Beleg entfernen — der Delete-Aufruf erreicht die API.
+    component.requestDeleteAttachment(
+      attachment({
+        id: 'att-1',
+        contentType: 'image/png',
+        originalFilename: 'scan.png',
+      }),
+    );
+    fixture.detectChanges();
+    const confirm = [...el.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Ja, entfernen',
+    );
+    expect(confirm).toBeTruthy();
+    expect(confirm?.disabled).toBe(false);
+    await component.confirmDeleteAttachment();
+
+    expect(AttachmentEndpointsService.deleteAttachment).toHaveBeenCalledTimes(1);
+    expect(AttachmentEndpointsService.deleteAttachment).toHaveBeenCalledWith(
+      'att-1',
+    );
+  });
+
+  it('Initialer Ladefehler: „Erneut laden“ ist erreichbar und lädt erfolgreich', async () => {
+    vi.mocked(JournalEndpointsService.getBooking)
+      .mockRejectedValueOnce(new Error('Netzwerk'))
+      .mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([attachment()]);
+
+    const { component, fixture, el } = createRendered();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    fixture.detectChanges();
+
+    // Initiales Laden fehlgeschlagen: Detail fehlt, Fehlerbanner da —
+    // kein Sackgassen-Zweig, sondern „Erneut laden“.
+    expect(component.attachments()?.detail).toBeNull();
+    expect(el.querySelector('.banner-error')).not.toBeNull();
+    const retry = [...el.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Erneut laden'),
+    ) as HTMLButtonElement;
+    expect(retry).toBeTruthy();
+    expect(retry.disabled).toBe(false);
+
+    retry.click();
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    fixture.detectChanges();
+
+    expect(component.attachments()?.detail?.id).toBe('b1');
+    expect(component.attachments()?.error).toBeNull();
+    expect(el.querySelectorAll('.attachment-item')).toHaveLength(1);
+    expect(el.querySelector('.banner-error')).toBeNull();
   });
 });
