@@ -5,7 +5,23 @@ namespace Lario.Domain;
 /// Invariante oder abgelehnte Eingabe. Keiner dieser Fehler darf zu einer
 /// halben Übernahme führen — der Aufrufer behält den vorherigen Stand.
 /// </summary>
-public class LarioDomainException(string message) : Exception(message);
+public class LarioDomainException : Exception
+{
+    public LarioDomainException(string message) : base(message)
+    {
+    }
+
+    /// <summary>
+    /// Variante mit ursächlicher technischer Ausnahme (z. B. eine
+    /// Datenbank-Constraintverletzung, die auf eine fachliche Regel
+    /// zurückgeführt wurde). Die Ursache bleibt für Logging und Diagnose
+    /// erhalten; sie wird niemals an Clients weitergereicht.
+    /// </summary>
+    public LarioDomainException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+}
 
 /// <summary>
 /// Referenz auf eine nicht existierende oder fachlich unzulässige Entität

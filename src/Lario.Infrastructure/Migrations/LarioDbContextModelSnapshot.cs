@@ -17,6 +17,62 @@ namespace Lario.Infrastructure.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
 
+            modelBuilder.Entity("Lario.Domain.Attachments.Attachment", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BookingId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OriginalFilename")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OriginalSplitId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SplitId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StoredName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StoredName")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Attachments_StoredName");
+
+                    b.HasIndex("BookingId", "SplitId");
+
+                    b.ToTable("Attachments", (string)null);
+                });
+
             modelBuilder.Entity("Lario.Domain.Journal.AccountAllocation", b =>
                 {
                     b.Property<string>("BookingId")
@@ -471,6 +527,20 @@ namespace Lario.Infrastructure.Migrations
                     b.HasKey("BookingId", "AccountId", "PoolId");
 
                     b.ToTable("ReversalDeltas", (string)null);
+                });
+
+            modelBuilder.Entity("Lario.Domain.Attachments.Attachment", b =>
+                {
+                    b.HasOne("Lario.Domain.Journal.Booking", null)
+                        .WithMany()
+                        .HasForeignKey("BookingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Lario.Domain.Journal.ExpenseSplit", null)
+                        .WithMany()
+                        .HasForeignKey("BookingId", "SplitId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Lario.Domain.Journal.AccountAllocation", b =>

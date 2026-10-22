@@ -1,4 +1,5 @@
 using Lario.Application;
+using Lario.Application.Attachments;
 using Lario.Application.Journal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,9 +16,16 @@ public static class LarioServiceCollectionExtensions
     /// Registriert DbContext, Repositories und Anwendungsfälle.
     /// <paramref name="connectionString"/> zeigt auf die lokale
     /// SQLite-Datei (z. B. über <see cref="LarioDataPaths"/>).
+    /// Ohne <paramref name="attachmentsDirectory"/> werden die
+    /// Beleg-Dienste (Schritt 7a) nicht registriert — für Testkontexte,
+    /// die sie nicht brauchen.
     /// </summary>
     public static IServiceCollection AddLarioData(
         this IServiceCollection services, string connectionString)
+        => AddLarioData(services, connectionString, attachmentsDirectory: null);
+
+    public static IServiceCollection AddLarioData(
+        this IServiceCollection services, string connectionString, string? attachmentsDirectory)
     {
         services.AddDbContext<LarioDbContext>(options =>
             options.UseSqlite(connectionString));
@@ -44,6 +52,16 @@ public static class LarioServiceCollectionExtensions
         // fehlende Zeilen für offene Ausgleichspositionen älterer
         // Datenbanken nach — atomar, idempotent.
         services.AddScoped<SettlementPositionBackfillService>();
+
+        // Belege (Schritt 7a): Dateiablage (stateless → Singleton),
+        // Metadaten-Repository und Anwendungsfälle.
+        if (!string.IsNullOrWhiteSpace(attachmentsDirectory))
+        {
+            services.AddSingleton<IAttachmentFileStore>(
+                new SqliteAttachmentFileStore(attachmentsDirectory));
+            services.AddScoped<IAttachmentRepository, AttachmentRepository>();
+            services.AddScoped<AttachmentService>();
+        }
 
         return services;
     }

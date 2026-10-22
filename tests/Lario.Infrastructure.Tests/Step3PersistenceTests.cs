@@ -22,15 +22,31 @@ public sealed class TestDatabase : IAsyncDisposable
     public string TempDir { get; }
 
     public string DatabaseFile { get; }
+
+    /// <summary>Ablageverzeichnis für Beleg-Dateien (Schritt 7a).</summary>
+    public string AttachmentsDir { get; }
+
     public ServiceProvider Services { get; }
 
-    public TestDatabase(string? migrateTo = null)
+    /// <summary>
+    /// <paramref name="configureServices"/> ermöglicht Test-Dekoratoren
+    /// (z. B. deterministische Race-Reproduktionen, Schritt 7a Review
+    /// Befund 3): die Registrierung wird nach <c>AddLarioData</c>,
+    /// vor dem Build angepasst. <c>connectionString</c> ist die bereits
+    /// festgelegte <c>Data Source=…</c>-Zeile.
+    /// </summary>
+    public TestDatabase(
+        string? migrateTo = null,
+        Action<ServiceCollection, string>? configureServices = null)
     {
         TempDir = System.IO.Directory.CreateTempSubdirectory("lario-test-").FullName;
         DatabaseFile = Path.Combine(TempDir, "lario.sqlite");
+        AttachmentsDir = Path.Combine(TempDir, "attachments");
+        var connectionString = $"Data Source={DatabaseFile}";
 
         var builder = new ServiceCollection();
-        builder.AddLarioData($"Data Source={DatabaseFile}");
+        builder.AddLarioData(connectionString, AttachmentsDir);
+        configureServices?.Invoke(builder, connectionString);
         Services = builder.BuildServiceProvider();
 
         // Migrationen auf die neue Datei anwenden (wie beim Host-Start).
@@ -50,7 +66,7 @@ public sealed class TestDatabase : IAsyncDisposable
     public ServiceProvider NewServiceProvider()
     {
         var builder = new ServiceCollection();
-        builder.AddLarioData($"Data Source={DatabaseFile}");
+        builder.AddLarioData($"Data Source={DatabaseFile}", AttachmentsDir);
         return builder.BuildServiceProvider();
     }
 
@@ -124,15 +140,15 @@ public class MigrationTests
         }
 
         // EF-interne Tabellen (__EFMigrationsHistory, __EFMigrationsLock) ausklammern:
-        // es müssen exakt die fünfzehn Fachtabellen existieren (acht aus
+        // es müssen exakt sechzehn Fachtabellen existieren (acht aus
         // Schritt 3, dazu ExpenseSplits und SplitTaxMarkings aus Schritt 4,
         // dazu TransferPurposes, ReassignmentAccounts und SettlementPositions
         // aus Schritt 5, dazu ReversalDeltas und BookingCorrections aus
-        // Schritt 6).
+        // Schritt 6, dazu Attachments aus Schritt 7a).
         var tables = (await db.TableNamesAsync())
             .Where(t => !t.StartsWith("__", StringComparison.Ordinal))
             .ToList();
-        Assert.Equal(15, tables.Count);
+        Assert.Equal(16, tables.Count);
     }
 }
 

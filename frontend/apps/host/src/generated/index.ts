@@ -13,6 +13,7 @@ export type { AccountBalanceDto } from './models/AccountBalanceDto';
 export type { AccountDto } from './models/AccountDto';
 export type { AccountPostingDto } from './models/AccountPostingDto';
 export type { ApiErrorBody } from './models/ApiErrorBody';
+export type { AttachmentDto } from './models/AttachmentDto';
 export type { BalanceCorrectionCommand } from './models/BalanceCorrectionCommand';
 export type { BalancesDto } from './models/BalancesDto';
 export type { BookingCreatedDto } from './models/BookingCreatedDto';
@@ -31,6 +32,7 @@ export type { ExpenseSplitCommand } from './models/ExpenseSplitCommand';
 export type { ExpenseSplitDto } from './models/ExpenseSplitDto';
 export type { ExpenseSplitTaxDto } from './models/ExpenseSplitTaxDto';
 export type { HealthResponse } from './models/HealthResponse';
+export type { IFormFile } from './models/IFormFile';
 export type { IncomeAllocationCommand } from './models/IncomeAllocationCommand';
 export type { IncomeCommand } from './models/IncomeCommand';
 export type { LoginRequest } from './models/LoginRequest';
@@ -58,6 +60,7 @@ export type { TransferReassignmentCommand } from './models/TransferReassignmentC
 export type { UnallocatedOpeningBalanceDto } from './models/UnallocatedOpeningBalanceDto';
 export type { VersionResponse } from './models/VersionResponse';
 
+export { AttachmentEndpointsService } from './services/AttachmentEndpointsService';
 export { JournalEndpointsService } from './services/JournalEndpointsService';
 export { JournalWriteEndpointsService } from './services/JournalWriteEndpointsService';
 export { LarioHostService } from './services/LarioHostService';

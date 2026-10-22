@@ -112,3 +112,18 @@ export function parseEuroToCents(input: string): number | null {
   }
   return Number(text) * 100;
 }
+
+/** Dateigröße als kurze Beschriftung (z. B. "4,2 MB") für Beleglisten. */
+export function formatBytes(value: number | string | null | undefined): string {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    return '—';
+  }
+  if (n < 1024) {
+    return `${Math.trunc(n)} B`;
+  }
+  if (n < 1024 * 1024) {
+    return `${(n / 1024).toFixed(1).replace('.', ',')} KB`;
+  }
+  return `${(n / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`;
+}

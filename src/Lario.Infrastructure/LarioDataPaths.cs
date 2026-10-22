@@ -16,6 +16,9 @@ public sealed class LarioDataPaths
     /// <summary>Name der Datenbankdatei innerhalb des Datenverzeichnisses (ab Schritt 3 genutzt).</summary>
     public const string DatabaseFileName = "lario.sqlite";
 
+    /// <summary>Unterverzeichnis für Beleg-Dateien (ab Schritt 7a).</summary>
+    public const string AttachmentsDirectoryName = "attachments";
+
     private LarioDataPaths(string root) => Root = root;
 
     /// <summary>Absolutes Wurzelverzeichnis der lokalen Datenablage.</summary>
@@ -23,6 +26,12 @@ public sealed class LarioDataPaths
 
     /// <summary>Kanonicaler Pfad der SQLite-Datenbank (Datei entsteht ab Schritt 3).</summary>
     public string DatabaseFilePath => Path.Combine(Root, DatabaseFileName);
+
+    /// <summary>
+    /// Ablageverzeichnis für Beleg-Dateien (Schritt 7a, Design D2): im
+    /// Datenverzeichnis, aber außerhalb der öffentlichen Webressourcen.
+    /// </summary>
+    public string AttachmentsDirectory => Path.Combine(Root, AttachmentsDirectoryName);
 
     /// <summary>
     /// Löst das Datenverzeichnis deterministisch ein (siehe Klassendokumentation).
@@ -66,6 +75,7 @@ public sealed class LarioDataPaths
     public LarioDataPaths EnsureCreated()
     {
         Directory.CreateDirectory(Root);
+        Directory.CreateDirectory(AttachmentsDirectory);
         return this;
     }
 }
