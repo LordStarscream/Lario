@@ -3,7 +3,8 @@ _Status: implementiert, Nachträge N1 + N2 umgesetzt · Last updated: 22. Okt. 2
 
 **Branches:**
 - Lario → `step/7a-belege-impl` (Worktree `/home/mario/Projects/Lario-worktrees/step-7a`; Haupt-Checkout bleibt auf `main`). Basis `666a9ce` (Merge PR #12, Design).
-- **PR: #13** (angelegt 21. Okt. 2026, Basis main, head `step/7a-belege-impl`; Merge nur auf explizite Nutzerfreigabe).
+- **PR: #13** (angelegt 21. Okt. 2026, Basis main, head `step/7a-belege-impl`; Merge nur auf explizite Nutzerfreigabe) — gemerged 22. Okt. 2026 (`fe4b60f`).
+- **Nachträge N1 + N2 (22. Okt. 2026):** Branch `step/7a-nachtraege-n1-n2` (Haupt-Checkout, Basis `cdf478d`), **PR #14** (angelegt 22. Okt. 2026; Merge nur auf explizite Nutzerfreigabe).
 
 **Umgesetzt (21.–22. Okt. 2026), 13 Commits (Implementierung, Doku und Review-Nachgänge D5/D6/D7):**
 - `5c35bc6` (Batch A): Domain `Attachment` + `ReplaceSplits`-Erhaltungsregel (Umlageung belegter Split-Entfernung auf Gesamtbuchung), `AttachmentRepository` (EF, Komposit-FK), `AttachmentService` (Upload: Typ→Größe→Magic→Referenz, `.part`+Rename, Delete-Order DB→Datei, Start-Abgleich), Migration `20261021090000_Attachments` + Backfill (SHA-256), 36 Domain- + 31 Infrastructure-Tests.
