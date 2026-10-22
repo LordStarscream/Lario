@@ -56,9 +56,11 @@ public sealed class Attachment
     /// (BookingId, SplitId) auf ExpenseSplits — die Teilposten-Id ist
     /// nur innerhalb der Buchung eindeutig). null = der Beleg nachweist
     /// die gesamte Ausgabe einschließlich aller Teilposten.
-    /// Setbar, damit das Repository den Umlageungsfall der Korrektur
-    /// pflegen kann (Design D1b: Split entfällt → null, die alte Id
-    /// wandert nach <see cref="OriginalSplitId"/>).
+    /// Setbar für zwei Fälle: die Umlageung bei Split-Entfernung
+    /// (Design D1b: Split entfällt → null, die alte Id wandert nach
+    /// <see cref="OriginalSplitId"/>) und die manuelle Umzuordnung
+    /// eines vorhandenen Belegs (Nachtrag N1, Review 7a: PATCH; das
+    /// Feld <see cref="OriginalSplitId"/> bleibt dabei unberührt).
     /// </summary>
     public string? SplitId { get; set; }
 
@@ -73,4 +75,13 @@ public sealed class Attachment
 
     /// <summary>Technischer UTC-Zeitpunkt der Ablage (Fachdatum der Buchung bleibt unberührt).</summary>
     public DateTime CreatedAtUtc { get; init; }
+
+    /// <summary>
+    /// Technischer UTC-Zeitpunkt der letzten manuellen Umzuordnung
+    /// (Nachtrag N1, Review 7a) — null bis zur ersten Umzuordnung.
+    /// Die systemseitige Umlageung bei Split-Entfernung (Design D1b)
+    /// wird bewusst nicht hier erfasst: sie ist Teil der Korrektur-
+    /// Historie der Buchung, nicht eine Nutzeraktion.
+    /// </summary>
+    public DateTime? UpdatedAtUtc { get; set; }
 }

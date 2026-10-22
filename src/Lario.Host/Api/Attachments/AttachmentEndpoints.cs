@@ -18,6 +18,9 @@ namespace Lario.Host.Api.Attachments;
 /// <item><c>GET /api/v1/attachments/{id}/download</c> — Datei (inline,
 ///       Originalname in <c>Content-Disposition</c>) → 200 / 404 / 410</item>
 /// <item><c>DELETE /api/v1/attachments/{id}</c> → 204 / 404</item>
+/// <item><c>PATCH /api/v1/attachments/{id}</c> — Teilposten-Zuordnung
+///       eines vorhandenen Belegs ändern (Nachtrag N1) →
+///       200 / 400 (unbekannter Teilposten) / 404</item>
 /// </list>
 /// Die fachliche Validierung (Typ, Größe, Magic-Bytes, Referenzen)
 /// passiert im <see cref="AttachmentService"/>; die Endpunkte bilden
@@ -56,6 +59,12 @@ public static class AttachmentEndpoints
         endpoints.MapDelete("/api/v1/attachments/{id}", Delete)
             .WithName("deleteAttachment")
             .Produces(StatusCodes.Status204NoContent)
+            .Produces<Api.ErrorResponse>(StatusCodes.Status404NotFound);
+
+        endpoints.MapPatch("/api/v1/attachments/{id}", ReassignSplit)
+            .WithName("reassignAttachmentSplit")
+            .Produces<AttachmentDto>(StatusCodes.Status200OK)
+            .Produces<Api.ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<Api.ErrorResponse>(StatusCodes.Status404NotFound);
     }
 
@@ -180,6 +189,28 @@ public static class AttachmentEndpoints
         return deleted is null ? NotFound() : Results.NoContent();
     }
 
+    /// <summary>
+    /// Teilposten-Zuordnung eines vorhandenen Belegs ändern (Nachtrag N1):
+    /// <c>splitId = null</c> ordnet die gesamte Ausgabe zu, andernfalls
+    /// muss der Teilposten zur Buchung des Belegs gehören (400
+    /// invalid_reference). Unbekannter Beleg → 404.
+    /// </summary>
+    private static async Task<IResult> ReassignSplit(
+        string id,
+        ReassignSplitRequest? request,
+        AttachmentService service,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+        {
+            throw new LarioDomainException(
+                "Antrag fehlt: PATCH /attachments/{id} benötigt einen JSON-Körper (splitId).");
+        }
+
+        var updated = await service.ReassignSplitAsync(id, request.SplitId, cancellationToken);
+        return updated is null ? NotFound() : Results.Ok(ToDto(updated));
+    }
+
     private static IResult NotFound() => Results.Json(new Api.ErrorResponse(new Api.ApiErrorBody(
         "not_found",
         "Beleg nicht gefunden.",
@@ -208,7 +239,8 @@ public static class AttachmentEndpoints
         attachment.Sha256,
         attachment.SplitId,
         attachment.OriginalSplitId,
-        attachment.CreatedAtUtc);
+        attachment.CreatedAtUtc,
+        attachment.UpdatedAtUtc);
 }
 
 /// <summary>Metadaten-View für die API (keine internen Felder wie StoredName).</summary>
@@ -220,4 +252,11 @@ public sealed record AttachmentDto(
     string Sha256,
     string? SplitId,
     string? OriginalSplitId,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    DateTime? UpdatedAtUtc);
+
+/// <summary>
+/// PATCH-Körper (Nachtrag N1): <c>null</c> = Zuordnung auf die gesamte
+/// Ausgabe; andernfalls Teilposten-Id der Buchung des Belegs.
+/// </summary>
+public sealed record ReassignSplitRequest(string? SplitId);

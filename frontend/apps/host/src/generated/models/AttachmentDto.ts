@@ -11,5 +11,6 @@ export type AttachmentDto = {
     splitId: string | null;
     originalSplitId: string | null;
     createdAtUtc: string;
+    updatedAtUtc: string | null;
 };
 

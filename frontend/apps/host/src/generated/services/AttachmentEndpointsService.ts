@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AttachmentDto } from '../models/AttachmentDto';
 import type { IFormFile } from '../models/IFormFile';
+import type { ReassignSplitRequest } from '../models/ReassignSplitRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -67,6 +68,30 @@ export class AttachmentEndpointsService {
                 'id': id,
             },
             errors: {
+                404: `Not Found`,
+            },
+        });
+    }
+    /**
+     * @param id
+     * @param requestBody
+     * @returns AttachmentDto OK
+     * @throws ApiError
+     */
+    public static reassignAttachmentSplit(
+        id: string,
+        requestBody?: (null | ReassignSplitRequest),
+    ): CancelablePromise<AttachmentDto> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/api/v1/attachments/{id}',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
                 404: `Not Found`,
             },
         });

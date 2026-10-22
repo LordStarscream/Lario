@@ -198,6 +198,19 @@
   margin-top: 0.5rem;
 }
 
+.attachment-reassign {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.attachment-reassign .field {
+  display: grid;
+  gap: 0.2rem;
+}
+
 .attachment-confirm {
   display: flex;
   align-items: center;

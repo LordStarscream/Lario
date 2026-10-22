@@ -1273,6 +1273,70 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "AttachmentEndpoints"
+        ],
+        "operationId": "reassignAttachmentSplit",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReassignSplitRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/attachments/{id}/download": {
@@ -2465,7 +2529,8 @@
           "sha256",
           "splitId",
           "originalSplitId",
-          "createdAtUtc"
+          "createdAtUtc",
+          "updatedAtUtc"
         ],
         "type": "object",
         "properties": {
@@ -2503,6 +2568,13 @@
           },
           "createdAtUtc": {
             "type": "string",
+            "format": "date-time"
+          },
+          "updatedAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
             "format": "date-time"
           }
         }
@@ -3679,6 +3751,20 @@
             }
           },
           "note": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ReassignSplitRequest": {
+        "required": [
+          "splitId"
+        ],
+        "type": "object",
+        "properties": {
+          "splitId": {
             "type": [
               "null",
               "string"

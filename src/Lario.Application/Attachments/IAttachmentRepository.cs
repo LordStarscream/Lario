@@ -46,4 +46,13 @@ public interface IAttachmentRepository
     /// </summary>
     Task UpdateSplitReferenceAsync(
         string id, string? splitId, string? originalSplitId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Setzt die Teilposten-Zuordnung eines vorhandenen Belegs (Nachtrag
+    /// N1: manuelle Umzuordnung) und den Änderungszeitstempel.
+    /// <c>originalSplitId</c> bleibt unberührt — es dokumentiert
+    /// ausschließlich die systemseitige Umlageung (Design D1b).
+    /// </summary>
+    Task UpdateSplitAssignmentAsync(
+        string id, string? splitId, DateTime updatedAtUtc, CancellationToken cancellationToken = default);
 }

@@ -200,6 +200,9 @@ beforeEach(() => {
   vi.spyOn(AttachmentEndpointsService, 'deleteAttachment').mockImplementation(() =>
     unexpectedCall('deleteAttachment'),
   );
+  vi.spyOn(AttachmentEndpointsService, 'reassignAttachmentSplit').mockImplementation(
+    () => unexpectedCall('reassignAttachmentSplit'),
+  );
 });
 
 afterEach(() => {
@@ -893,5 +896,328 @@ describe('BookingsList Beleg-Dialog (Schritt 7a)', () => {
     expect(component.attachments()?.error).toBeNull();
     expect(el.querySelectorAll('.attachment-item')).toHaveLength(1);
     expect(el.querySelector('.banner-error')).toBeNull();
+  });
+
+  // ---------- Umzuordnung bestehender Belege (Nachtrag N1) ----------
+
+  it('Umzuordnung: Auswahl wird per PATCH gesendet und die Liste mit der neuen Zuordnung neu geladen', async () => {
+    const reassign = vi.mocked(AttachmentEndpointsService.reassignAttachmentSplit);
+    reassign.mockResolvedValue(attachment({ splitId: 's2' }) as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([attachment()]) // initiales Laden (gesamte Ausgabe)
+      .mockResolvedValueOnce([attachment({ splitId: 's2' })]); // Refresh nach Erfolg
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+
+    const att = component.attachments()!.attachments[0];
+    component.onReassignSelected(att, 's2');
+    expect(component.reassignDirty(att)).toBe(true);
+
+    await component.reassignAttachment(att);
+
+    expect(reassign).toHaveBeenCalledTimes(1);
+    expect(reassign).toHaveBeenCalledWith('att-1', { splitId: 's2' });
+    const state = component.attachments();
+    expect(state?.error).toBeNull();
+    // Liste neu geladen: neue Zuordnung ist in der Zeile sichtbar
+    // (Label + initialisierte Auswahl) — wie beim Upload ersetzt der
+    // Refresh den Erfolgshinweis.
+    expect(state?.attachments).toHaveLength(1);
+    expect(state!.attachments[0].splitId).toBe('s2');
+    expect(state!.attachments[0].originalFilename).toBe('quittung.pdf');
+    expect(component.reassignDirty(state!.attachments[0])).toBe(false);
+    expect(
+      component.attachmentSplitLabel(state!.attachments[0]),
+    ).toContain('Haushalt');
+  });
+
+  it('Umzuordnung: zurück zur gesamten Ausgabe wird mit splitId null gesendet', async () => {
+    const reassign = vi.mocked(AttachmentEndpointsService.reassignAttachmentSplit);
+    reassign.mockResolvedValue(attachment() as never); // splitId null
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([attachment({ splitId: 's1' })]) // initiales Laden
+      .mockResolvedValueOnce([attachment()]); // Refresh nach Erfolg
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+
+    const att = component.attachments()!.attachments[0];
+    expect(att.splitId).toBe('s1');
+    component.onReassignSelected(att, '');
+    expect(component.reassignDirty(att)).toBe(true);
+
+    await component.reassignAttachment(att);
+
+    expect(reassign).toHaveBeenCalledTimes(1);
+    expect(reassign).toHaveBeenCalledWith('att-1', { splitId: null });
+    expect(component.attachments()!.attachments[0].splitId).toBeNull();
+    expect(component.attachmentSplitLabel(component.attachments()!.attachments[0])).toBe(
+      'Gesamte Ausgabe',
+    );
+  });
+
+  it('Umzuordnung: „Anwenden“ ist nur bei Abweichung von der serverseitigen Zuordnung wirksam', async () => {
+    const reassign = vi.mocked(AttachmentEndpointsService.reassignAttachmentSplit);
+    reassign.mockResolvedValue(attachment() as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockResolvedValue([
+      attachment(), // splitId null → serverseitig „gesamte Ausgabe“
+    ]);
+
+    const { component, fixture, el } = createRendered();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    fixture.detectChanges();
+
+    const att = component.attachments()!.attachments[0];
+    const apply = () =>
+      [...el.querySelectorAll('button')].find(
+        (b) => b.textContent?.trim() === 'Anwenden',
+      ) as HTMLButtonElement;
+    // Auswahl = serverseitiger Zustand → keine Abweichung → gesperrt.
+    expect(apply().disabled).toBe(true);
+
+    component.onReassignSelected(att, 's2');
+    fixture.detectChanges();
+    expect(apply().disabled).toBe(false);
+
+    // Ohne Aufruf: bloße Auswahl ändert nichts (kein API-Call).
+    expect(reassign).not.toHaveBeenCalled();
+  });
+
+  it('Umzuordnung: keine Zuordnungszeile ohne Splits und ohne Split-Zuordnung', async () => {
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(
+      detail({ splits: [] }),
+    );
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockResolvedValue([
+      attachment(), // splitId null
+    ]);
+
+    const { component, fixture, el } = createRendered();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    fixture.detectChanges();
+
+    expect(el.querySelector('.attachment-item')).not.toBeNull();
+    expect(el.querySelector('.attachment-reassign')).toBeNull();
+  });
+
+  it('Umzuordnungsfehler 400 invalid_reference: Fehlerbanner neben dem Inhalt, Dialog bleibt offen, Liste zeigt den aktuellen Buchungszustand', async () => {
+    // Szenario aus dem Nutzerfeedback: Ziel-Split wurde zwischen
+    // Auswahl und „Anwenden“ von einer Korrektur entfernt → 400.
+    const reassign = vi.mocked(AttachmentEndpointsService.reassignAttachmentSplit);
+    reassign.mockRejectedValue(
+      new ApiError(
+        {} as never,
+        {
+          url: '/api/v1/attachments/att-1',
+          ok: false,
+          status: 400,
+          statusText: 'Bad Request',
+          body: {
+            error: {
+              code: 'invalid_reference',
+              message: 'Der angegebene Split gehört nicht mehr zur Buchung.',
+            },
+          },
+        } as never,
+        'Bad Request',
+      ) as never,
+    );
+    // Vorher: zwei Splits; nach dem Fehler-Refresh ist s2 weg
+    // (Korrektur) und die Belegzuordnung serverseitig unverändert.
+    const s1 = detail().splits[0];
+    vi.mocked(JournalEndpointsService.getBooking)
+      .mockResolvedValueOnce(detail())
+      .mockResolvedValueOnce(detail({ splits: [s1] }));
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([attachment({ splitId: 's1' })])
+      .mockResolvedValueOnce([attachment({ splitId: 's1' })]);
+
+    const { component, fixture, el } = createRendered();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    fixture.detectChanges();
+
+    const select = el.querySelector('.attachment-reassign select') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(select.options.length).toBe(3); // gesamte Ausgabe + s1 + s2
+
+    const att = component.attachments()!.attachments[0];
+    select.value = 's2';
+    component.onReassignSelected(att, 's2');
+    fixture.detectChanges();
+
+    await component.reassignAttachment(att);
+    fixture.detectChanges();
+    // NgModel schreibt den (neu initialisierten) serverseitigen Zustand
+    // per writeValue in einem Microtask — NACH dem Rebuild der Optionen,
+    // der die Auswahl „s2“ verworfen hat (Option weg → Wert '').
+    await tick();
+
+    // Fehlerbanner NEBEN dem Inhalt — Dialog bleibt offen, Belegzeile
+    // bleibt sichtbar (kein Dialogneustart, Design D7).
+    expect(el.querySelector('.banner-error')?.textContent).toMatch(
+      /nicht mehr zur Buchung/,
+    );
+    expect(el.querySelectorAll('.attachment-item')).toHaveLength(1);
+    // Fehler-Refresh: aktuelle Splits in den Optionen — s2 ist weg,
+    // die Auswahl ist auf den serverseitigen Zustand zurückgesetzt.
+    const refreshed = el.querySelector('.attachment-reassign select') as HTMLSelectElement;
+    expect(refreshed.options.length).toBe(2); // gesamte Ausgabe + s1
+    expect(refreshed.value).toBe('s1');
+    expect(component.reassignDirty(attachment({ splitId: 's1' }))).toBe(false);
+  });
+
+  // ---------- Review 7a-N1: Befund 1 (Vorauswahl) + Befund 2 (busy-Fenster) ----------
+
+  it('Vorauswahl: serverseitig zu s2 zugewiesener Beleg zeigt s2 in der Auswahl (Review 7a-N1, Befund 1)', async () => {
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments).mockResolvedValue(
+      [attachment({ splitId: 's2' })],
+    );
+
+    const { component, fixture, el } = createRendered();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+    fixture.detectChanges();
+
+    const select = el.querySelector('.attachment-reassign select') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    // Vor der Korrektur: [value] wurde während des CD-Durchlaufs
+    // geschrieben, bevor der @for die Split-Optionen erzeugt hatte —
+    // der native Select verwarf den Wert ohne passendes Option-Element
+    // und zeigte „Gesamte Ausgabe“ (leerer Wert). Mit [ngModel] führt
+    // der ValueAccessor das writeValue erst nach dem Erzeugen der
+    // Optionen aus — die serverseitige Zuordnung s2 ist vorausgewählt.
+    expect(select.value).toBe('s2');
+    expect(component.reassignDirty(component.attachments()!.attachments[0])).toBe(false);
+  });
+
+  it('Umzuordnung: Sperre bleibt während des Refresh nach bestätigtem PATCH gesetzt (Review 7a-N1, Befund 2)', async () => {
+    const reassign = vi.mocked(AttachmentEndpointsService.reassignAttachmentSplit);
+    reassign.mockResolvedValue(attachment({ splitId: 's2' }) as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    let resolveRefresh!: (attachments: unknown[]) => void;
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([attachment()]) // initiales Laden
+      .mockImplementation(
+        (() =>
+          new Promise((r) => {
+            resolveRefresh = r;
+          })) as never,
+      );
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+
+    const att = component.attachments()!.attachments[0];
+    component.onReassignSelected(att, 's2');
+    const reassignCall = component.reassignAttachment(att);
+
+    // PATCH ist bestätigt (Erfolgshinweis gesetzt), der anschließende
+    // Refresh läuft noch — die Sperre muss HIER aktiv bleiben: ein
+    // zweiter Schreibvorgang in diesem Fenster würde von der älteren
+    // Refresh-Antwort (dieselbe Dialog-Generation!) überschrieben.
+    await vi.waitFor(() =>
+      expect(component.attachments()?.success).toBe('Zuordnung aktualisiert.'),
+    );
+    expect(reassign).toHaveBeenCalledTimes(1);
+    expect(component.attachments()?.busy).toBe(true);
+
+    // Zweiter Schreibvorgang im Fenster wird ignoriert (busy-Guard).
+    void component.reassignAttachment(att);
+    await tick();
+    expect(reassign).toHaveBeenCalledTimes(1);
+
+    resolveRefresh([attachment({ splitId: 's2' })]);
+    await reassignCall;
+
+    expect(component.attachments()?.busy).toBe(false);
+    expect(component.attachments()?.attachments[0].splitId).toBe('s2');
+  });
+
+  it('Upload: Sperre bleibt während des Refresh nach bestätigtem Upload gesetzt (Review 7a-N1, Befund 2)', async () => {
+    const upload = vi.mocked(AttachmentEndpointsService.uploadAttachment);
+    upload.mockResolvedValue(attachment() as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    let resolveRefresh!: (attachments: unknown[]) => void;
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([]) // initiales Laden
+      .mockImplementation(
+        (() =>
+          new Promise((r) => {
+            resolveRefresh = r;
+          })) as never,
+      );
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+
+    const file = new File(['%PDF-1.4'], 'quittung.pdf', {
+      type: 'application/pdf',
+    });
+    component.onFileSelected(fileInputEvent(file));
+    const uploadCall = component.uploadAttachment();
+
+    // Upload bestätigt, Refresh läuft noch — Sperre aktiv.
+    await vi.waitFor(() =>
+      expect(component.attachments()?.success).toBe('Beleg hochgeladen.'),
+    );
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(component.attachments()?.busy).toBe(true);
+
+    resolveRefresh([attachment()]);
+    await uploadCall;
+
+    expect(component.attachments()?.busy).toBe(false);
+    expect(component.attachments()?.attachments).toHaveLength(1);
+  });
+
+  it('Löschen: Sperre bleibt während des Refresh nach bestätigtem Delete gesetzt (Review 7a-N1, Befund 2)', async () => {
+    const del = vi.mocked(AttachmentEndpointsService.deleteAttachment);
+    del.mockResolvedValue(undefined as never);
+    vi.mocked(JournalEndpointsService.getBooking).mockResolvedValue(detail());
+    let resolveRefresh!: (attachments: unknown[]) => void;
+    vi.mocked(AttachmentEndpointsService.getBookingAttachments)
+      .mockResolvedValueOnce([attachment({ id: 'att-1' })]) // initiales Laden
+      .mockImplementation(
+        (() =>
+          new Promise((r) => {
+            resolveRefresh = r;
+          })) as never,
+      );
+
+    const component = createComponent();
+    component.openAttachments(listItem('b1'));
+    await vi.waitFor(() => expect(component.attachments()?.loading).toBe(false));
+
+    component.requestDeleteAttachment(attachment({ id: 'att-1' }));
+    expect(component.attachments()?.confirmDeleteId).toBe('att-1');
+    const deleteCall = component.confirmDeleteAttachment();
+
+    // Synchronisationspunkt: Delete ist bestätigt — confirmDeleteId wird
+    // erst NACH der bestellten Löschung auf null gesetzt, der
+    // anschließende Refresh läuft dann noch — Sperre aktiv.
+    // (loading ist dabei bewusst kein Indikator: der Refresh setzt es
+    // nicht neu auf true.)
+    await vi.waitFor(() =>
+      expect(component.attachments()?.confirmDeleteId).toBeNull(),
+    );
+    expect(del).toHaveBeenCalledTimes(1);
+    expect(component.attachments()?.busy).toBe(true);
+
+    resolveRefresh([]);
+    await deleteCall;
+
+    expect(component.attachments()?.busy).toBe(false);
+    expect(component.attachments()?.attachments).toHaveLength(0);
   });
 });

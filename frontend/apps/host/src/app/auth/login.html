@@ -27,7 +27,7 @@
       />
     </label>
 
-    @if (error; as err) {
+    @if (error(); as err) {
       <div class="banner banner-error" role="alert">
         <strong>Anmeldung fehlgeschlagen:</strong> {{ err.message }}
       </div>
@@ -36,9 +36,9 @@
     <button
       type="submit"
       class="btn btn-primary"
-      [disabled]="busy || username.trim() === '' || password === ''"
+      [disabled]="busy() || username.trim() === '' || password === ''"
     >
-      {{ busy ? 'Anmeldung läuft …' : 'Anmelden' }}
+      {{ busy() ? 'Anmeldung läuft …' : 'Anmelden' }}
     </button>
   </form>
 </main>
