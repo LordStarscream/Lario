@@ -1,10 +1,10 @@
 # Aufgabe: Schritt 7a — PDF-/Bildnachweise in der Hauptanwendung
-_Status: implementiert, Nachträge N1 + N2 umgesetzt, Review N1 (Befunde 1+2) behoben · Last updated: 22. Okt. 2026_
+_Status: abgenommen und gemerged — PR #13 (`fe4b60f`), Nachträge N1 + N2 mit Review N1 abgenommen und gemerged (PR #14, `4b2651d`) · Last updated: 22. Okt. 2026_
 
 **Branches:**
 - Lario → `step/7a-belege-impl` (Worktree `/home/mario/Projects/Lario-worktrees/step-7a`; Haupt-Checkout bleibt auf `main`). Basis `666a9ce` (Merge PR #12, Design).
 - **PR: #13** (angelegt 21. Okt. 2026, Basis main, head `step/7a-belege-impl`; Merge nur auf explizite Nutzerfreigabe) — gemerged 22. Okt. 2026 (`fe4b60f`).
-- **Nachträge N1 + N2 (22. Okt. 2026):** Branch `step/7a-nachtraege-n1-n2` (Haupt-Checkout, Basis `cdf478d`), **PR #14** (angelegt 22. Okt. 2026; Merge nur auf explizite Nutzerfreigabe).
+- **Nachträge N1 + N2 (22. Okt. 2026):** Branch `step/7a-nachtraege-n1-n2` (Haupt-Checkout, Basis `cdf478d`), **PR #14** (angelegt 22. Okt. 2026) — **abgenommen und gemerged (22. Okt. 2026, Nutzer), Merge-Commit `4b2651d`**; finaler Branch-Stand `aab899e` (inkl. Review N1, Befunde 1+2), Merge-Diff gegen `aab899e` leer — keine zusätzlichen Änderungen durch den Merge.
 
 **Umgesetzt (21.–22. Okt. 2026), 13 Commits (Implementierung, Doku und Review-Nachgänge D5/D6/D7):**
 - `5c35bc6` (Batch A): Domain `Attachment` + `ReplaceSplits`-Erhaltungsregel (Umlageung belegter Split-Entfernung auf Gesamtbuchung), `AttachmentRepository` (EF, Komposit-FK), `AttachmentService` (Upload: Typ→Größe→Magic→Referenz, `.part`+Rename, Delete-Order DB→Datei, Start-Abgleich), Migration `20261021090000_Attachments` + Backfill (SHA-256), 36 Domain- + 31 Infrastructure-Tests.
@@ -94,7 +94,7 @@ Siehe `.tasks/step-7a-design-paket.md` (D1–D9b). Stand nach Designreview PR #1
 | A8 | ✅ | Api-Tests Start-Abgleich (`.part` + finale Datei ohne DB-Zeile); Infrastructure-Tests |
 | A9 | ✅ | Server-Default 20 MB dezimal (Api-Test `Default_Limit_ist_20_MB_dezimal`), konfigurierbares Server-Limit (Smoke A15, Api-Tests exakt/+1) verifiziert; „413 in der UI verständlich“ — UI zeigt `attachment_too_large`/`max_content_length`-Meldung + D4-Fallback für Kestrel-413 ohne Body; **keine Client-Größensperre** (D7: höheres Server-Limit wird nicht ausgehebelt — host-Test: 25-MB-Datei erreicht den Upload-Aufruf); 413 lässt Upload/Dateiauswahl bedienbar (D7-DOM-Test) |
 
-**Stand: 22. Okt. 2026 — gemerged in `main` (Merge-Commit `fe4b60f`, PR #13; finaler Code-Stand `d2f1f89`, Merge-Diff nur `.tasks/_index.md`, keine Code-Änderung durch den Merge). Review-Befunde 1/2/3/4 umgesetzt (D2/D4), D5 (empirische SQLite-Semantik-Verifikation, Test-Doku-Korrektur p4/p5), D6 (Befund 1: Default-Limit 20 MB; Befund 2: Dialog-Generation + Download-404/410-Meldungen), D7 (Befund „Größenlimit“: keine Client-Größensperre; Befund „Aktionsfehler“: Fehler/Erfolg neben Inhalt, „Erneut laden“-Zweig, Blob-Buttons gemeinsam gesperrt); **A1–A3 manuell abgenommen (Nutzer, 22. Okt. 2026)**; A6 folgt in Schritt 17; **Nachträge N1 (Zuordnung bestehender Belege änderbar) und N2 (Login-Fehler-Bug) am 22. Okt. 2026 umgesetzt** — Details unten.
+**Stand: 22. Okt. 2026 — gemerged in `main` (Merge-Commit `fe4b60f`, PR #13; finaler Code-Stand `d2f1f89`, Merge-Diff nur `.tasks/_index.md`, keine Code-Änderung durch den Merge). Review-Befunde 1/2/3/4 umgesetzt (D2/D4), D5 (empirische SQLite-Semantik-Verifikation, Test-Doku-Korrektur p4/p5), D6 (Befund 1: Default-Limit 20 MB; Befund 2: Dialog-Generation + Download-404/410-Meldungen), D7 (Befund „Größenlimit“: keine Client-Größensperre; Befund „Aktionsfehler“: Fehler/Erfolg neben Inhalt, „Erneut laden“-Zweig, Blob-Buttons gemeinsam gesperrt); **A1–A3 manuell abgenommen (Nutzer, 22. Okt. 2026)**; A6 folgt in Schritt 17; **Nachträge N1 (Zuordnung bestehender Belege änderbar) und N2 (Login-Fehler-Bug) am 22. Okt. 2026 umgesetzt, mit Review N1 (Befunde 1+2) abgenommen und gemerged (22. Okt. 2026, Nutzer — PR #14, Merge-Commit `4b2651d`)** — Details unten. **Schritt 7a ist damit vollständig abgenommen; offen bleibt nur A6 (Restore-Abnahme, Schritt 17).**
 
 ## Nachtrag N2 (22. Okt. 2026, Nutzer-Feedback) — Login-Fehler erscheint erst nach Klick ins Benutzername-Feld (Bug)
 
@@ -134,7 +134,9 @@ Siehe `.tasks/step-7a-design-paket.md` (D1–D9b). Stand nach Designreview PR #1
 
 **Prüfstand (22. Okt. 2026, final nach N1 + N2):** .NET **648/648** (Domain 214, Infrastructure 200, Api 134 — +9 N1) + Host **126/126** (+5 N1 Umzuordnung, +2 N2 Login), Mobile 23/23, Lint 0 (host+mobile), Builds grün (host+mobile), **E2E-Smoke N1 (22. Okt. 2026, echter Host + frische SQLite-DB) grün** (Login, Stammdaten, Ausgabe mit 2 Splits, Upload, PATCH → Split, PATCH → null, No-Op, **fremder Split → 400 `invalid_reference`**, 404, 401). Hinweis: `dotnet test Lario.slnx` schlägt auf dieser Maschine bei Api.Tests fehl (vstest setzt `DOTNET_ROOT_X64=/usr/share/dotnet`, dort fehlt AspNetCore.App) — **besteht auf `main` identisch** (vor 7a), kein 7a-Problem; Einzelprojekt-Runs sind zuverlässig grün.
 
-## Review N1 (LordStarscream, 22. Okt. 2026) — zwei Befunde, beide behoben
+## Review N1 (LordStarscream, 22. Okt. 2026) — zwei Befunde, beide behoben und abgenommen
+
+**Abnahme (22. Okt. 2026, Nutzer):** „ist abgenommen und gemerged“ — PR #14 gemerged, Merge-Commit `4b2651d`; kein weiterer Review-Nachgang.
 
 **Befund 1 (Vorauswahl, P2):** Ein serverseitig einem Split zugeordneter Beleg zeigte im Auswahlfeld „Gesamte Ausgabe“ statt des serverseitigen Zustands. **Root-Cause:** `[value]` wird während des CD-Durchlaufs geschrieben, bevor der `@for` die dynamischen Split-Optionen erzeugt — ein Wert ohne passendes Option-Element wird vom nativen Select verworfen, und der unveränderte Binding-Wert wird in späteren CD-Durchläufen nicht neu geschrieben. **Fix:** `[ngModel]` + `(ngModelChange)` — der `ValueAccessor` führt das `writeValue` in einem Microtask aus, der erst **nach** dem Erzeugen der Optionen läuft; `onReassignSelected` erhält den ausgewählten Wert als String (leer = gesamte Ausgabe) statt des DOM-Events. **Rot-Check (22. Okt. 2026):** der neue Vorauswahl-Test am gerenderten DOM schlägt auf dem alten `[value]`-Stand mit `expected '' to be 's2'` (temporäres Standalone-Spec, danach gelöscht), auf dem fixierten Stand grün — bestätigt die vom Reviewer manuell beobachtete Reproduktion.
 
