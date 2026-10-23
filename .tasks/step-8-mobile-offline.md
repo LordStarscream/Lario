@@ -1,8 +1,8 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv · Last updated: 22. Okt. 2026_
+_Status: aktiv — Batch A fertig · Last updated: 23. Okt. 2026_
 
 **Branches:**
-- Lario → `step/8-mobile-offline`  (Worktree: `/home/mario/Projects/Lario-worktrees/step-8`)
+- Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
 
 **Gestartet:** 22. Okt. 2026
 
@@ -92,17 +92,35 @@ Kein Senden (Schritt 9/10), keine mobile Saldenengine (AGENTS.md).
   ohne Teilzustand; Zoneless-DOM-Tests.
 - **D11 Geräte-Abnahme (manuell):** APK, Setup gegen LAN-Host, Flugmodus: 20 Ausgaben
   inkl. Splits, hart beenden + Neustart → alles da; Doppeltippen → eine Eingabe.
+- **D12 Worktree + Worker:** Die Batch-Implementierung läuft in separaten
+  Worktrees mit beaufsichtigten Workern (start_worker). Die Worker sehen
+  `.tasks/`, `.pi/` und `.git/` nicht (Guard-Schutz) — alle nötigen Design-
+  Details stehen daher im Worker-Auftrag; Commits und Doku-Nachträge macht die
+  Hauptsession. Worker-Checks: nur `npm run lint` / `npm run test` (per Wrapper-
+  package.json im Worktree-Root); `build:mobile` führt die Hauptsession aus.
 
-## Batch A — Speicherfundament (P1)
+## Batch A — Speicherfundament (P1) — fertig (23. Okt. 2026)
 
-- [ ] `LocalDatabase`-Service: DB `lario` öffnen, Schema anlegen (idempotent),
+- [x] `LocalDatabase`-Service: DB `lario` öffnen, Schema anlegen (idempotent),
       `executeSet`-Wrapper mit get/set-Transaktion; zentrale SQL-Vorlagen in
       `statements.ts` (alle INSERT/UPDATE/DELETE/SELECT als konstante Arrays)
-- [ ] `meta`-Service (get/set/delete), `@types/node` devDependency,
+- [x] `meta`-Service (get/set/delete), `@types/node` devDependency,
       `node:sqlite`-Tests: Schema läuft fehlerfrei, FK-Cascade, Unique-Constraints,
       executeSet-Atomarität (Statement 2/5 schlägt fehl → alles rollt zurück)
-- [ ] Mobiler generierter Client: `generate:client`-Skript erzeugt
+- [x] Mobiler generierter Client: `generate:client`-Skript erzeugt
       `apps/mobile/src/generated`; Test, dass Client die Catalog-Endpoints kennt
+      (Client: c7a1595; Import-Check: `generated-client.spec.ts`)
+
+Ergebnis: `frontend/apps/mobile/src/app/db/` — `statements.ts` (Schema + Meta-Helfer),
+`local-database.ts` (RW-Connection-Guard, Pragma D2a + Schema in einem executeSet),
+`meta.service.ts` (inject()-Muster), `capacitor-sqlite-fake.ts` (geteilter Test-Fake
+mit vi.hoisted-State; aus dem App-Build in `tsconfig.app.json` ausgeschlossen,
+weil er Vitest-Globals nutzt) + 3 Specs: `local-database.spec.ts` (jsdom/Fake:
+init-Lifecycle, Idempotenz, Neustart-Simulation, iOS/Android-mapRows, MetaService),
+`schema.spec.ts` (echte SQLite via node:sqlite: Idempotenz, FK-Cascade, Unique,
+FK-Verletzung, Atomarität, Meta-Helfer), `generated-client.spec.ts` (Import-Check).
+Prüfungen: `npm run lint` grün; `npm run test`: host 14 Dateien/130 Tests, mobile
+5 Dateien/42 Tests; `npm run build:mobile` grün. Plan-Abnahme (h) damit abgedeckt.
 
 ## Batch B — Outbox + Buchungs-Speicher (P2)
 
