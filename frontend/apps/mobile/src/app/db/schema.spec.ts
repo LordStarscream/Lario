@@ -225,6 +225,33 @@ describe('Batch-A-Schema (echte SQLite via node:sqlite)', () => {
     expect(splitRows[0]?.count).toBe(1);
   });
 
+  it('D2a-Semantik: PRAGMA foreign_keys = ON ist in einer Transaktion wirkungslos', () => {
+    // Echtes SQLite-Verhalten, auf dem die D2a-Korrektur beruht: Das
+    // Pragma lässt sich nur außerhalb einer Transaktion ändern.
+    // LocalDatabase.init() führt es daher mit transaction: false aus.
+    // (node:sqlite aktiviert FKs standardmäßig — hier explizit aus,
+    // damit der No-Op-Effekt messbar ist.)
+    db.exec('PRAGMA foreign_keys = OFF');
+    const initial = db.prepare('PRAGMA foreign_keys').get() as {
+      foreign_keys: number;
+    };
+    expect(initial.foreign_keys).toBe(0); // Ausgangszustand: aus
+
+    db.exec('BEGIN');
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec('COMMIT');
+    const afterTransactional = db
+      .prepare('PRAGMA foreign_keys')
+      .get() as { foreign_keys: number };
+    expect(afterTransactional.foreign_keys).toBe(0); // wirkungslos geblieben
+
+    db.exec('PRAGMA foreign_keys = ON');
+    const afterStandalone = db
+      .prepare('PRAGMA foreign_keys')
+      .get() as { foreign_keys: number };
+    expect(afterStandalone.foreign_keys).toBe(1); // außerhalb wirksam
+  });
+
   it('Meta-Helfer auf echter SQLite', () => {
     initSchema(db);
 

@@ -3,12 +3,19 @@
  *
  * Nur SQL — keine Logik und keine Validierung. Das Batch-A-Schema
  * (Masterdaten + Buchungen + Outbox + Entwürfe + Meta) wird von
- * `LocalDatabase.init()` in EINEM `executeSet`-Batch ausgeführt; das
- * Plugin führt den Batch standardmäßig in einer Transaction aus
- * (transaction: true, Feld wird nie explizit gesetzt).
+ * `LocalDatabase.init()` in EINEM `executeSet`-Batch ausgeführt, der
+ * explizit transaktional läuft (transaction: true) — atomar oder gar
+ * nichts. Das FK-Pragma (D2a) läuft in einem eigenen, NICHT
+ * transaktionalen Batch davor: `PRAGMA foreign_keys = ON` wäre in der
+ * Schema-Transaktion wirkungslos (SQLite-Semantik).
  *
  * Alle CREATE-Statements sind `IF NOT EXISTS` — die Initialisierung ist
  * dadurch idempotent und Neustart-sicher.
+ *
+ * An der Plugin-Grenze trägt JEDES Set-Element ein `values`-Array
+ * (Review-Befund P1: Android 8.1.1 liest `values` zwingend) —
+ * `LocalDatabase` normalisiert das; interne `SqlSet`-Elemente dürfen
+ * `values` weglassen.
  */
 
 /** Einzelnes Set-Element für `executeSet` (Plugin-Typ: `values` optional). */

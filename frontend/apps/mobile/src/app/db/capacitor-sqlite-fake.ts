@@ -16,12 +16,21 @@ import type { SqlSet } from './statements';
  *   `RW_<Name>` / `RO_<Name>`; ein zweiter `createConnection()`-Aufruf
  *   für dieselbe Connection wirft „already exists“.
  * - `open()` öffnet nur eine zuvor registrierte Connection, sonst
- *   „No available connection for database …“.
- * - `executeSet()` läuft auf der RW_-Connection und ist
- *   ALLES-ODER-NICHTS (Designpunkt c): Alle Sets werden erst geprüft,
- *   dann angewendet — ein Fehler verändert KEINEN Teil des Batches und
- *   wirft (Plugin-Vertrag: executeSet läuft standardmäßig in einer
- *   Transaction, transaction: true).
+ *   „No available connection for database …“. Contract Android 8.1.1:
+ *   `open()` aktiviert FK-Constraints (`Database.java`:
+ *   `setForeignKeyConstraintsEnabled(true)`) — der Fake spiegelt das
+ *   im State (`foreignKeys`).
+ * - `executeSet()` läuft auf der RW_-Connection. Contract Android
+ *   8.1.1 (Review-Befund P1): `values` ist bei JEDEM Element
+ *   Pflichtfeld — `Database.executeSet()` liest
+ *   `row.getJSONArray("values")` zwingend; ohne Array wirft der Fake
+ *   wie das echte Plugin. Standardmäßig ist der Batch ALLES-ODER-NICHTS
+ *   (transaction: true — Plugin-Default): Alle Sets werden erst
+ *   geprüft, dann angewendet — ein Fehler verändert KEINEN Teil des
+ *   Batches und wirft. Mit `transaction: false` läuft jedes Statement
+ *   sofort (keine All-or-Nothing-Garantie) — darunter auch
+ *   `PRAGMA foreign_keys = ON`, das (wie bei echtem SQLite) nur
+ *   außerhalb einer Transaktion wirksam ist.
  * - `query()`/`run()` werfen ohne das Pflichtfeld `values` (auch wenn
  *   es ein leeres Array wäre), wie das echte Plugin auf Android.
  *
@@ -34,6 +43,8 @@ import type { SqlSet } from './statements';
 export interface FakeExecuteSetBatch {
   database: string;
   readonly?: boolean;
+  /** true = transaktional (Plugin-Default), false = transaction: false. */
+  transaction: boolean;
   sets: SqlSet[];
 }
 
@@ -47,6 +58,12 @@ export interface CapacitorSqliteFakeState {
   executedSets: FakeExecuteSetBatch[];
   /** true, nachdem mindestens ein CREATE TABLE … IF NOT EXISTS lief. */
   schemaStatementsExecuted: boolean;
+  /**
+   * Wirksamer FK-Zustand der geöffneten Connection. Contract Android
+   * 8.1.1: `open()` setzt ihn auf true. `PRAGMA foreign_keys = ON`
+   * (nur außerhalb einer Transaktion) ebenso — siehe applySet().
+   */
+  foreignKeys: boolean;
   /**
    * Simuliert einen App-Neustart: der Prozess (und damit das
    * Verbindungsregister) startet leer, die SQLite-Datei (Daten) bleibt
@@ -65,6 +82,7 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
     // Hoisting-Problem mit vi.hoisted.
     executedSets: [] as FakeExecuteSetBatch[],
     schemaStatementsExecuted: false,
+    foreignKeys: false,
     simulateRestart() {
       state.connections.clear();
     },
@@ -73,6 +91,7 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
       state.meta.clear();
       state.executedSets.length = 0;
       state.schemaStatementsExecuted = false;
+      state.foreignKeys = false;
     },
   };
   return state;
@@ -82,15 +101,29 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
  * Einzelnes Set evaluieren und in den Fake-State anwenden. Wirft bei
  * nicht unterstützten (Batch A kennt nur Meta + Schema + Pragma) oder
  * ungültigen Statements — executeSet nutzt das für die Prüfphase.
+ *
+ * `inTransaction` spiegelt die echte SQLite-Semantik für
+ * `PRAGMA foreign_keys = ON`: innerhalb einer Transaktion wirkungslos,
+ * außerhalb wirksam.
  */
 function applySet(
-  state: Pick<CapacitorSqliteFakeState, 'meta' | 'schemaStatementsExecuted'>,
+  state: Pick<
+    CapacitorSqliteFakeState,
+    'meta' | 'schemaStatementsExecuted' | 'foreignKeys'
+  >,
   set: SqlSet,
+  inTransaction: boolean,
 ): void {
-  const { statement, values = [] } = set;
+  // `values` wird an der executeSet-Grenze geprüft (Android-Contract);
+  // defensive Wiederholung, damit applySet auch isoliert sicher bleibt.
+  const { statement, values } = set;
+  if (!Array.isArray(values)) {
+    throw new Error('ExecuteSet: No value for values');
+  }
   if (statement.includes('PRAGMA foreign_keys')) {
-    // Das echte Plugin setzt das Pragma nicht — Batch A führt es aus.
-    // Kein State nötig; die Specs asserten das Statement im Batch.
+    if (!inTransaction) {
+      state.foreignKeys = true;
+    }
     return;
   }
   if (statement.includes('CREATE TABLE IF NOT EXISTS')) {
@@ -119,7 +152,12 @@ function applySet(
 export interface CapacitorSqliteMock {
   createConnection(options: { database: string; readonly?: boolean }): Promise<void>;
   open(options: { database: string; readonly?: boolean }): Promise<void>;
-  executeSet(options: { database: string; set: SqlSet[]; readonly?: boolean }): Promise<void>;
+  executeSet(options: {
+    database: string;
+    set: SqlSet[];
+    readonly?: boolean;
+    transaction?: boolean;
+  }): Promise<void>;
   query(options: { database: string; statement: string; values?: unknown[]; readonly?: boolean }): Promise<{ values: unknown[] }>;
   run(options: { database: string; statement: string; values?: unknown[]; readonly?: boolean }): Promise<void>;
 }
@@ -144,16 +182,22 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
           throw new Error(`No available connection for database ${options.database}`);
         }
         dbState.connections.get(key)!.opened = true;
+        // Contract Android 8.1.1: open() aktiviert FK-Constraints
+        // (Database.java: setForeignKeyConstraintsEnabled(true)).
+        dbState.foreignKeys = true;
       },
       /**
-       * ALLES-ODER-NICHTS (Designpunkt c): Snapshot, dann alle Sets
-       * anwenden; bei einem Fehler Snapshot wiederherstellen und
-       * werfen — der Batch hat nichts verändert.
+       * Plugin-Vertrag 8.1.1: `values` ist bei JEDEM Set-Element
+       * Pflichtfeld (Android: getJSONArray wirft ohne es). Standard:
+       * ALLES-ODER-NICHTS (transaction: true) — Snapshot, dann alle
+       * Sets anwenden; bei einem Fehler Snapshot wiederherstellen und
+       * werfen. Mit `transaction: false` läuft jedes Statement sofort.
        */
       async executeSet(options: {
         database: string;
         set: SqlSet[];
         readonly?: boolean;
+        transaction?: boolean;
       }) {
         const key = (options.readonly ? 'RO_' : 'RW_') + options.database;
         const conn = dbState.connections.get(key);
@@ -168,22 +212,35 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
           if (!set || typeof set.statement !== 'string') {
             throw new Error('executeSet: Set ohne gültiges Statement');
           }
-        }
-        // Anwendungsphase mit Snapshot für die Rückabwicklung.
-        const metaBefore = new Map(dbState.meta);
-        const schemaBefore = dbState.schemaStatementsExecuted;
-        try {
-          for (const set of options.set) {
-            applySet(dbState, set);
+          if (!Array.isArray(set.values)) {
+            throw new Error('ExecuteSet: No value for values');
           }
-        } catch (error) {
-          dbState.meta = metaBefore;
-          dbState.schemaStatementsExecuted = schemaBefore;
-          throw error;
+        }
+        const inTransaction = options.transaction !== false;
+        if (inTransaction) {
+          // Anwendungsphase mit Snapshot für die Rückabwicklung.
+          const metaBefore = new Map(dbState.meta);
+          const schemaBefore = dbState.schemaStatementsExecuted;
+          try {
+            for (const set of options.set) {
+              applySet(dbState, set, true);
+            }
+          } catch (error) {
+            dbState.meta = metaBefore;
+            dbState.schemaStatementsExecuted = schemaBefore;
+            throw error;
+          }
+        } else {
+          // transaction: false — jedes Statement wirkt sofort
+          // (keine All-or-Nothing-Garantie, echte SQLite-Semantik).
+          for (const set of options.set) {
+            applySet(dbState, set, false);
+          }
         }
         dbState.executedSets.push({
           database: options.database,
           readonly: options.readonly,
+          transaction: inTransaction,
           sets: options.set,
         });
       },
@@ -205,7 +262,10 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
         if (!conn.opened) {
           throw new Error(`database ${options.database} not opened`);
         }
-        // Batch-A-Stützfläche: nur die Meta-Abfragen.
+        // Batch-A-Stützfläche: Meta-Abfragen + FK-Status (D2a).
+        if (options.statement.includes('PRAGMA foreign_keys')) {
+          return { values: [{ foreign_keys: dbState.foreignKeys ? 1 : 0 }] };
+        }
         if (options.statement.includes('SELECT value FROM meta')) {
           const value = dbState.meta.get(String(options.values[0]));
           return { values: value === undefined ? [] : [{ value }] };

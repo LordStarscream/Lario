@@ -18,10 +18,13 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
   });
 
   describe('init-Lifecycle', () => {
-    it('legt genau eine RW-Connection an, öffnet sie und fährt Pragma + Schema in einem executeSet-Batch', async () => {
+    it('legt eine RW-Connection an und fährt FK-Pragma (ohne Transaktion) + Verifikation + Schema-Batch', async () => {
       const db = new LocalDatabase();
       expect(db.isNative).toBe(true);
       expect(db.ready).toBe(false);
+      // Vor init() anlegen: der PRAGMA-Query-Verifikationsaufruf muss
+      // protokolliert sein (D2a).
+      const querySpy = vi.spyOn(CapacitorSQLite, 'query');
 
       await db.init();
 
@@ -31,17 +34,110 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
       // ready erst am Ende:
       expect(db.ready).toBe(true);
 
-      // Pragma (D2a) + komplettes Schema in EINEM executeSet-Batch:
-      expect(dbState.executedSets).toHaveLength(1);
-      const batch = dbState.executedSets[0];
-      expect(batch.database).toBe(LocalDatabase.DbName);
-      expect(batch.readonly).toBe(false);
-      expect(batch.sets[0].statement).toBe('PRAGMA foreign_keys = ON');
+      // Batch 1 (D2a): FK-Pragma AUSSERHALB einer Transaktion
+      // (innerhalb wäre es wirkungslos) + values-Pflicht (P1).
+      const pragmaBatch = dbState.executedSets[0];
+      expect(pragmaBatch.database).toBe(LocalDatabase.DbName);
+      expect(pragmaBatch.readonly).toBe(false);
+      expect(pragmaBatch.transaction).toBe(false);
+      expect(pragmaBatch.sets).toEqual([
+        { statement: 'PRAGMA foreign_keys = ON', values: [] },
+      ]);
+      // Wirksamer FK-Zustand: aktiv (Fake spiegelt Android: open()
+      // aktiviert FK; das Pragma bestätigt außerhalb der Transaktion).
+      expect(dbState.foreignKeys).toBe(true);
+
+      // Verifikation des wirksamen Zustands via PRAGMA-Query (D2a):
+      expect(querySpy).toHaveBeenCalledWith({
+        database: LocalDatabase.DbName,
+        statement: 'PRAGMA foreign_keys',
+        values: [],
+        readonly: false,
+      });
+
+      // Batch 2: komplettes Schema in EINEM transaktionalen Batch;
+      // JEDES Element trägt ein values-Array an der Plugin-Grenze (P1).
+      const schemaBatch = dbState.executedSets[1];
+      expect(dbState.executedSets).toHaveLength(2);
+      expect(schemaBatch.database).toBe(LocalDatabase.DbName);
+      expect(schemaBatch.readonly).toBe(false);
+      expect(schemaBatch.transaction).toBe(true);
       for (const statement of SCHEMA_STATEMENTS) {
-        expect(batch.sets.map((s) => s.statement)).toContain(statement);
+        expect(schemaBatch.sets.map((s) => s.statement)).toContain(statement);
       }
-      expect(batch.sets).toHaveLength(1 + SCHEMA_STATEMENTS.length);
+      expect(schemaBatch.sets).toHaveLength(SCHEMA_STATEMENTS.length);
+      for (const set of schemaBatch.sets) {
+        expect(Array.isArray(set.values)).toBe(true);
+      }
       expect(dbState.schemaStatementsExecuted).toBe(true);
+    });
+
+    it('P1-Regression: executeSet ohne values liefert an der Plugin-Grenze values: []', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+
+      // Parameterloses Set (Review-Forderung): ohne Normalisierung
+      // würde das Android-Plugin „No value for values“ werfen.
+      await db.executeSet([{ statement: 'DELETE FROM meta' }]);
+
+      const last = dbState.executedSets.at(-1)!;
+      expect(last.sets).toEqual([
+        { statement: 'DELETE FROM meta', values: [] },
+      ]);
+    });
+
+    it('P2: parallele init()-Aufrufe teilen sich eine Initialisierungs-Kette', async () => {
+      const db = new LocalDatabase();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const originalCreate = CapacitorSQLite.createConnection;
+      const createSpy = vi
+        .spyOn(CapacitorSQLite, 'createConnection')
+        .mockImplementation(async (options) => {
+          // Gate: der erste createConnection-Aufruf hängt, bis
+          // release() — der zweite init()-Aufrufer muss auf das
+          // gemeinsame Promise warten statt neu zu starten.
+          await gate;
+          return originalCreate.call(CapacitorSQLite, options);
+        });
+
+      const p1 = db.init();
+      const p2 = db.init();
+
+      // Beide Aufrufe laufen; genau EIN createConnection ist in Fluge —
+      // ohne das gemeinsame Promise würde der zweite Aufruf „already
+      // exists“ werfen.
+      await vi.waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+      expect(createSpy).toHaveBeenCalledTimes(1);
+
+      release();
+      await expect(p1).resolves.toBeUndefined();
+      await expect(p2).resolves.toBeUndefined();
+
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(db.ready).toBe(true);
+      // FK-Batch + Schema-Batch je genau einmal (kein doppelter Lauf):
+      expect(dbState.executedSets).toHaveLength(2);
+    });
+
+    it('P2: nach fehlgeschlagenem init() retryt der nächste Aufruf ohne doppelte Connection', async () => {
+      const db = new LocalDatabase();
+      const createSpy = vi.spyOn(CapacitorSQLite, 'createConnection');
+      // open() schlägt beim ersten Versuch fehl (createConnection
+      // war bereits erfolgreich).
+      vi.spyOn(CapacitorSQLite, 'open').mockImplementationOnce(async () => {
+        throw new Error('Simulierter Öffnungsfehler');
+      });
+
+      await expect(db.init()).rejects.toThrow('Simulierter Öffnungsfehler');
+      expect(db.ready).toBe(false);
+
+      // Retry: die bereits angelegte Connection wird WIEDERVERWENDET
+      // (kein zweites createConnection → kein „already exists").
+      await db.init();
+      expect(db.ready).toBe(true);
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(dbState.executedSets).toHaveLength(2);
     });
 
     it('ist idempotent: zweites init() ruft createConnection nicht erneut auf', async () => {
@@ -51,8 +147,8 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
       await db.init();
       expect(db.ready).toBe(true);
       expect([...dbState.connections.keys()]).toEqual(['RW_lario']);
-      // Nur der erste init() hat den Schema-Batch ausgeführt:
-      expect(dbState.executedSets).toHaveLength(1);
+      // Nur der erste init() hat die Batches ausgeführt:
+      expect(dbState.executedSets).toHaveLength(2);
     });
 
     it('übersteht einen simulierten Neustart: neue Instanz, neues Register, Daten bleiben', async () => {
@@ -74,20 +170,26 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
   });
 
   describe('executeSet-Wrapper', () => {
-    it('übergibt die Sets unverändert und mit readonly:false', async () => {
+    it('normalisiert jedes Element auf ein values-Array (P1) und übergibt readonly:false, transaction:true', async () => {
       const db = new LocalDatabase();
       await db.init();
-      const sets = [
+      const sets: { statement: string; values?: unknown[] }[] = [
         { statement: 'DELETE FROM meta WHERE key = ?', values: ['a'] },
-        { statement: 'PRAGMA foreign_keys = ON' },
+        { statement: 'DELETE FROM meta WHERE key = ?' }, // ohne values
       ];
       await db.executeSet(sets);
 
       const last = dbState.executedSets.at(-1)!;
       expect(last.database).toBe(LocalDatabase.DbName);
       expect(last.readonly).toBe(false);
-      expect(last.sets).toEqual(sets);
-      expect(last.sets).toBe(sets); // Wrapper kopiert nicht — Identität prüfen
+      expect(last.transaction).toBe(true);
+      // An der Plugin-Grenze trägt JEDES Element ein values-Array —
+      // vorhandene Werte bleiben erhalten, fehlende werden zu [].
+      expect(last.sets).toEqual([
+        { statement: 'DELETE FROM meta WHERE key = ?', values: ['a'] },
+        { statement: 'DELETE FROM meta WHERE key = ?', values: [] },
+      ]);
+      expect(last.sets).not.toBe(sets); // Normalisierung kopiert
     });
   });
 
