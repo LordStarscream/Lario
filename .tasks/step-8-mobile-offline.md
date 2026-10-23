@@ -39,13 +39,20 @@ Kein Senden (Schritt 9/10), keine mobile Saldenengine (AGENTS.md).
   tax_category_id, tax_category_name, marked_amount_cents, tax_note)`;
   `outbox(operation_id PK, device_id, type, booking_id, payload, payload_hash,
   expected_base_revision, status, created_at_utc, updated_at_utc)` (Modell Schritt 0);
-  `drafts(id,name,data,created_at_utc,updated_at_utc)`. **D2a FK-Pragma:** Das
-  Capacitor-Plugin aktiviert `PRAGMA foreign_keys` nicht (Android-Quelle 8.1.1
-  geprüft) — SQLite hält FKs pro Verbindung standardmäßig AUS. `LocalDatabase.init()`
-  führt daher nach `open()` `PRAGMA foreign_keys = ON` aus (pro neuem Prozess,
-  nicht persistiert); node:sqlite-Tests setzen dasselbe Pragma (D10). Zusätzlich
-  bleibt die explizite Lösch-Reihenfolge (Splits vor Buchung) in der Verwerfen-
-  Transaktion als Verteidigungstiefe.
+  `drafts(id,name,data,created_at_utc,updated_at_utc)`. **D2a FK-Pragma
+  (review-korrigiert, 23.10.):** Android 8.1.1 aktiviert FK bereits beim
+  `open()` (`Database.java`: `setForeignKeyConstraintsEnabled(true)`); die
+  frühere Annahme „Plugin aktiviert FKs nicht“ war falsch. Allerdings ist
+  `PRAGMA foreign_keys = ON` INNEHALB einer Transaktion wirkungslos
+  (SQLite-Semantik) — das frühere Pragma im transaktionalen Schema-Batch
+  hätte nichts bewirkt. `LocalDatabase.init()` setzt es daher explizit
+  außerhalb einer Transaktion (`transaction: false`) und verifiziert den
+  wirksamen Zustand per `PRAGMA foreign_keys`: plattformunabhängig
+  (Web/Browser-Fallback) und laut fehlend, falls ein Pluginwechsel die
+  Aktivierung beim Öffnen entfernt. node:sqlite-Tests setzen das Pragma
+  außerhalb von Transaktionen (D10). Zusätzlich bleibt die explizite
+  Lösch-Reihenfolge (Splits vor Buchung) in der Verwerfen-Transaktion als
+  Verteidigungstiefe.
 - **D3 Snapshot:** Setup-View mit Host-URL + User/Passwort (lokal gemerkt) →
   `POST /api/v1/auth/login` → Token in `meta`; `GET /accounts|/pools|/categories|
   /tax-categories` → Snapshot-Tabellen in **einer** `executeSet`-Transaktion atomar
@@ -112,15 +119,42 @@ Kein Senden (Schritt 9/10), keine mobile Saldenengine (AGENTS.md).
       (Client: c7a1595; Import-Check: `generated-client.spec.ts`)
 
 Ergebnis: `frontend/apps/mobile/src/app/db/` — `statements.ts` (Schema + Meta-Helfer),
-`local-database.ts` (RW-Connection-Guard, Pragma D2a + Schema in einem executeSet),
+`local-database.ts` (RW-Connection-Guard, geteiltes Init-Promise, FK-Pragma mit
+`transaction: false` + Verifikation, Schema in transaktional executeSet),
 `meta.service.ts` (inject()-Muster), `capacitor-sqlite-fake.ts` (geteilter Test-Fake
-mit vi.hoisted-State; aus dem App-Build in `tsconfig.app.json` ausgeschlossen,
-weil er Vitest-Globals nutzt) + 3 Specs: `local-database.spec.ts` (jsdom/Fake:
-init-Lifecycle, Idempotenz, Neustart-Simulation, iOS/Android-mapRows, MetaService),
-`schema.spec.ts` (echte SQLite via node:sqlite: Idempotenz, FK-Cascade, Unique,
-FK-Verletzung, Atomarität, Meta-Helfer), `generated-client.spec.ts` (Import-Check).
+mit vi.hoisted-State; an den echten 8.1.1-Vertrag ausgerichtet: values-Pflicht je
+Element, transaction-Option, FK-State; aus dem App-Build in `tsconfig.app.json`
+ausgeschlossen, weil er Vitest-Globals nutzt) + 3 Specs: `local-database.spec.ts`
+(jsdom/Fake: init-Lifecycle, P1/P2-Regressionen, Idempotenz, Neustart-Simulation,
+iOS/Android-mapRows, MetaService), `schema.spec.ts` (echte SQLite via node:sqlite:
+Idempotenz, FK-Cascade, Unique, FK-Verletzung, Atomarität, D2a-Pragma-Semantik,
+Meta-Helfer), `generated-client.spec.ts` (Import-Check).
+
+**Review-Nachgang (23.10., PR #15 Review):**
+- **P1 (Blocker, behoben):** Android 8.1.1 liest `values` bei JEDEM
+  executeSet-Element zwingend (`Database.executeSet()`, Zeile 458) — der
+  Initialisierungsbatch hatte nur `{ statement }` und wäre abgebrochen.
+  Jetzt: `toPluginSets()` normalisiert an der Plugin-Grenze jedes Element
+  auf `values: []` (init + öffentlicher executeSet-Wrapper); der Fake
+  ablehnt Sets ohne `values` („ExecuteSet: No value for values").
+  Regressionstests: init mit strengem Fake (alle Elemente tragen values),
+  `db.executeSet([{statement: 'DELETE FROM meta'}])` → Grenze bekommt
+  `values: []`.
+- **P2 (behoben):** Parallele `init()`-Aufrufe liefen `createConnection()`
+  doppelt (zweiter wirft „already exists"). Jetzt: gemeinsames Promise
+  `initializing` serialisiert create/open/Pragma/Schema; nach Fehlschlag
+  wird es freigegeben, `connectionCreated` bleibt nur nach erfolgreichem
+  Create. Regressionstests: 2 parallele init mit Gate → alle erfolgreich,
+  genau 1 create + 2 Batches; fehlgeschlagener init → Retry ohne
+  doppelte Connection.
+- **D2a-Korrektur (Doku + Verhalten):** siehe D2 oben — Pragma lief früher
+  im transaktionalen Batch (wirkungslos), läuft jetzt außerhalb
+  (`transaction: false`) + Verifikation per `PRAGMA foreign_keys`; Fake
+  spiegelt Android (open() aktiviert FK; Pragma in Transaktion No-Op);
+  neue node:sqlite-Test fängt die No-Op-Semantik.
+
 Prüfungen: `npm run lint` grün; `npm run test`: host 14 Dateien/130 Tests, mobile
-5 Dateien/42 Tests; `npm run build:mobile` grün. Plan-Abnahme (h) damit abgedeckt.
+5 Dateien/46 Tests; `npm run build:mobile` grün. Plan-Abnahme (h) damit abgedeckt.
 
 ## Batch B — Outbox + Buchungs-Speicher (P2)
 
