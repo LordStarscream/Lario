@@ -1,8 +1,24 @@
 import type { SqlSet } from './statements';
+import {
+  DELETE_BOOKING,
+  DELETE_DRAFT,
+  DELETE_SPLITS,
+  INSERT_BOOKING,
+  INSERT_SPLIT,
+  SELECT_BOOKING_BY_ID,
+  SELECT_BOOKING_LIST,
+  SELECT_DRAFTS,
+  SELECT_DRAFT_BY_ID,
+  SELECT_OUTBOX_BY_BOOKING,
+  SELECT_SPLITS_BY_BOOKING,
+  UPSERT_DRAFT,
+  UPDATE_BOOKING,
+  UPDATE_OUTBOX_PAYLOAD,
+} from './statements';
 
 /**
  * Teilbare In-Memory-Fake der Plugin-Grenze `@capacitor-community/sqlite`
- * (8.1.1) für alle Specs unter `app/db/` (Schritt 8, Batch A).
+ * (8.1.1) für alle Specs unter `app/db/` (Schritt 8, Batch A/B).
  *
  * Der State liegt in `vi.hoisted`: Die `vi.mock`-Hoisting-Regel erlaubt
  * nur `vi.hoisted`-Variablen im Mock-Factory-Closure. Die Factory wird
@@ -22,22 +38,84 @@ import type { SqlSet } from './statements';
  *   im State (`foreignKeys`).
  * - `executeSet()` läuft auf der RW_-Connection. Contract Android
  *   8.1.1 (Review-Befund P1): `values` ist bei JEDEM Element
- *   Pflichtfeld — `Database.executeSet()` liest
- *   `row.getJSONArray("values")` zwingend; ohne Array wirft der Fake
- *   wie das echte Plugin. Standardmäßig ist der Batch ALLES-ODER-NICHTS
- *   (transaction: true — Plugin-Default): Alle Sets werden erst
- *   geprüft, dann angewendet — ein Fehler verändert KEINEN Teil des
- *   Batches und wirft. Mit `transaction: false` läuft jedes Statement
- *   sofort (keine All-or-Nothing-Garantie) — darunter auch
+ *   Pflichtfeld — ohne Array wirft der Fake wie das echte Plugin.
+ *   Standardmäßig ist der Batch ALLES-ODER-NICHTS (transaction: true):
+ *   Snapshot, dann alle Sets anwenden; bei einem Fehler Snapshot
+ *   wiederherstellen und werfen (kein Teilzustand). Mit
+ *   `transaction: false` läuft jedes Statement sofort — darunter auch
  *   `PRAGMA foreign_keys = ON`, das (wie bei echtem SQLite) nur
  *   außerhalb einer Transaktion wirksam ist.
  * - `query()`/`run()` werfen ohne das Pflichtfeld `values` (auch wenn
  *   es ein leeres Array wäre), wie das echte Plugin auf Android.
  *
- * Batch-A-Tabellenspeicher: nur `meta` (Map) plus eine Liste der
- * erfolgreich ausgeführten executeSet-Batches (für Assertions). Die
- * Buchungs-/Outbox-Tabellen kommen in Batch B.
+ * Tabellenspeicher (Batch B, Design D2/D4): `meta`, `bookings`,
+ * `splits`, `outbox`, `drafts` plus eine Liste der erfolgreich
+ * ausgeführten executeSet-Batches (für Assertions).
+ *
+ * Constraint-Semantik (Design D2a, `foreignKeys` = true):
+ * - PRIMARY KEY/UNIQUE: INSERT mit bestehendem Key wirft
+ *   `SQLITE_CONSTRAINT_PRIMARYKEY`.
+ * - FOREIGN KEY: INSERT_SPLIT/INSERT_OUTBOX mit fehlender
+ *   Referenzbuchung wirft; DELETE_BOOKING mit verbleibenden Splits
+ *   wirft (sonst: ON DELETE CASCADE entfernt die Splits).
+ * - NOT NULL: NULL-Wert in einer NOT NULL-Spalte wirft.
+ * - UPDATE/DELETE ohne Treffer ist ein no-op (0 Zeilen), wie SQLite.
+ *
+ * Batch-B-Statements werden per normalisiertem Vollstring erkannt
+ * (Whitespace kollabiert) — kein Substring-Matching, damit
+ * zusammengehörige Statements nicht verwechselt werden.
  */
+
+/** Buchung (spiegelt die Batch-A-Spalten 1:1, snake_case). */
+export interface FakeBookingRow {
+  id: string;
+  date: string;
+  type: string;
+  account_id: string;
+  total_amount_cents: number;
+  note: string | null;
+  base_revision: number | null;
+  created_at_utc: string;
+}
+
+/** Split (spiegelt die Batch-A-Spalten 1:1, snake_case). */
+export interface FakeSplitRow {
+  id: string;
+  booking_id: string;
+  amount_cents: number;
+  pool_id: string;
+  category_id: string;
+  note: string | null;
+  /** 1/0 = Kennzeichnung relevant/nicht relevant; null = keine Kennzeichnung. */
+  tax_relevant: number | null;
+  tax_category_id: string | null;
+  tax_category_name: string | null;
+  marked_amount_cents: number | null;
+  tax_note: string | null;
+}
+
+/** Outbox-Zeile (Design D4) — spiegelt die Batch-A-Spalten 1:1. */
+export interface FakeOutboxRow {
+  operation_id: string;
+  device_id: string;
+  type: string;
+  booking_id: string;
+  payload: string;
+  payload_hash: string;
+  expected_base_revision: number | null;
+  status: string;
+  created_at_utc: string;
+  updated_at_utc: string;
+}
+
+/** Entwurf (spiegelt die Batch-A-Spalten 1:1, snake_case). */
+export interface FakeDraftRow {
+  id: string;
+  name: string;
+  data: string;
+  created_at_utc: string;
+  updated_at_utc: string;
+}
 
 /** Erfolgreich ausgeführter executeSet-Batch (für Assertions in den Specs). */
 export interface FakeExecuteSetBatch {
@@ -54,6 +132,14 @@ export interface CapacitorSqliteFakeState {
   connections: Map<string, { opened: boolean }>;
   /** Batch-A-Tabellenspeicher: Meta-Keys/Werte. */
   meta: Map<string, string>;
+  /** Batch-B-Tabellenspeicher: Buchungen, Key = id. */
+  bookings: Map<string, FakeBookingRow>;
+  /** Batch-B-Tabellenspeicher: Splits, Key = id. */
+  splits: Map<string, FakeSplitRow>;
+  /** Batch-B-Tabellenspeicher: Outbox-Zeilen, Key = operation_id. */
+  outbox: Map<string, FakeOutboxRow>;
+  /** Batch-B-Tabellenspeicher: Entwürfe, Key = id. */
+  drafts: Map<string, FakeDraftRow>;
   /** Alle erfolgreich ausgeführten executeSet-Batches, in Reihenfolge. */
   executedSets: FakeExecuteSetBatch[];
   /** true, nachdem mindestens ein CREATE TABLE … IF NOT EXISTS lief. */
@@ -65,12 +151,25 @@ export interface CapacitorSqliteFakeState {
    */
   foreignKeys: boolean;
   /**
+   * Test-Option (Batch B, Abnahme (e)): executeSet wirft beim Set mit
+   * diesem Index `Error('simulated failure')`. null = aus. `reset()`
+   * setzt die Option zurück.
+   */
+  failOnStatementIndex: number | null;
+  /**
+   * Test-Option (Batch B, Abnahme (e)): createConnection wirft
+   * `Error('simulated connection failure')` — simuliert ein fehlendes
+   * oder fehlgeschlagenes Plugin. false = aus. `reset()` setzt die
+   * Option zurück.
+   */
+  failOnCreateConnection: boolean;
+  /**
    * Simuliert einen App-Neustart: der Prozess (und damit das
-   * Verbindungsregister) startet leer, die SQLite-Datei (Daten) bleibt
-   * erhalten.
+   * Verbindungsregister) startet leer, die SQLite-Datei (Daten in
+   * meta/bookings/splits/outbox/drafts) bleibt erhalten.
    */
   simulateRestart(): void;
-  /** Leert Verbindungsregister, Meta-Daten und Batch-Historie. */
+  /** Leert Verbindungsregister, alle Tabellen und die Batch-Historie. */
   reset(): void;
 }
 
@@ -78,39 +177,96 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
   const state = {
     connections: new Map<string, { opened: boolean }>(),
     meta: new Map<string, string>(),
-    // Nur Typ-Referenz (wird zur Laufzeit eliminiert) — kein
+    bookings: new Map<string, FakeBookingRow>(),
+    splits: new Map<string, FakeSplitRow>(),
+    outbox: new Map<string, FakeOutboxRow>(),
+    drafts: new Map<string, FakeDraftRow>(),
+    // Nur Typ-Referenzen (werden zur Laufzeit eliminiert) — kein
     // Hoisting-Problem mit vi.hoisted.
     executedSets: [] as FakeExecuteSetBatch[],
     schemaStatementsExecuted: false,
     foreignKeys: false,
+    failOnStatementIndex: null as number | null,
+    failOnCreateConnection: false,
     simulateRestart() {
       state.connections.clear();
     },
     reset() {
       state.connections.clear();
       state.meta.clear();
+      state.bookings.clear();
+      state.splits.clear();
+      state.outbox.clear();
+      state.drafts.clear();
       state.executedSets.length = 0;
       state.schemaStatementsExecuted = false;
       state.foreignKeys = false;
+      state.failOnStatementIndex = null;
+      state.failOnCreateConnection = false;
     },
   };
   return state;
 });
 
+/** Whitespace normalisieren (Vollstring-Abgleich statt Substring). */
+function normalize(statement: string): string {
+  return statement.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Normalisierte Statementtexte der privat in outbox.ts definierten
+ * Outbox-Statements (kein Import möglich: outbox.ts → local-database.ts
+ * → CapacitorSQLite, also kreisförmig).
+ */
+const OUTBOX_STATEMENTS = {
+  insert:
+    'INSERT INTO outbox (operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, created_at_utc, updated_at_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  selectByOperation:
+    'SELECT operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, created_at_utc, updated_at_utc FROM outbox WHERE operation_id = ?',
+  updateModify:
+    'UPDATE outbox SET payload = ?, payload_hash = ?, updated_at_utc = ? WHERE operation_id = ?',
+  updateConfirm:
+    "UPDATE outbox SET status = 'confirmed', updated_at_utc = ? WHERE operation_id = ?",
+  selectAll:
+    'SELECT operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, created_at_utc, updated_at_utc FROM outbox ORDER BY created_at_utc DESC, operation_id DESC',
+  selectCounts:
+    "SELECT SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued, SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed, COUNT(*) AS total FROM outbox",
+  delete: 'DELETE FROM outbox WHERE operation_id = ?',
+} as const;
+
+/** Normalisierte Meta-Statements (entsprechen den statements.ts-Hilfen). */
+const META_STATEMENTS = {
+  upsert:
+    'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  delete: 'DELETE FROM meta WHERE key = ?',
+  /** Parameterlos: löscht ALLE Meta-Zeilen (SQLite-Semantik). */
+  deleteAll: 'DELETE FROM meta',
+  select: 'SELECT value FROM meta WHERE key = ?',
+} as const;
+
+type StateTables = Pick<
+  CapacitorSqliteFakeState,
+  'meta' | 'bookings' | 'splits' | 'outbox' | 'drafts' |
+  'schemaStatementsExecuted' | 'foreignKeys'
+>;
+
+function constraintError(table: string, column: string, value: string): Error {
+  return new Error(
+    `SQLITE_CONSTRAINT_PRIMARYKEY: ${table}.${column} ${value} bereits vorhanden`,
+  );
+}
+
 /**
  * Einzelnes Set evaluieren und in den Fake-State anwenden. Wirft bei
- * nicht unterstützten (Batch A kennt nur Meta + Schema + Pragma) oder
- * ungültigen Statements — executeSet nutzt das für die Prüfphase.
+ * nicht unterstützten oder constraintverletzenden Statements —
+ * executeSet nutzt das für die Prüf- und Anwendungsphase.
  *
  * `inTransaction` spiegelt die echte SQLite-Semantik für
  * `PRAGMA foreign_keys = ON`: innerhalb einer Transaktion wirkungslos,
  * außerhalb wirksam.
  */
 function applySet(
-  state: Pick<
-    CapacitorSqliteFakeState,
-    'meta' | 'schemaStatementsExecuted' | 'foreignKeys'
-  >,
+  state: StateTables,
   set: SqlSet,
   inTransaction: boolean,
 ): void {
@@ -120,27 +276,394 @@ function applySet(
   if (!Array.isArray(values)) {
     throw new Error('ExecuteSet: No value for values');
   }
-  if (statement.includes('PRAGMA foreign_keys')) {
+  const stmt = normalize(statement);
+  if (stmt.startsWith('PRAGMA foreign_keys')) {
     if (!inTransaction) {
       state.foreignKeys = true;
     }
     return;
   }
-  if (statement.includes('CREATE TABLE IF NOT EXISTS')) {
+  if (stmt.startsWith('CREATE TABLE IF NOT EXISTS')) {
     state.schemaStatementsExecuted = true;
     return;
   }
-  if (statement.includes('INSERT INTO meta') && statement.includes('ON CONFLICT')) {
+  if (stmt === META_STATEMENTS.upsert) {
     const [key, value] = values as [string, string];
     state.meta.set(key, String(value));
     return;
   }
-  if (statement.includes('DELETE FROM meta')) {
+  if (stmt === META_STATEMENTS.delete) {
     state.meta.delete(String(values[0]));
     return;
   }
+  if (stmt === META_STATEMENTS.deleteAll) {
+    state.meta.clear();
+    return;
+  }
+  // ── Batch B: Buchungen ────────────────────────────────────────────────
+  if (stmt === normalize(INSERT_BOOKING)) {
+    const [
+      id,
+      date,
+      type,
+      accountId,
+      totalAmountCents,
+      note,
+      baseRevision,
+      createdAtUtc,
+    ] = values as (string | number | null)[];
+    for (const [column, value] of [
+      ['date', date],
+      ['type', type],
+      ['account_id', accountId],
+      ['total_amount_cents', totalAmountCents],
+      ['created_at_utc', createdAtUtc],
+    ] as const) {
+      if (value === null || value === undefined) {
+        throw new Error(
+          `SQLITE_CONSTRAINT_NOTNULL: NOT NULL constraint failed: bookings.${column}`,
+        );
+      }
+    }
+    if (state.bookings.has(String(id))) {
+      throw constraintError('bookings', 'id', String(id));
+    }
+    state.bookings.set(String(id), {
+      id: String(id),
+      date: String(date),
+      type: String(type),
+      account_id: String(accountId),
+      total_amount_cents: Number(totalAmountCents),
+      note: note === null || note === undefined ? null : String(note),
+      base_revision:
+        baseRevision === null || baseRevision === undefined
+          ? null
+          : Number(baseRevision),
+      created_at_utc: String(createdAtUtc),
+    });
+    return;
+  }
+  if (stmt === normalize(UPDATE_BOOKING)) {
+    const [date, totalAmountCents, accountId, note, id] = values as (
+      | string
+      | number
+      | null
+    )[];
+    const row = state.bookings.get(String(id));
+    if (!row) {
+      return; // SQLite: 0 Zeilen, kein Fehler
+    }
+    row.date = String(date);
+    row.total_amount_cents = Number(totalAmountCents);
+    row.account_id = String(accountId);
+    row.note = note === null || note === undefined ? null : String(note);
+    return;
+  }
+  if (stmt === normalize(DELETE_BOOKING)) {
+    const id = String(values[0]);
+    const dependentSplits = [...state.splits.values()].filter(
+      (s) => s.booking_id === id,
+    );
+    if (state.foreignKeys && dependentSplits.length > 0) {
+      throw new Error(
+        `SQLITE_CONSTRAINT_FOREIGNKEY: FOREIGN KEY constraint failed: splits.booking_id → bookings.id (${id})`,
+      );
+    }
+    if (!state.bookings.has(id)) {
+      return; // SQLite: 0 Zeilen, kein Fehler
+    }
+    state.bookings.delete(id);
+    if (state.foreignKeys) {
+      // ON DELETE CASCADE (Design D2): Splits fallen mit der Buchung.
+      for (const split of dependentSplits) {
+        state.splits.delete(split.id);
+      }
+    }
+    return;
+  }
+  // ── Batch B: Splits ───────────────────────────────────────────────────
+  if (stmt === normalize(INSERT_SPLIT)) {
+    const [
+      id,
+      bookingId,
+      amountCents,
+      poolId,
+      categoryId,
+      note,
+      taxRelevant,
+      taxCategoryId,
+      taxCategoryName,
+      markedAmountCents,
+      taxNote,
+    ] = values as (string | number | null)[];
+    for (const [column, value] of [
+      ['booking_id', bookingId],
+      ['amount_cents', amountCents],
+      ['pool_id', poolId],
+      ['category_id', categoryId],
+    ] as const) {
+      if (value === null || value === undefined) {
+        throw new Error(
+          `SQLITE_CONSTRAINT_NOTNULL: NOT NULL constraint failed: splits.${column}`,
+        );
+      }
+    }
+    if (state.foreignKeys && !state.bookings.has(String(bookingId))) {
+      throw new Error(
+        `SQLITE_CONSTRAINT_FOREIGNKEY: FOREIGN KEY constraint failed: splits.booking_id → bookings.id (${String(bookingId)})`,
+      );
+    }
+    if (state.splits.has(String(id))) {
+      throw constraintError('splits', 'id', String(id));
+    }
+    state.splits.set(String(id), {
+      id: String(id),
+      booking_id: String(bookingId),
+      amount_cents: Number(amountCents),
+      pool_id: String(poolId),
+      category_id: String(categoryId),
+      note: note === null || note === undefined ? null : String(note),
+      tax_relevant:
+        taxRelevant === null || taxRelevant === undefined
+          ? null
+          : Number(taxRelevant),
+      tax_category_id:
+        taxCategoryId === null || taxCategoryId === undefined
+          ? null
+          : String(taxCategoryId),
+      tax_category_name:
+        taxCategoryName === null || taxCategoryName === undefined
+          ? null
+          : String(taxCategoryName),
+      marked_amount_cents:
+        markedAmountCents === null || markedAmountCents === undefined
+          ? null
+          : Number(markedAmountCents),
+      tax_note: taxNote === null || taxNote === undefined ? null : String(taxNote),
+    });
+    return;
+  }
+  if (stmt === normalize(DELETE_SPLITS)) {
+    const bookingId = String(values[0]);
+    for (const [id, row] of [...state.splits]) {
+      if (row.booking_id === bookingId) {
+        state.splits.delete(id);
+      }
+    }
+    return;
+  }
+  // ── Batch B: Outbox (Design D4) ───────────────────────────────────────
+  if (stmt === OUTBOX_STATEMENTS.insert) {
+    const [
+      operationId,
+      deviceId,
+      type,
+      bookingId,
+      payload,
+      payloadHash,
+      expectedBaseRevision,
+      status,
+      createdAtUtc,
+      updatedAtUtc,
+    ] = values as (string | number | null)[];
+    if (state.outbox.has(String(operationId))) {
+      throw constraintError('outbox', 'operation_id', String(operationId));
+    }
+    if (state.foreignKeys && !state.bookings.has(String(bookingId))) {
+      throw new Error(
+        `SQLITE_CONSTRAINT_FOREIGNKEY: FOREIGN KEY constraint failed: outbox.booking_id → bookings.id (${String(bookingId)})`,
+      );
+    }
+    state.outbox.set(String(operationId), {
+      operation_id: String(operationId),
+      device_id: String(deviceId),
+      type: String(type),
+      booking_id: String(bookingId),
+      payload: String(payload),
+      payload_hash: String(payloadHash),
+      expected_base_revision:
+        expectedBaseRevision === null || expectedBaseRevision === undefined
+          ? null
+          : Number(expectedBaseRevision),
+      status: String(status),
+      created_at_utc: String(createdAtUtc),
+      updated_at_utc: String(updatedAtUtc),
+    });
+    return;
+  }
+  if (stmt === OUTBOX_STATEMENTS.updateModify) {
+    const [payload, payloadHash, updatedAtUtc, operationId] =
+      values as (string | number)[];
+    const row = state.outbox.get(String(operationId));
+    if (!row) {
+      return; // SQLite: 0 Zeilen, kein Fehler
+    }
+    row.payload = String(payload);
+    row.payload_hash = String(payloadHash);
+    row.updated_at_utc = String(updatedAtUtc);
+    return;
+  }
+  if (stmt === OUTBOX_STATEMENTS.updateConfirm) {
+    const [updatedAtUtc, operationId] = values as string[];
+    const row = state.outbox.get(String(operationId));
+    if (!row) {
+      return; // SQLite: 0 Zeilen, kein Fehler
+    }
+    row.status = 'confirmed';
+    row.updated_at_utc = String(updatedAtUtc);
+    return;
+  }
+  if (stmt === normalize(UPDATE_OUTBOX_PAYLOAD)) {
+    const [payload, payloadHash, updatedAtUtc, operationId, status] =
+      values as (string | number)[];
+    const row = state.outbox.get(String(operationId));
+    // WHERE operation_id = ? AND status = ? → sonst 0 Zeilen (kein Fehler).
+    if (!row || row.status !== String(status)) {
+      return;
+    }
+    row.payload = String(payload);
+    row.payload_hash = String(payloadHash);
+    row.updated_at_utc = String(updatedAtUtc);
+    return;
+  }
+  if (stmt === OUTBOX_STATEMENTS.delete) {
+    state.outbox.delete(String(values[0]));
+    return;
+  }
+  // ── Batch B: Entwürfe ─────────────────────────────────────────────────
+  if (stmt === normalize(UPSERT_DRAFT)) {
+    const [id, name, data, createdAtUtc, updatedAtUtc] =
+      values as (string | null)[];
+    const existing = state.drafts.get(String(id));
+    if (existing) {
+      // Upsert: created_at_utc bleibt erhalten.
+      existing.name = String(name);
+      existing.data = String(data);
+      existing.updated_at_utc = String(updatedAtUtc);
+    } else {
+      state.drafts.set(String(id), {
+        id: String(id),
+        name: String(name),
+        data: String(data),
+        created_at_utc: String(createdAtUtc),
+        updated_at_utc: String(updatedAtUtc),
+      });
+    }
+    return;
+  }
+  if (stmt === normalize(DELETE_DRAFT)) {
+    state.drafts.delete(String(values[0]));
+    return;
+  }
   throw new Error(
-    `capacitor-sqlite-fake: executeSet unterstützt das Statement nicht (Batch A): ${statement}`,
+    `capacitor-sqlite-fake: executeSet unterstützt das Statement nicht: ${statement}`,
+  );
+}
+
+/**
+ * Query auswerten. Unbekannte Statements werfen (Batch B: lautes
+ * Scheitern statt leeres Ergebnis), damit Specs nie still leer laufen.
+ */
+function runQuery(state: StateTables, statement: string, values: unknown[]): unknown[] {
+  const stmt = normalize(statement);
+  const v = (index: number): string => String(values[index]);
+  // Batch A: FK-Status.
+  if (stmt.startsWith('PRAGMA foreign_keys')) {
+    return [{ foreign_keys: state.foreignKeys ? 1 : 0 }];
+  }
+  if (stmt === META_STATEMENTS.select) {
+    const value = state.meta.get(v(0));
+    return value === undefined ? [] : [{ value }];
+  }
+  // ── Batch B: Buchungen/Splits ─────────────────────────────────────────
+  if (stmt === normalize(SELECT_BOOKING_LIST)) {
+    // ORDER BY date DESC, created_at_utc DESC — created_at_utc stammt
+    // aus der Quellzeile (im JOIN-Ziel nicht selektiert).
+    const sourceRows = [...state.bookings.values()].sort(
+      (a, b) =>
+        b.date.localeCompare(a.date) ||
+        b.created_at_utc.localeCompare(a.created_at_utc) ||
+        b.id.localeCompare(a.id),
+    );
+    return sourceRows.map((b) => {
+      let outboxStatus: string | null = null;
+      for (const o of state.outbox.values()) {
+        if (o.booking_id === b.id) {
+          outboxStatus = o.status;
+          break;
+        }
+      }
+      return {
+        id: b.id,
+        date: b.date,
+        total_amount_cents: b.total_amount_cents,
+        account_id: b.account_id,
+        note: b.note,
+        outbox_status: outboxStatus,
+      };
+    });
+  }
+  if (stmt === normalize(SELECT_BOOKING_BY_ID)) {
+    const row = state.bookings.get(v(0));
+    return row === undefined ? [] : [row];
+  }
+  if (stmt === normalize(SELECT_SPLITS_BY_BOOKING)) {
+    const rows = [...state.splits.values()]
+      .filter((s) => s.booking_id === v(0))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    return rows;
+  }
+  // ── Batch B: Outbox ───────────────────────────────────────────────────
+  if (stmt === OUTBOX_STATEMENTS.selectByOperation) {
+    const row = state.outbox.get(v(0));
+    return row === undefined ? [] : [row];
+  }
+  if (stmt === normalize(SELECT_OUTBOX_BY_BOOKING)) {
+    const rows: { operation_id: string; status: string }[] = [];
+    for (const row of state.outbox.values()) {
+      if (row.booking_id === v(0)) {
+        rows.push({ operation_id: row.operation_id, status: row.status });
+      }
+    }
+    return rows;
+  }
+  if (stmt === OUTBOX_STATEMENTS.selectAll) {
+    const rows = [...state.outbox.values()].sort(
+      (a, b) =>
+        b.created_at_utc.localeCompare(a.created_at_utc) ||
+        b.operation_id.localeCompare(a.operation_id),
+    );
+    return rows;
+  }
+  if (stmt === OUTBOX_STATEMENTS.selectCounts) {
+    let queued = 0;
+    let confirmed = 0;
+    let total = 0;
+    for (const row of state.outbox.values()) {
+      total += 1;
+      if (row.status === 'queued') {
+        queued += 1;
+      } else if (row.status === 'confirmed') {
+        confirmed += 1;
+      }
+    }
+    return [{ queued, confirmed, total }];
+  }
+  // ── Batch B: Entwürfe ─────────────────────────────────────────────────
+  if (stmt === normalize(SELECT_DRAFT_BY_ID)) {
+    const row = state.drafts.get(v(0));
+    return row === undefined ? [] : [row];
+  }
+  if (stmt === normalize(SELECT_DRAFTS)) {
+    const rows = [...state.drafts.values()].sort(
+      (a, b) =>
+        b.updated_at_utc.localeCompare(a.updated_at_utc) ||
+        b.id.localeCompare(a.id),
+    );
+    return rows;
+  }
+  throw new Error(
+    `capacitor-sqlite-fake: query unterstützt das Statement nicht: ${statement}`,
   );
 }
 
@@ -170,6 +693,9 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
   return {
     CapacitorSQLite: {
       async createConnection(options: { database: string; readonly?: boolean }) {
+        if (dbState.failOnCreateConnection) {
+          throw new Error('simulated connection failure');
+        }
         const key = (options.readonly ? 'RO_' : 'RW_') + options.database;
         if (dbState.connections.has(key)) {
           throw new Error(`Connection ${options.database} already exists`);
@@ -191,7 +717,8 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
        * Pflichtfeld (Android: getJSONArray wirft ohne es). Standard:
        * ALLES-ODER-NICHTS (transaction: true) — Snapshot, dann alle
        * Sets anwenden; bei einem Fehler Snapshot wiederherstellen und
-       * werfen. Mit `transaction: false` läuft jedes Statement sofort.
+       * werfen (kein Teilzustand). Mit `transaction: false` läuft
+       * jedes Statement sofort (keine All-or-Nothing-Garantie).
        */
       async executeSet(options: {
         database: string;
@@ -217,25 +744,41 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
           }
         }
         const inTransaction = options.transaction !== false;
-        if (inTransaction) {
-          // Anwendungsphase mit Snapshot für die Rückabwicklung.
-          const metaBefore = new Map(dbState.meta);
-          const schemaBefore = dbState.schemaStatementsExecuted;
-          try {
-            for (const set of options.set) {
-              applySet(dbState, set, true);
+        const snapshot = inTransaction
+          ? {
+              meta: new Map(dbState.meta),
+              bookings: new Map(
+                [...dbState.bookings].map(([key, row]) => [key, { ...row }]),
+              ),
+              splits: new Map(
+                [...dbState.splits].map(([key, row]) => [key, { ...row }]),
+              ),
+              outbox: new Map(
+                [...dbState.outbox].map(([key, row]) => [key, { ...row }]),
+              ),
+              drafts: new Map(
+                [...dbState.drafts].map(([key, row]) => [key, { ...row }]),
+              ),
+              schemaStatementsExecuted: dbState.schemaStatementsExecuted,
             }
-          } catch (error) {
-            dbState.meta = metaBefore;
-            dbState.schemaStatementsExecuted = schemaBefore;
-            throw error;
+          : null;
+        try {
+          for (let index = 0; index < options.set.length; index += 1) {
+            if (dbState.failOnStatementIndex === index) {
+              throw new Error('simulated failure');
+            }
+            applySet(dbState, options.set[index], inTransaction);
           }
-        } else {
-          // transaction: false — jedes Statement wirkt sofort
-          // (keine All-or-Nothing-Garantie, echte SQLite-Semantik).
-          for (const set of options.set) {
-            applySet(dbState, set, false);
+        } catch (error) {
+          if (snapshot) {
+            dbState.meta = snapshot.meta;
+            dbState.bookings = snapshot.bookings;
+            dbState.splits = snapshot.splits;
+            dbState.outbox = snapshot.outbox;
+            dbState.drafts = snapshot.drafts;
+            dbState.schemaStatementsExecuted = snapshot.schemaStatementsExecuted;
           }
+          throw error;
         }
         dbState.executedSets.push({
           database: options.database,
@@ -262,15 +805,7 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
         if (!conn.opened) {
           throw new Error(`database ${options.database} not opened`);
         }
-        // Batch-A-Stützfläche: Meta-Abfragen + FK-Status (D2a).
-        if (options.statement.includes('PRAGMA foreign_keys')) {
-          return { values: [{ foreign_keys: dbState.foreignKeys ? 1 : 0 }] };
-        }
-        if (options.statement.includes('SELECT value FROM meta')) {
-          const value = dbState.meta.get(String(options.values[0]));
-          return { values: value === undefined ? [] : [{ value }] };
-        }
-        return { values: [] };
+        return { values: runQuery(dbState, options.statement, options.values) };
       },
       async run(options: {
         database: string;
@@ -292,7 +827,7 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
         if (!conn.opened) {
           throw new Error(`database ${options.database} not opened`);
         }
-        // Batch A: keine weiteren run()-Statements erwartet.
+        applySet(dbState, { statement: options.statement, values: options.values }, true);
       },
     },
   };

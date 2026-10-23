@@ -132,3 +132,65 @@ export function selectMetaSet(key: string): SqlSet {
     values: [key],
   };
 }
+
+// Batch B — Buchungen, Splits, Outbox, Entwürfe (Design D2/D4/D7)
+
+/** Neue lokale Buchung (Design D2: `base_revision` lokal null). */
+export const INSERT_BOOKING =
+  'INSERT INTO bookings (id, date, type, account_id, total_amount_cents, note, base_revision, created_at_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+
+/** Fachdaten einer Buchung ersetzen (Splits getrennt, Outbox getrennt). */
+export const UPDATE_BOOKING =
+  'UPDATE bookings SET date = ?, total_amount_cents = ?, account_id = ?, note = ? WHERE id = ?';
+
+/** Buchung löschen (Splits fallen im echten SQLite über ON DELETE CASCADE; der Fake modelliert das bei `foreignKeys: true` explizit). */
+export const DELETE_BOOKING = 'DELETE FROM bookings WHERE id = ?';
+
+/** Split an eine Buchung anhängen (`ON DELETE CASCADE` zu bookings). */
+export const INSERT_SPLIT =
+  'INSERT INTO splits (id, booking_id, amount_cents, pool_id, category_id, note, tax_relevant, tax_category_id, tax_category_name, marked_amount_cents, tax_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+
+/** Alle Splits einer Buchung löschen (vor UPDATE/DELETE der Buchung). */
+export const DELETE_SPLITS = 'DELETE FROM splits WHERE booking_id = ?';
+
+/** Eingaben-Liste mit Outbox-Status (kein Outbox-Zeile → null/unknown). */
+export const SELECT_BOOKING_LIST =
+  'SELECT b.id, b.date, b.total_amount_cents, b.account_id, b.note, o.status AS outbox_status FROM bookings b LEFT JOIN outbox o ON o.booking_id = b.id ORDER BY b.date DESC, b.created_at_utc DESC';
+
+/** Buchung laden (alle Spalten). */
+export const SELECT_BOOKING_BY_ID =
+  'SELECT id, date, type, account_id, total_amount_cents, note, base_revision, created_at_utc FROM bookings WHERE id = ?';
+
+/** Splits einer Buchung in Positionsreihenfolge (id-Präfix codiert die Position). */
+export const SELECT_SPLITS_BY_BOOKING =
+  'SELECT id, amount_cents, pool_id, category_id, note, tax_relevant, tax_category_id, tax_category_name, marked_amount_cents, tax_note FROM splits WHERE booking_id = ? ORDER BY id';
+
+/** Neue Outbox-Zeile (Design D4: status `queued`, `expected_base_revision` null). */
+export const INSERT_OUTBOX =
+  'INSERT INTO outbox (operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, created_at_utc, updated_at_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+
+/** Outbox-Zeile einer Buchung (operation_id + status). */
+export const SELECT_OUTBOX_BY_BOOKING =
+  'SELECT operation_id, status FROM outbox WHERE booking_id = ?';
+
+/** Payload+Hash einer noch queued Outbox-Zeile ersetzen (sonst 0 Zeilen). */
+export const UPDATE_OUTBOX_PAYLOAD =
+  'UPDATE outbox SET payload = ?, payload_hash = ?, updated_at_utc = ? WHERE operation_id = ? AND status = ?';
+
+/** Outbox-Zeile löschen (wirkt nichts, wenn sie fehlt). */
+export const DELETE_OUTBOX = 'DELETE FROM outbox WHERE operation_id = ?';
+
+/** Entwurf anlegen oder ersetzen (created_at_utc bleibt bei bestehendem Entwurf erhalten). */
+export const UPSERT_DRAFT =
+  'INSERT INTO drafts (id, name, data, created_at_utc, updated_at_utc) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, data = excluded.data, updated_at_utc = excluded.updated_at_utc';
+
+/** Entwurf laden. */
+export const SELECT_DRAFT_BY_ID =
+  'SELECT id, name, data, created_at_utc, updated_at_utc FROM drafts WHERE id = ?';
+
+/** Alle Entwürfe, zuletzt aktualisierte zuerst. */
+export const SELECT_DRAFTS =
+  'SELECT id, name, data, created_at_utc, updated_at_utc FROM drafts ORDER BY updated_at_utc DESC, id DESC';
+
+/** Entwurf löschen (wirkt nichts, wenn er fehlt). */
+export const DELETE_DRAFT = 'DELETE FROM drafts WHERE id = ?';
