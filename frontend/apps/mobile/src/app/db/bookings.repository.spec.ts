@@ -8,7 +8,7 @@ import {
 } from './capacitor-sqlite-fake';
 import { LocalDatabase } from './local-database';
 import { MetaService } from './meta.service';
-import { DEVICE_ID_META_KEY, OutboxService } from './outbox';
+import { DEVICE_ID_META_KEY } from './bookings.repository';
 import {
   BookingsRepository,
   BookingStateError,
@@ -119,7 +119,6 @@ const SAMPLE_INPUT: LocalExpenseInput = {
 describe('BookingsRepository.save (Batch B, Design D7)', () => {
   let db: LocalDatabase;
   let meta: MetaService;
-  let outbox: OutboxService;
   let repo: BookingsRepository;
 
   /** Anzahl der executeSet-Batches nach App-Start (init + device.id). */
@@ -129,12 +128,11 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
     dbState.reset();
     // Eigener Environment-Injector pro Test => frische Singletons.
     const env = createEnvironmentInjector(
-      [LocalDatabase, MetaService, OutboxService, BookingsRepository],
+      [LocalDatabase, MetaService, BookingsRepository],
       TestBed.inject(EnvironmentInjector),
     );
     db = env.get(LocalDatabase);
     meta = env.get(MetaService);
-    outbox = env.get(OutboxService);
     repo = env.get(BookingsRepository);
     // App-Start: Schema-Initialisierung.
     await db.init();
@@ -355,7 +353,7 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
       // App-Neustart: Prozessregister leer, DB-Datei bleibt erhalten.
       dbState.simulateRestart();
       const env2 = createEnvironmentInjector(
-        [LocalDatabase, MetaService, OutboxService, BookingsRepository],
+        [LocalDatabase, MetaService, BookingsRepository],
         TestBed.inject(EnvironmentInjector),
       );
       const db2 = env2.get(LocalDatabase);
@@ -414,7 +412,7 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
       dbState.simulateRestart();
 
       const env2 = createEnvironmentInjector(
-        [LocalDatabase, MetaService, OutboxService, BookingsRepository],
+        [LocalDatabase, MetaService, BookingsRepository],
         TestBed.inject(EnvironmentInjector),
       );
       const db2 = env2.get(LocalDatabase);
@@ -470,7 +468,10 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
 
     it('update/discard auf confirmed Buchung: BookingStateError (not_queued), Daten intakt', async () => {
       const result = await repo.save(SAMPLE_INPUT, FIXED_NOW);
-      await outbox.confirmOutbox(result.operationId);
+      // Status direkt im (Fake-)State auf 'confirmed' setzen — ohne
+      // OutboxService; testet das reale not_queued-Verhalten.
+      const confirmedRow = dbState.outbox.get(result.operationId)!;
+      confirmedRow.status = 'confirmed';
       const bookingBefore = { ...dbState.bookings.get(result.bookingId)! };
 
       await expect(

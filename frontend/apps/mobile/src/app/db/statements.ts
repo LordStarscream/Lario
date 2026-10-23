@@ -91,7 +91,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     operation_id TEXT PRIMARY KEY,
     device_id TEXT NOT NULL,
     type TEXT NOT NULL,
-    booking_id TEXT NOT NULL,
+    booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
     payload TEXT NOT NULL,
     payload_hash TEXT NOT NULL,
     expected_base_revision INTEGER,
@@ -143,7 +143,7 @@ export const INSERT_BOOKING =
 export const UPDATE_BOOKING =
   'UPDATE bookings SET date = ?, total_amount_cents = ?, account_id = ?, note = ? WHERE id = ?';
 
-/** Buchung löschen (Splits fallen im echten SQLite über ON DELETE CASCADE; der Fake modelliert das bei `foreignKeys: true` explizit). */
+/** Buchung löschen (Splits fallen immer mit der Buchung — ON DELETE CASCADE; der Fake modelliert das immer, unabhängig vom FK-Status). */
 export const DELETE_BOOKING = 'DELETE FROM bookings WHERE id = ?';
 
 /** Split an eine Buchung anhängen (`ON DELETE CASCADE` zu bookings). */

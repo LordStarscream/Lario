@@ -1,7 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { LocalDatabase } from './local-database';
 import { MetaService } from './meta.service';
-import { OutboxService } from './outbox';
 import {
   OP_SEQ_META_KEY,
   formatBookingId,
@@ -31,6 +30,27 @@ import {
   upsertMetaSet,
 } from './statements';
 
+/** Meta-Key der stabilen Geräte-ID (Design D1; UUIDv4). */
+export const DEVICE_ID_META_KEY = 'device.id';
+
+/**
+ * UUIDv4 (Muster `app/sqlite.service.ts`): `crypto.randomUUID()` im
+ * Android-WebView (HTTPS-Kontext); Fallback über
+ * `crypto.getRandomValues`, dadurch auf jedem Pfad verfügbar.
+ */
+function newId(): string {
+  const cryptoObj = globalThis.crypto;
+  if (cryptoObj?.randomUUID) {
+    return cryptoObj.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  cryptoObj.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // Version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // Variant 10
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /**
  * Lokales Buchungs-Repository (Schritt 8, Batch B, Design D2/D5/D7).
  *
@@ -44,7 +64,7 @@ import {
  * werden innerhalb derselben Kette gelesen/geschrieben, dadurch
  * erzeugen parallele Aufrufe keine doppelten Operation-IDs oder
  * abweichenden Geräte-IDs. Die Anlage der `device.id` (einmalig,
- * stabil) läuft in `OutboxService.getOrCreateDeviceId` — ein eigener
+ * stabil) läuft in der lokalen Methode `getOrCreateDeviceId` — ein eigener
  * atomarer Meta-Batch VOR dem Haupt-Batch; sie gehört nicht zum
  * D7-Batch (Buchung + Splits + Outbox + Zähler).
  *
@@ -230,7 +250,6 @@ export class BookingsRepository {
   // Batch-A-Konvention).
   private readonly db = inject(LocalDatabase);
   private readonly meta = inject(MetaService);
-  private readonly outbox = inject(OutboxService);
 
   /**
    * Serialisiert den Read-Modify-Write-Zyklus von `save` (Zähler lesen
@@ -264,6 +283,22 @@ export class BookingsRepository {
     return operation;
   }
 
+  /**
+   * Stabile Geräte-ID lesen bzw. einmalig anlegen (Design D1; `device.id`,
+   * UUIDv4). `save` ruft diese innerhalb der `saveChain` auf — die Anlage
+   * (ein `meta`-Upsert) ist dadurch gegen parallele erste Saves serialisiert.
+   * Der Upsert ist idempotent.
+   */
+  private async getOrCreateDeviceId(): Promise<string> {
+    const existing = await this.meta.get(DEVICE_ID_META_KEY);
+    if (existing !== null) {
+      return existing;
+    }
+    const deviceId = newId();
+    await this.meta.set(DEVICE_ID_META_KEY, deviceId);
+    return deviceId;
+  }
+
   private async doSave(
     input: LocalExpenseInput,
     now: Date,
@@ -271,7 +306,7 @@ export class BookingsRepository {
     validateExpense(input);
     // Gerät-ID sicherstellen (einmalig, stabil; innerhalb der
     // saveChain serialisiert — kein Race beim ersten parallelen Save).
-    const deviceId = await this.outbox.getOrCreateDeviceId();
+    const deviceId = await this.getOrCreateDeviceId();
     const seq = parseOpSeq(await this.meta.get(OP_SEQ_META_KEY));
     const bookingId = formatBookingId(seq, now.getTime());
     const operationId = formatOperationId(now, seq);

@@ -2,8 +2,10 @@ import type { SqlSet } from './statements';
 import {
   DELETE_BOOKING,
   DELETE_DRAFT,
+  DELETE_OUTBOX,
   DELETE_SPLITS,
   INSERT_BOOKING,
+  INSERT_OUTBOX,
   INSERT_SPLIT,
   SELECT_BOOKING_BY_ID,
   SELECT_BOOKING_LIST,
@@ -213,27 +215,6 @@ function normalize(statement: string): string {
   return statement.replace(/\s+/g, ' ').trim();
 }
 
-/**
- * Normalisierte Statementtexte der privat in outbox.ts definierten
- * Outbox-Statements (kein Import möglich: outbox.ts → local-database.ts
- * → CapacitorSQLite, also kreisförmig).
- */
-const OUTBOX_STATEMENTS = {
-  insert:
-    'INSERT INTO outbox (operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, created_at_utc, updated_at_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  selectByOperation:
-    'SELECT operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, created_at_utc, updated_at_utc FROM outbox WHERE operation_id = ?',
-  updateModify:
-    'UPDATE outbox SET payload = ?, payload_hash = ?, updated_at_utc = ? WHERE operation_id = ?',
-  updateConfirm:
-    "UPDATE outbox SET status = 'confirmed', updated_at_utc = ? WHERE operation_id = ?",
-  selectAll:
-    'SELECT operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, created_at_utc, updated_at_utc FROM outbox ORDER BY created_at_utc DESC, operation_id DESC',
-  selectCounts:
-    "SELECT SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued, SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed, COUNT(*) AS total FROM outbox",
-  delete: 'DELETE FROM outbox WHERE operation_id = ?',
-} as const;
-
 /** Normalisierte Meta-Statements (entsprechen den statements.ts-Hilfen). */
 const META_STATEMENTS = {
   upsert:
@@ -361,22 +342,14 @@ function applySet(
   }
   if (stmt === normalize(DELETE_BOOKING)) {
     const id = String(values[0]);
-    const dependentSplits = [...state.splits.values()].filter(
-      (s) => s.booking_id === id,
-    );
-    if (state.foreignKeys && dependentSplits.length > 0) {
-      throw new Error(
-        `SQLITE_CONSTRAINT_FOREIGNKEY: FOREIGN KEY constraint failed: splits.booking_id → bookings.id (${id})`,
-      );
-    }
     if (!state.bookings.has(id)) {
       return; // SQLite: 0 Zeilen, kein Fehler
     }
     state.bookings.delete(id);
-    if (state.foreignKeys) {
-      // ON DELETE CASCADE (Design D2): Splits fallen mit der Buchung.
-      for (const split of dependentSplits) {
-        state.splits.delete(split.id);
+    // ON DELETE CASCADE (Design D2): Splits fallen immer mit der Buchung.
+    for (const [splitId, split] of [...state.splits]) {
+      if (split.booking_id === id) {
+        state.splits.delete(splitId);
       }
     }
     return;
@@ -453,7 +426,7 @@ function applySet(
     return;
   }
   // ── Batch B: Outbox (Design D4) ───────────────────────────────────────
-  if (stmt === OUTBOX_STATEMENTS.insert) {
+  if (stmt === normalize(INSERT_OUTBOX)) {
     const [
       operationId,
       deviceId,
@@ -491,28 +464,6 @@ function applySet(
     });
     return;
   }
-  if (stmt === OUTBOX_STATEMENTS.updateModify) {
-    const [payload, payloadHash, updatedAtUtc, operationId] =
-      values as (string | number)[];
-    const row = state.outbox.get(String(operationId));
-    if (!row) {
-      return; // SQLite: 0 Zeilen, kein Fehler
-    }
-    row.payload = String(payload);
-    row.payload_hash = String(payloadHash);
-    row.updated_at_utc = String(updatedAtUtc);
-    return;
-  }
-  if (stmt === OUTBOX_STATEMENTS.updateConfirm) {
-    const [updatedAtUtc, operationId] = values as string[];
-    const row = state.outbox.get(String(operationId));
-    if (!row) {
-      return; // SQLite: 0 Zeilen, kein Fehler
-    }
-    row.status = 'confirmed';
-    row.updated_at_utc = String(updatedAtUtc);
-    return;
-  }
   if (stmt === normalize(UPDATE_OUTBOX_PAYLOAD)) {
     const [payload, payloadHash, updatedAtUtc, operationId, status] =
       values as (string | number)[];
@@ -526,7 +477,7 @@ function applySet(
     row.updated_at_utc = String(updatedAtUtc);
     return;
   }
-  if (stmt === OUTBOX_STATEMENTS.delete) {
+  if (stmt === normalize(DELETE_OUTBOX)) {
     state.outbox.delete(String(values[0]));
     return;
   }
@@ -614,10 +565,6 @@ function runQuery(state: StateTables, statement: string, values: unknown[]): unk
     return rows;
   }
   // ── Batch B: Outbox ───────────────────────────────────────────────────
-  if (stmt === OUTBOX_STATEMENTS.selectByOperation) {
-    const row = state.outbox.get(v(0));
-    return row === undefined ? [] : [row];
-  }
   if (stmt === normalize(SELECT_OUTBOX_BY_BOOKING)) {
     const rows: { operation_id: string; status: string }[] = [];
     for (const row of state.outbox.values()) {
@@ -626,28 +573,6 @@ function runQuery(state: StateTables, statement: string, values: unknown[]): unk
       }
     }
     return rows;
-  }
-  if (stmt === OUTBOX_STATEMENTS.selectAll) {
-    const rows = [...state.outbox.values()].sort(
-      (a, b) =>
-        b.created_at_utc.localeCompare(a.created_at_utc) ||
-        b.operation_id.localeCompare(a.operation_id),
-    );
-    return rows;
-  }
-  if (stmt === OUTBOX_STATEMENTS.selectCounts) {
-    let queued = 0;
-    let confirmed = 0;
-    let total = 0;
-    for (const row of state.outbox.values()) {
-      total += 1;
-      if (row.status === 'queued') {
-        queued += 1;
-      } else if (row.status === 'confirmed') {
-        confirmed += 1;
-      }
-    }
-    return [{ queued, confirmed, total }];
   }
   // ── Batch B: Entwürfe ─────────────────────────────────────────────────
   if (stmt === normalize(SELECT_DRAFT_BY_ID)) {
