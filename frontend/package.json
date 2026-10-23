@@ -11,7 +11,7 @@
     "watch": "ng build host --watch --configuration development",
     "test": "ng test host && ng test mobile",
     "lint": "ng lint host && ng lint mobile",
-    "generate:client": "curl -sf http://localhost:8080/openapi/v1.json -o openapi.json && openapi --input openapi.json --output apps/host/src/generated --client fetch --useUnionTypes"
+    "generate:client": "curl -sf http://localhost:8080/openapi/v1.json -o openapi.json && openapi --input openapi.json --output apps/host/src/generated --client fetch --useUnionTypes && openapi --input openapi.json --output apps/mobile/src/generated --client fetch --useUnionTypes"
   },
   "private": true,
   "packageManager": "npm@12.2.0",
@@ -34,6 +34,7 @@
     "@angular/compiler-cli": "^22.2.0",
     "@capacitor/cli": "^8.5.3",
     "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
     "angular-eslint": "22.5.0",
     "eslint": "^10.9.1",
     "jsdom": "^30.0.0",

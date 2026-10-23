@@ -6,5 +6,8 @@
     "types": []
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.spec.ts"]
+  "exclude": [
+    "src/**/*.spec.ts",
+    "src/app/db/capacitor-sqlite-fake.ts"
+  ]
 }
