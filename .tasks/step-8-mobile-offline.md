@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (Commit `abc521b`, PR #16 offen) · Last updated: 23. Okt. 2026_
+_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang + P3-Doku, verifiziert 24.10. (PR #16 offen) · Last updated: 24. Okt. 2026_
 
 **Branches:**
 - Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
@@ -187,6 +187,26 @@ Cascade, Update-auf-confirmed, Unique operation_id, Splits-Ersatz) + DDL
 outbox.booking_id `REFERENCES bookings(id) ON DELETE CASCADE`. **Checks:**
 lint host+mobile grün, 225 Tests (host 130 + mobile 95), build:mobile grün.
 Keine Host-App-/Domain-Änderung, keine Produktivserver-URL.
+
+**P3-Positionen der Review (24.10. abgeschlossen):**
+- **P3-1 (Fake-Fidelity + irreführender Kommentar):** behoben durch `abc521b`
+      — der Fake cascadiert bei `DELETE_BOOKING` jetzt immer (statt RESTRICT
+      zu werfen); Kommentar in `statements.ts` berichtigt.
+- **P3-2 (`tsconfig.spec.json`, außerhalb der Spec-Dateiliste):** berechtigte,
+      minimale Abweichung — `+node`-Types nur für die Typprüfung der
+      `node:crypto`/`node:sqlite`-Specs; kein Runtime-Effekt, keine
+      Dependency.
+- **P3-3 (`local-database.spec.ts` geändert statt erweitert):** berechtigt —
+      Mock-Hoisting-Fix (Deferred-Closure), echtes TDZ-Problem mit dem
+      größeren Batch-B-Fake.
+- **P3-4 (info):** Die Spec-Abnahmekommandos nannten nicht existierende
+      Scripts; die Worker-Claims wurden im Review-Worktree selbst bestätigt.
+
+**Verifikation 24.10. (frischer Worktree auf `abc521b`):** `npm ci`,
+`npm run lint` (host+mobile) grün, `npm run test` 225 Tests grün (host 130 +
+mobile 95), `npm run build:mobile` grün. Branch anschließend auf main
+gebracht (Task-Doku-Konflikt: Main-Version behalten) — PR #16 ist jetzt
+mergekonfliktfrei.
 
 ## Batch C — Snapshot + Setup (P3)
 
