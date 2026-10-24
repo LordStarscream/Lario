@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { TestBed } from '@angular/core/testing';
 import { CapacitorSQLite } from '@capacitor-community/sqlite';
-import { capacitorSqliteMockFactory, dbState } from './capacitor-sqlite-fake';
+import { capacitorSqliteMockFactory, dbState, type CapacitorSqliteMock } from './capacitor-sqlite-fake';
 import { LocalDatabase } from './local-database';
 import { MetaService } from './meta.service';
 import { SCHEMA_STATEMENTS } from './statements';
@@ -10,7 +10,31 @@ vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => true },
 }));
 
-vi.mock('@capacitor-community/sqlite', capacitorSqliteMockFactory);
+// Das Mocker-Hoisting setzt diesen Aufruf ueber alle Import-Konstanten der
+// Spec; die Factory laeuft, wenn das gemockte Modul zuerst importiert wird —
+// das passiert innerhalb des geteilten esbuild-Chunks (Fake + LocalDatabase)
+// VOR der Initialisierung der Import-Konstanten der Spec. Die Factory darf
+// daher KEINE Import-Referenzen unmittelbar loesen: Sie erzeugt nur das
+// Objekt, die Fake-Referenz wird erst bei tatsaechlichem Methodenaufruf
+// (in den Tests) geloest.
+vi.mock('@capacitor-community/sqlite', () => {
+  const mock = () => capacitorSqliteMockFactory().CapacitorSQLite;
+  return {
+    CapacitorSQLite: {
+      createConnection: (
+        opts: Parameters<CapacitorSqliteMock['createConnection']>[0],
+      ) => mock().createConnection(opts),
+      open: (opts: Parameters<CapacitorSqliteMock['open']>[0]) =>
+        mock().open(opts),
+      executeSet: (opts: Parameters<CapacitorSqliteMock['executeSet']>[0]) =>
+        mock().executeSet(opts),
+      query: (opts: Parameters<CapacitorSqliteMock['query']>[0]) =>
+        mock().query(opts),
+      run: (opts: Parameters<CapacitorSqliteMock['run']>[0]) =>
+        mock().run(opts),
+    } satisfies CapacitorSqliteMock,
+  };
+});
 
 describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
   beforeEach(() => {
