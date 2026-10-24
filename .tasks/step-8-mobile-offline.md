@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv — Batch B fertig · Last updated: 23. Okt. 2026_
+_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (Commit `abc521b`, PR #16 offen) · Last updated: 23. Okt. 2026_
 
 **Branches:**
 - Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
@@ -156,84 +156,88 @@ Meta-Helfer), `generated-client.spec.ts` (Import-Check).
 Prüfungen: `npm run lint` grün; `npm run test`: host 14 Dateien/130 Tests, mobile
 5 Dateien/46 Tests; `npm run build:mobile` grün. Plan-Abnahme (h) damit abgedeckt.
 
-## Batch B — Outbox + Buchungs-Speicher (P2) — fertig (23. Okt. 2026)
+## Batch B — Outbox + Buchungs-Speicher (P2) — fertig (inkl. P2-Nachgang)
+
+_Worktree `/tmp/lario-step8b`, Branch `step/8b-mobile-outbox`, vollständige Vorgabe:
+`.tasks/worker-step8b-task.md` (Implementierung, Commit `ad9e945`) +
+`.tasks/worker-step8b-p2fix.md` (P2-Nachgang, Commit `abc521b`). PR #16 offen.
+Checks: `npm run lint`/`test`/`build:mobile` (aus `frontend/`)._
 
 - [x] SHA-256 in TS (reine Implementierung) + NIST-Referenzvektoren +
       deterministischer Payload-Hash `sha256:<hex>`
 - [x] operationId-Generator (`op-<JJJJ>-<MMDD>-<seq>`, persistierter monotoner Zähler,
       kein Reset über Neustart) + Tests
 - [x] `BookingsRepository`: speichern (eine `executeSet`-Transaktion: Buchung +
-      Splits + Operation + Zähler), ändern (nur queued), verwerfen (nur queued,
-      Cascade), laden (Liste + Detail mit Outbox-Status), `DraftsRepository`
+      Splits + Outbox-Zeile + Zähler), ändern (nur queued), verwerfen (nur queued,
+      Cascade), laden (Liste + Detail mit Outbox-Status), `DraftsRepository`,
+      `getOrCreateDeviceId` lokal
 - [x] Fake um `executeSet` mit Transaktions-/Constraint-Semantik erweitern
 - [x] Service-Tests: 20 Ausgaben + Neustart-Persistenz; Doppeltippen → 1 Eingabe;
       Verwerfen → Outbox leer; ungültig → weder `bookings` noch `outbox`;
       Abbruch beim 2. Statement → kein Teilzustand
 
-Ergebnis (alle in `frontend/apps/mobile/src/app/db/`):
-- `sha256.ts` (reine TS-Implementierung, keine WebCrypto/Secure-Context-
-  Abhängigkeit) + `sha256.spec.ts` (NIST-Referenzvektoren, inkl. der
-  56-Byte-Grenze und deterministischer Längen-Verdopplungs-Blöcke);
-  `payloadHash()` liefert `sha256:<64-hex>`.
-- `operation-id.ts`: `formatOperationId` (`op-<JJJJ>-<MMDD>-<seq>`, 3-stellige
-  seq), `parseOpSeq` (persistierter Zähler aus `meta` `outbox.op_seq`, Start 1),
-  `formatBookingId` (`bk-<seq>-<epoch-ms>`), `formatSplitId`
-  (`<bookingId>-<n>`, kanonisch) + `operation-id.spec.ts` (Format, Monotonie,
-  kein Tages-Reset, 3-stellige Breite ab seq 1000).
-- `expense-payload.ts`: `buildExpensePayload(bookingId, input)` — exakt
-  `ExpenseCommand`-Shape, feste Schlüsselreihenfolge, kein Whitespace,
-  `expectedBaseRevision: null`, `markedAmount: tax?.markedAmountCents ??
-  amountCents` (null wird deterministisch normalisiert) +
-  `expense-payload.spec.ts` (Byte-exakte Payload, Hash-Stabilität,
-  Tax-Null-Handling, Split-Reihenfolge).
-- `outbox.ts`: `OutboxService` — `getOrCreateDeviceId` (UUIDv4, einmalig in
-  `meta` `device.id`), `modifyOutbox` (nur queued; Payload/Hash/updated_at
-  ersetzen, gleiche operation_id), `confirmOutbox` (nur queued, idempotent),
-  `deleteOutbox` (nur queued, idempotent), `listOutbox`/`countOutbox`/
-  `getOutboxEntry` + `outbox.spec.ts` (Status-Guards, Idempotenz, Sortierung).
-- `bookings.repository.ts`: `BookingsRepository` — `save` (Validierung vor
-  Transaktion; Buchung + Splits + Outbox + Zähler in EINEM `executeSet`;
-  `saveChain` serialisiert parallele Saves → eindeutige Operation-IDs),
-  `update`/`discard` (nur queued, `BookingStateError` not_found/not_queued),
-  `list`/`get` (mit Outbox-Status), `validateExpense` (D7: Summe = Total exakt,
-  Betrag > 0, max. 13 Stellen, Referenzen, Steuerregeln) +
-  `bookings.repository.spec.ts` (Abnahmen (a),(b),(c),(d),(e),(i),(k) unten;
-  Batch-Zusammensetzung 5 Statements, parallele Saves, 20 Ausgaben + Neustart,
-  All-or-Nothing bei Statement-Fehlern, fehlendes Plugin).
-- `drafts.repository.ts`: `DraftsRepository` (B7: `save` als Upsert —
-  createdAt bleibt erhalten, `get`/`list`/`delete`) + `drafts.repository.spec.ts`.
-- `capacitor-sqlite-fake.ts` (B8): modelliert jetzt `bookings`/`splits`/
-  `outbox`/`drafts` mit exaktem Statement-Matching (Constants aus
-  `statements.ts`), All-or-Nothing je transaktionaler Batch (Snapshot +
-  Restore), `failOnStatementIndex` (Test-Option), `failOnCreateConnection`
-  (Test-Option: simuliert fehlendes Plugin) und die Batch-A-Statements
-  (`DELETE FROM meta` parameterlos = alle Zeilen, wie SQLite).
-- `local-database.spec.ts`: vi.mock-Factory auf Lazy-Muster umgestellt
-  (Hoisting-konform, identisch in allen Specs); `tsconfig.spec.json`: `node`-
-  Types für die node:sqlite-Spec.
-
-Abdeckungsstand der Batch-B-Abnahmen (in `bookings.repository.spec.ts` +
-`outbox.spec.ts`):
-- (a) 20 Ausgaben inkl. Splits → Neustart (frisches Prozessregister) → alle
-      20 + Splits + Outbox `queued`; Zähler monoton (nächste = seq 21).
-- (b) Parallele/doppelte Saves: eindeutige Operation-IDs, keine PK-Kollision
-      (UI-Doppeltipp-Sperre `saving` kommt in Batch D als DOM-Test).
-- (c) `discard` (queued): Buchung + Splits + Outbox-Zeile weg, Zähler bleibt.
-- (d) Ungültige Eingabe (Splitsummendefizit): `BookingValidationError`,
-      weder in `bookings` noch in `outbox` (vollständige D7-Matrix in Batch D
-      mit Formular-UX; Repository-Guard hier getestet).
-- (e) `failOnStatementIndex` 2 und 3: Rollback, kein Teilzustand (Buchung,
-      Splits, Outbox, Zähler); fehlendes Plugin: init/save werfen, keine Zeilen.
-- (f) SHA-256 NIST + Payload-Hash-Format in `sha256.spec.ts`/`expense-payload.spec.ts`.
-- (g) operationIds: Format, Eindeutigkeit, Monotonie über Neustart in
-      `operation-id.spec.ts` + Repository-Tests.
-- (i) Repository/Outbox enthalten KEIN Netzwerk (kein import des Host-Clients);
-      der explizite „keine Host-Call“-Test folgt in Batch C mit dem HostClient.
-
-Prüfungen: `npm run lint` (host + mobile) grün; `npm run test`: host 14
-Dateien/130 Tests, mobile 11 Dateien/101 Tests; `npm run build:mobile` grün.
+**Ergebnis (23.10.2026):** 17 Dateien (sha256/operation-id/expense-payload/
+bookings+drafts-Repositories + Fake-Erweiterung), Commit `ad9e945`.
+**Unabhängige Review:** Kern B1–B4 ✅ keine Befunde; Speicher B5–B10 → 2×P2, 3×P3,
+kein P1. **P2-Nachgang (Commit `abc521b`, Option A — Nutzerentscheidung 23.10.):**
+P2-1 OutboxService (outbox.ts/outbox.spec.ts) entfernt — toter Code + paralleler
+Mutationspfad; getOrCreateDeviceId ins Repository; Fake-Cascade immer an.
+P2-2 B10 auf echter SQLite (schema.spec.ts, 5 Fälle: Atomarität/Outbox-FK,
+Cascade, Update-auf-confirmed, Unique operation_id, Splits-Ersatz) + DDL
+outbox.booking_id `REFERENCES bookings(id) ON DELETE CASCADE`. **Checks:**
+lint host+mobile grün, 225 Tests (host 130 + mobile 95), build:mobile grün.
+Keine Host-App-/Domain-Änderung, keine Produktivserver-URL.
 
 ## Batch C — Snapshot + Setup (P3)
+
+_Design-Fakten (verifiziert 23.10., Host-Seite):_
+- **Login:** `POST /api/v1/auth/login` `{username, password}` → 200
+  `{token, expiresInMinutes}` / 401 `ErrorResponse{error:{code:'unauthorized',…}}`
+  (`src/Lario.Host/Api/AuthEndpoints.cs`). **Logout:** `POST /api/v1/auth/logout`
+  (Bearer) → 204. **Health:** `GET /api/health` → `{status:'ok', dataDirectory}`
+  (`Program.cs:158`).
+- **Stammdaten:** `GET /api/v1/accounts|pools|categories|tax-categories`
+  (`MasterDataEndpoints.cs`), Bearer-Token. DTOs (`MasterDataDtos.cs`):
+  `AccountDto{id,name,type('bank'|'savings'),isInterestBearing(bool),
+  status('active'|'archived'),baseRevision}`; `PoolDto{id,name,status,
+  baseRevision}`; `CategoryDto{id,name,parentId?,status,baseRevision,
+  taxPreset?}`; `TaxCategoryDto{id,name,parentId?,status,baseRevision}`;
+  `TaxPresetDto{taxRelevant? (bool|null), taxCategoryId?, taxCategoryName?,
+  inheritToChildren(bool), baseRevision}`. Enumerations als stabile Strings.
+- **Generierter Client** (`apps/mobile/src/generated`): `LarioHostService.
+  authLogin(LoginRequest)/authLogout()/getHealth()`; `MasterDataEndpointsService.
+  listAccounts()/listPools()/listCategories()/listTaxCategories()`; `OpenAPI.
+  BASE`/`OpenAPI.TOKEN` zur Laufzeit setzen (D9).
+- **Snapshot-Schema (Batch A, fertig):** `accounts(id,name,type,
+  is_interest_bearing INTEGER,status,base_revision)`, `pools(id,name,status,
+  base_revision)`, `categories(id,name,parent_id,status,base_revision,
+  tax_preset_json TEXT)`, `tax_categories(id,name,parent_id,status,
+  base_revision)` — passt 1:1 zu den DTOs; `tax_preset_json` =
+  `JSON.stringify(TaxPresetDto)` oder NULL.
+- **Mapping DTO→DB (exakt, verifiziert in `src/generated/models/`):**
+  Feldnamen camelCase→snake_case (`parentId→parent_id`, `baseRevision→
+  base_revision`, `isInterestBearing→is_interest_bearing` als 0/1).
+  `baseRevision` ist `number | string` → beim INSERT mit `Number(...)`
+  normalisieren. `CategoryDto.taxPreset` heißt exakt `taxPreset` (Typ
+  `null | TaxPresetDto`) → `tax_preset_json`. `isInterestBearing` ist `boolean`
+  → 0/1. `OpenAPI.BASE` (Default `http://localhost:8080`) und `OpenAPI.TOKEN`
+  sind mutable statische Felder in `src/generated/configuration/OpenAPI.ts` —
+  bei connect vor den Calls setzen, bei disconnect `TOKEN=undefined`.
+- **Device-ID:** UUIDv4-Hilfsfunktion (Muster `app/sqlite.service.ts:170-180`:
+  `crypto.randomUUID()` mit `crypto.getRandomValues`-Fallback); Key
+  `device.id` in meta, einmalig generiert, stabil.
+- **Meta-Keys (Setup):** `device.id`, `auth.host`, `auth.username`,
+  `auth.password` (D3 „lokal gemerkt“ — Doku-Limitation: Klartext in der
+  lokalen Geräte-DB), `auth.expires_at` (UTC-ISO, aus `expiresInMinutes`),
+  `snapshot.fetched_at` (UTC-ISO, via SnapshotRepository).
+- **Fluss `connect(host, user, pass)`:** login → Token → 4× list parallel
+  (Promise.all) → `SnapshotRepository.replace()` (EINE executeSet: 4× DELETE +
+  alle INSERT + `snapshot.fetched_at`) → auth.* + expires meta setzen.
+  **`disconnect()`:** best-effort `authLogout` (Fehler nicht fatal),
+  auth.*-Meta löschen, Snapshot bleibt (Offline-Erfassung bleibt möglich, D8).
+- **Form-Referenzen:** Formular filtert auf `status='active'` (D2); Steuer:
+  D7 verlangt am FORM relevant→Steuerkategorie Pflicht (strenger als Host;
+  Repository-B6 bleibt bei der Host-Regel: Kategorie optional bei relevant).
 
 - [ ] `HostClient` (login → Token; GET accounts/pools/categories/tax-categories;
       health) auf Basis des generierten Clients, `OpenAPI.BASE`/`TOKEN` konfigurierbar
