@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (Commit `abc521b`, PR #16 offen) · Last updated: 23. Okt. 2026_
+_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (`abc521b`) + Transaktions-Nachgang (`f0ef94c`, PR #16 offen) · Last updated: 26. Okt. 2026_
 
 **Branches:**
 - Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
@@ -187,6 +187,34 @@ Cascade, Update-auf-confirmed, Unique operation_id, Splits-Ersatz) + DDL
 outbox.booking_id `REFERENCES bookings(id) ON DELETE CASCADE`. **Checks:**
 lint host+mobile grün, 225 Tests (host 130 + mobile 95), build:mobile grün.
 Keine Host-App-/Domain-Änderung, keine Produktivserver-URL.
+
+**Transaktions-Nachgang (26.10.2026, Commit `f0ef94c`, Review-Worktree):**
+`LocalDatabase.withWriteTransaction` — native Schreibtransaktion
+(BEGIN IMMEDIATE → Callback → COMMIT, bei Fehler ROLLBACK, kein
+Teilzustand). Schreiboperationen (`executeSet`, `withWriteTransaction`)
+werden auf der Connection-Operations-Kette serialisiert: eine offene
+Transaktion hält die Connection, andere Schreibzugriffe warten bis nach
+COMMIT/ROLLBACK. Leseoperationen (`query`) laufen außerhalb der Kette;
+auf derselben Connection ist der Zustand der offenen Transaktion
+sichtbar. Der Transaktions-Callback erhält Query-/Write-Methoden auf
+derselben Connection ohne eigene automatische Transaktion
+(`transaction: false`, keine Verschachtelung).
+`BookingsRepository.getOrCreateDeviceId`: Read-Check-Write
+(SELECT→UPSERT) in einer atomaren Schreibtransaktion — kein TOCTOU-
+Fenster (zuvor: `meta.get` + `meta.set` als zwei getrennte
+Transaktionen, nur durch die `saveChain`-Serialisierung geschützt).
+Fake: manuelle Transaktionsunterstützung (Snapshot beim BEGIN,
+Restore beim ROLLBACK, Rollback uncommitteter Transaktion in
+`simulateRestart`, Verschachtelungs-Schutz gegen `executeSet`-
+Transaktionen). **Motivation:** Schritt 9 (Sync) braucht Read-Check-
+Write-Atomarität mit Statuswächtern auf der Outbox (Review P2-1 hatte
+den parallelen Mutationspfad ohne SQL-Statuswächter als Divergenz-Risiko
+benannt); die Geräte-ID ohne TOCTOU; Fundament für Batches C–E.
+8 neue Tests (Serialisierung, COMMIT/ROLLBACK, Sichtbarkeit uncommitteter
+Schreibzugriffe auf derselben Connection, Fehlertoleranz der Operations-
+Kette) + Test-Isolation (`afterEach restoreAllMocks`). **Checks:**
+lint grün, 233 Tests (host 130 + mobile 103), build:mobile grün,
+gepusht 26.10.2026 (PR #16 aktualisiert).
 
 ## Batch C — Snapshot + Setup (P3)
 
