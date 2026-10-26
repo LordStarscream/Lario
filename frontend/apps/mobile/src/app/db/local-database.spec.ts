@@ -5,7 +5,9 @@ import { capacitorSqliteMockFactory, dbState, type CapacitorSqliteMock } from '.
 import { LocalDatabase } from './local-database';
 import { MetaService } from './meta.service';
 import {
+  DELETE_BOOKING,
   INSERT_BOOKING,
+  INSERT_OUTBOX,
   INSERT_SPLIT,
   SCHEMA_STATEMENTS,
   SELECT_BOOKING_BY_ID,
@@ -62,6 +64,8 @@ const INSERT_META_SQL =
   'ON CONFLICT(key) DO UPDATE SET value = excluded.value';
 const INSERT_BOOKING_SQL = INSERT_BOOKING;
 const INSERT_SPLIT_SQL = INSERT_SPLIT;
+const INSERT_OUTBOX_SQL = INSERT_OUTBOX;
+const DELETE_BOOKING_SQL = DELETE_BOOKING;
 
 describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
   beforeEach(() => {
@@ -520,6 +524,40 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
         (c[0].set as { values?: unknown[] }[]).some((s) => s.values?.[0] === 'nottx'),
       );
       expect(callbackCall?.[0].transaction).toBe(false);
+    });
+  });
+
+  describe('Batch B: DELETE_BOOKING-Cascade (Fake, Option A Review B10)', () => {
+    it('löscht Splits und Outbox-Zeilen mit der Buchung (ON DELETE CASCADE)', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const bookingId = 'bk-cascade-1';
+      const opId = `op-${bookingId}`;
+      await db.executeSet([
+        {
+          statement: INSERT_BOOKING_SQL,
+          values: [bookingId, '2026-05-01', 'expense', 'acc-1', 300, null, null, '2026-05-01T10:00:00Z'],
+        },
+        {
+          statement: INSERT_SPLIT_SQL,
+          values: [`spl-${bookingId}`, bookingId, 300, 'pool-1', 'cat-1', null, 0, null, null, null, null],
+        },
+        {
+          statement: INSERT_OUTBOX_SQL,
+          values: [opId, 'dev-1', 'expense', bookingId, '{"v":1}', 'h', null, 'queued', '2026-05-01T10:00:00Z', '2026-05-01T10:00:00Z'],
+        },
+      ]);
+      expect(await db.query(SELECT_BOOKING_BY_ID, [bookingId])).toHaveLength(1);
+      expect(await db.query(SELECT_SPLITS_BY_BOOKING, [bookingId])).toHaveLength(1);
+      expect(dbState.outbox.get(opId)).toBeDefined();
+
+      // DELETE_BOOKING ohne DELETE_SPLITS/DELETE_OUTBOX (Fidelity-Fix):
+      await db.executeSet([{ statement: DELETE_BOOKING_SQL, values: [bookingId] }]);
+
+      // ON DELETE CASCADE in der DDL: Splits und Outbox-Zeile folgen.
+      expect(await db.query(SELECT_BOOKING_BY_ID, [bookingId])).toEqual([]);
+      expect(await db.query(SELECT_SPLITS_BY_BOOKING, [bookingId])).toEqual([]);
+      expect(dbState.outbox.has(opId)).toBe(false);
     });
   });
 

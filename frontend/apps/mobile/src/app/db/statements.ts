@@ -26,9 +26,9 @@ export interface SqlSet {
 
 /**
  * Komplettes Batch-A-Schema: alle Tabellen exakt mit den Spalten aus
- * Design D2. `splits.booking_id` referenziert `bookings(id)` mit
- * ON DELETE CASCADE — wirksam nur, weil `init()` zusätzlich
- * `PRAGMA foreign_keys = ON` setzt (Design D2a).
+ * Design D2. `splits.booking_id` und `outbox.booking_id` referenzieren
+ * `bookings(id)` mit ON DELETE CASCADE — wirksam nur, weil `init()`
+ * zusätzlich `PRAGMA foreign_keys = ON` setzt (Design D2a).
  */
 export const SCHEMA_STATEMENTS: string[] = [
   `CREATE TABLE IF NOT EXISTS meta (
@@ -143,7 +143,7 @@ export const INSERT_BOOKING =
 export const UPDATE_BOOKING =
   'UPDATE bookings SET date = ?, total_amount_cents = ?, account_id = ?, note = ? WHERE id = ?';
 
-/** Buchung löschen (Splits fallen immer mit der Buchung — ON DELETE CASCADE; der Fake modelliert das immer, unabhängig vom FK-Status). */
+/** Buchung löschen (Splits und Outbox-Zeilen fallen immer mit der Buchung — ON DELETE CASCADE; der Fake modelliert beide Cascades immer, unabhängig vom FK-Status). */
 export const DELETE_BOOKING = 'DELETE FROM bookings WHERE id = ?';
 
 /** Split an eine Buchung anhängen (`ON DELETE CASCADE` zu bookings). */

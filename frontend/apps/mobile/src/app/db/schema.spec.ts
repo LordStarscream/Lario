@@ -321,13 +321,18 @@ describe('Batch-A-Schema (echte SQLite via node:sqlite)', () => {
       expect(count(db, 'outbox')).toBe(0);
     });
 
-    it('(2) Cascade: DELETE_BOOKING ohne DELETE_SPLITS löscht abhängige Splits', () => {
+    it('(2) Cascade: DELETE_BOOKING löscht abhängige Splits und Outbox-Zeilen', () => {
       initSchema(db);
       insertBookingWithSplits('bk-2', 300, [200, 100]);
+      runScript(db, [
+        { statement: INSERT_OUTBOX, values: ['op-2', 'dev-1', 'expense', 'bk-2', '{"v":1}', 'h', null, 'queued', TS, TS] },
+      ]);
       expect(count(db, 'splits')).toBe(2);
+      expect(count(db, 'outbox')).toBe(1);
       db.prepare(DELETE_BOOKING).run('bk-2');
       expect(count(db, 'bookings')).toBe(0);
       expect(count(db, 'splits')).toBe(0);
+      expect(count(db, 'outbox')).toBe(0);
     });
 
     it('(3) UPDATE_OUTBOX_PAYLOAD auf confirmed: 0 Zeilen, Zeile unverändert', () => {

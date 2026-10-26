@@ -87,8 +87,8 @@ import {
  * - PRIMARY KEY/UNIQUE: INSERT mit bestehendem Key wirft
  *   `SQLITE_CONSTRAINT_PRIMARYKEY`.
  * - FOREIGN KEY: INSERT_SPLIT/INSERT_OUTBOX mit fehlender
- *   Referenzbuchung wirft; DELETE_BOOKING mit verbleibenden Splits
- *   wirft (sonst: ON DELETE CASCADE entfernt die Splits).
+ *   Referenzbuchung wirft. DELETE_BOOKING cascade-t immer: Splits
+ *   und Outbox-Zeilen fallen mit der Buchung (Option A, Review B10).
  * - NOT NULL: NULL-Wert in einer NOT NULL-Spalte wirft.
  * - UPDATE/DELETE ohne Treffer ist ein no-op (0 Zeilen), wie SQLite.
  *
@@ -443,6 +443,13 @@ function applySet(
     for (const [splitId, split] of [...state.splits]) {
       if (split.booking_id === id) {
         state.splits.delete(splitId);
+      }
+    }
+    // ON DELETE CASCADE (outbox.booking_id → bookings.id): Outbox-
+    // Zeilen fallen immer mit der Buchung (Option A, Review B10).
+    for (const [operationId, outboxRow] of [...state.outbox]) {
+      if (outboxRow.booking_id === id) {
+        state.outbox.delete(operationId);
       }
     }
     return;
