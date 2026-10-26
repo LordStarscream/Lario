@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (`abc521b`) + Transaktions-Nachgang (`f0ef94c`/`9a7ab6e`) + P3-Nachgang (`3ef7e8d`) + P1/P2-Nachgang R4 (`a1f2640`, `60295ea`), PR #16 offen (gepushed) · Last updated: 26. Okt. 2026_
+_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (`abc521b`) + Transaktions-Nachgang (`f0ef94c`/`9a7ab6e`) + P3-Nachgang (`3ef7e8d`) + P1/P2-Nachgang R4 (`a1f2640`, `60295ea`) + Pflichtreferenz-Nachgang (`4a77890`), PR #16 offen (gepushed) · Last updated: 26. Okt. 2026_
 
 **Branches:**
 - Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
@@ -288,6 +288,15 @@ _Design-Fakten (verifiziert 23.10., Host-Seite):_
 - **Form-Referenzen:** Formular filtert auf `status='active'` (D2); Steuer:
   D7 verlangt am FORM relevant→Steuerkategorie Pflicht (strenger als Host;
   Repository-B6 bleibt bei der Host-Regel: Kategorie optional bei relevant).
+- **Split-Pool/Kategorie (Folgeprüfung, P2-Review `abc521b`):** Batch B
+  (`4a77890`) referenziert `split.poolId`/`split.categoryId` bereits als
+  Pflicht (leer/leerzeichenig → `invalid_pool`/`invalid_category`, save+update,
+  vor jeder Transaktion; IDs werden NICHT still getrimmt/ersetzt). Die Prüfung
+  auf **Existenz + Status `active`** gegen den Host-Stammdaten-Snapshot gehört
+  hierher (Batch C), weil die lokale App die Stammdaten erst per
+  Snapshot-Anbindung kennt (D3) und ohne Snapshot ohnehin keine Erfassung
+  möglich ist (D8). Referenz-Existenz/Archivierung dort als Repository-
+  Invariante prüfen (nicht nur Formular-Filter).
 
 - [ ] `HostClient` (login → Token; GET accounts/pools/categories/tax-categories;
       health) auf Basis des generierten Clients, `OpenAPI.BASE`/`TOKEN` konfigurierbar
@@ -296,6 +305,11 @@ _Design-Fakten (verifiziert 23.10., Host-Seite):_
 - [ ] Einrichtung-View: Host-URL/Zugangsdaten, „Verbinden & Stammdaten laden“,
       Geräte-ID, Snapshot-Stand, Health-Prüfung, Abmelden (Host-Logout + Token löschen)
 - [ ] Tests: Snapshot-Wechsel atomar; Token-Flow; Abmeldung
+- [ ] **Folgeprüfung aus P2-Review (`abc521b`):** Split-`poolId`/`categoryId`
+      auf Existenz + Status `active` gegen Snapshot prüfen (Repository-Invariante
+      in save/update, Fehlergrund z. B. `unknown_pool`/`archived_pool`/
+      `unknown_category`/`archived_category`); Test: unbekannte und
+      archivierter Pool/Kategorie → `BookingValidationError`, nichts geschrieben
 
 ## Batch D — Ausgabeformular (P4)
 
