@@ -92,7 +92,7 @@ describe('buildExpensePayload (Design B3)', () => {
     expect(payload).toContain('"tax":null');
   });
 
-  it('tax ohne relevant: relevant=false, taxCategoryId null, voller Splitbetrag', () => {
+  it('tax ohne relevant: relevant=false, taxCategoryId null, markedAmount null (TaxMarking.ValidateSelf)', () => {
     const withNotRelevant = {
       ...input,
       splits: [
@@ -109,10 +109,13 @@ describe('buildExpensePayload (Design B3)', () => {
       ],
     };
     const parsed = JSON.parse(buildExpensePayload('bk-001-abc', withNotRelevant));
+    // Domain-Regel (maßgeblich): ein nicht relevanter Teilposten trägt
+    // keinen gekennzeichneten Teilbetrag — der Host würde `markedAmount
+    // != null` bei `!relevant` verwerfen (LarioDomainException).
     expect(parsed.splits[0].tax).toEqual({
       relevant: false,
       taxCategoryId: null,
-      markedAmount: 1730,
+      markedAmount: null,
       note: null,
     });
   });

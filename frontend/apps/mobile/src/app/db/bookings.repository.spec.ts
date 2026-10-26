@@ -499,4 +499,84 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
       expect(dbState.outbox.size).toBe(1);
     });
   });
+
+  describe('(l) Steuerkennzeichnung: Payload und DB (P1-Nachgang)', () => {
+    it('save mit !relevant-Kennzeichnung: markedAmount null in Payload UND DB-Spalte (TaxMarking.ValidateSelf)', async () => {
+      const input: LocalExpenseInput = {
+        ...SAMPLE_INPUT,
+        totalAmountCents: 2500,
+        splits: [
+          {
+            ...SAMPLE_INPUT.splits[0]!,
+            tax: {
+              relevant: false,
+              taxCategoryId: null,
+              taxCategoryName: null,
+              markedAmountCents: null,
+              note: null,
+            },
+          },
+        ],
+      };
+      const result = await repo.save(input, FIXED_NOW);
+
+      // Host-Vertrag: !relevant → kein Teilbetrag (sonst wirft der Host
+      // die Operation im Sync ab).
+      const parsed = JSON.parse(
+        dbState.outbox.get(result.operationId)!.payload,
+      ) as {
+        splits: {
+          tax: {
+            relevant: boolean;
+            taxCategoryId: string | null;
+            markedAmount: number | null;
+            note: string | null;
+          };
+        }[];
+      };
+      expect(parsed.splits[0]!.tax).toEqual({
+        relevant: false,
+        taxCategoryId: null,
+        markedAmount: null,
+        note: null,
+      });
+
+      // Lokale DB: dieselbe Regel (Anzeigekonsistenz, Batch E).
+      const splitRow = [...dbState.splits.values()].find(
+        (s) => s.booking_id === result.bookingId,
+      )!;
+      expect(splitRow.tax_relevant).toBe(0);
+      expect(splitRow.marked_amount_cents).toBeNull();
+    });
+
+    it('save mit relevant-Kennzeichnung und markedAmountCents null: Normalisierung auf Splitbetrag (Payload UND DB)', async () => {
+      const input: LocalExpenseInput = {
+        ...SAMPLE_INPUT,
+        totalAmountCents: 2000,
+        splits: [
+          {
+            ...SAMPLE_INPUT.splits[1]!,
+            tax: {
+              relevant: true,
+              taxCategoryId: 'tax-1',
+              taxCategoryName: 'Steuer A',
+              markedAmountCents: null,
+              note: null,
+            },
+          },
+        ],
+      };
+      const result = await repo.save(input, FIXED_NOW);
+
+      const parsed = JSON.parse(
+        dbState.outbox.get(result.operationId)!.payload,
+      ) as { splits: { tax: { markedAmount: number | null } }[] };
+      expect(parsed.splits[0]!.tax.markedAmount).toBe(2000);
+
+      const splitRow = [...dbState.splits.values()].find(
+        (s) => s.booking_id === result.bookingId,
+      )!;
+      expect(splitRow.marked_amount_cents).toBe(2000);
+    });
+  });
 });

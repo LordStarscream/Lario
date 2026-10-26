@@ -19,8 +19,12 @@
  * - `expectedBaseRevision` ist bei Neuanlage immer `null` (Key vorhanden,
  *   Wert null) — die mobile Anlage kennt noch keine Host-Revision.
  * - Beträge sind Ganzzahl-Centwerte als JSON-Nummern (keine Strings).
- * - `markedAmount`: `tax.markedAmountCents ?? amountCents` — null wird
- *   normalisiert auf den Splitbetrag (deterministisch für den Hash).
+ * - `markedAmount` (Domain-Regel `Lario.Domain/Journal/TaxMarking.cs`,
+ *   maßgeblich): bei `relevant` — `tax.markedAmountCents ?? amountCents`
+ *   (null wird auf den Splitbetrag normalisiert, deterministisch für den
+ *   Hash); bei `!relevant` — immer `null` (ein nicht relevanter
+ *   Teilposten trägt keinen gekennzeichneten Teilbetrag; `null` bleibt
+ *   `null` im Payload).
  * - `tax: null` bleibt `null` im Payload (kein leeres Objekt).
  * - `date`/`totalAmount`/`accountId`/`note` kommen direkt aus `input`.
  */
@@ -33,7 +37,7 @@ export interface LocalTaxInput {
   taxCategoryId: string | null;
   /** Nur lokales DB-Feld (kein Payload-Teil): Name für die Anzeige. */
   taxCategoryName: string | null;
-  /** null = gesamter Splitbetrag markiert (Standard). */
+  /** null = gesamter Splitbetrag markiert (Standard, nur bei relevant). */
   markedAmountCents: number | null;
   note: string | null;
 }
@@ -75,8 +79,11 @@ export function buildExpensePayload(
         : {
             relevant: split.tax.relevant,
             taxCategoryId: split.tax.taxCategoryId,
-            // null = gesamter Splitbetrag markiert (B3-Regel).
-            markedAmount: split.tax.markedAmountCents ?? split.amountCents,
+            // relevant: null = gesamter Splitbetrag markiert (B3-Regel);
+            // !relevant: immer null (TaxMarking.ValidateSelf).
+            markedAmount: split.tax.relevant
+              ? (split.tax.markedAmountCents ?? split.amountCents)
+              : null,
             note: split.tax.note,
           };
     // Feste Schlüsselreihenfolge (B3): id, amount, poolId, categoryId,

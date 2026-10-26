@@ -519,8 +519,11 @@ function normalizeSplitIds(
 /**
  * Split-Values für INSERT_SPLIT (Spaltenreihenfolge aus statements.ts).
  * `tax: null` bleibt NULL in den Kennzeichnungs-Spalten (Host
- * materialisiert die Voreinstellung); `markedAmountCents: null` wird
- * auf den Splitbetrag normalisiert (deterministisch, Design D2).
+ * materialisiert die Voreinstellung). `markedAmountCents` (Domain-Regel
+ * `TaxMarking.ValidateSelf`, maßgeblich): bei `relevant` wird null auf
+ * den Splitbetrag normalisiert (deterministisch, Design D2); bei
+ * `!relevant` bleibt NULL — ein nicht relevanter Teilposten trägt
+ * keinen gekennzeichneten Teilbetrag.
  */
 function splitInsertValues(
   split: LocalSplitInput,
@@ -537,7 +540,7 @@ function splitInsertValues(
     tax ? (tax.relevant ? 1 : 0) : null,
     tax?.taxCategoryId ?? null,
     tax?.taxCategoryName ?? null,
-    tax ? (tax.markedAmountCents ?? split.amountCents) : null,
+    tax ? (tax.relevant ? (tax.markedAmountCents ?? split.amountCents) : null) : null,
     tax?.note ?? null,
   ];
 }
