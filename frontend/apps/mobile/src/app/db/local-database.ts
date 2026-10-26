@@ -55,6 +55,23 @@ import { SCHEMA_STATEMENTS, type SqlSet } from './statements';
  * COMMIT/ROLLBACK. Leseoperationen (`query`) bleiben außerhalb der
  * Kette: Auf derselben Connection sehen sie den Zustand der offenen
  * Transaktion ohnehin.
+ *
+ * Transaktionssteuerung (Review-Befund P1, 3. Runde): `withWrite-
+ * Transaction` nutzt die nativen Plugin-Methoden
+ * `beginTransaction`/`commitTransaction`/`rollbackTransaction` —
+ * KEINE Steuer-Statements (`BEGIN …`/`COMMIT`/`ROLLBACK`) per
+ * `run()`. Grund: `run()`/`executeSet()` haben laut Plugin-Vertrag
+ * 8.1.1 den Default `transaction: true` („Enable / Disable
+ * transactions, default Enable“) — das Plugin startet EIGENS eine
+ * Transaktion vor dem Statement. Ein `BEGIN` per `run()` ohne
+ * `transaction: false` würde auf Android verschachteln und mit
+ * „cannot start a transaction within a transaction“ fehlschlagen.
+ * Auf Android 8.1.1 entspricht `beginTransaction()`
+ * `SQLiteDatabase.beginTransaction()` (deferred, Write-Lock);
+ * auf der einzigen RW-Connection ist das zu IMMEDIATE äquivalent
+ * (kein konkurrierender Writer). Die Callback-Statements laufen
+ * weiterhin mit `transaction: false` (keine verschachtelte
+ * Plugin-Transaktion).
  */
 @Injectable({ providedIn: 'root' })
 export class LocalDatabase {
@@ -212,10 +229,15 @@ export class LocalDatabase {
   }
 
   /**
-   * Native Schreibtransaktion (Review-Befund P2, Batch B):
-   * BEGIN IMMEDIATE → Callback → COMMIT; bei Fehler ROLLBACK
-   * (kein Teilzustand).
+   * Native Schreibtransaktion (Review-Befund P2, Batch B; P1, 3. Runde):
+   * beginTransaction → Callback → commitTransaction; bei Fehler
+   * rollbackTransaction (kein Teilzustand).
    *
+   * - Nativen Plugin-Transaktionsmethoden, keine Steuer-Statements per
+   *   `run()`: `run()` hat den Plugin-Default `transaction: true`
+   *   (das Plugin startet selbst eine Transaktion) — ein `BEGIN` per
+   *   `run()` würde auf Android verschachteln und fehlschlagen (P1).
+   *   Siehe Klassen-Doku „Transaktionssteuerung“.
    * - Die gesamte Callback-Dauer hält die Connection (Operations-Kette);
    *   andere Schreiboperationen warten bis nach COMMIT/ROLLBACK.
    * - Der Callback erhält Query-/Write-Methoden auf derselben Connection;
@@ -232,11 +254,8 @@ export class LocalDatabase {
   ): Promise<T> {
     return this.serialize(async () => {
       await this.init();
-      await CapacitorSQLite.run({
+      await CapacitorSQLite.beginTransaction({
         database: LocalDatabase.DbName,
-        statement: 'BEGIN IMMEDIATE',
-        values: [],
-        readonly: false,
       });
       try {
         const result = await callback({
@@ -244,23 +263,19 @@ export class LocalDatabase {
             this.queryInternal<R>(statement, values ?? []),
           executeSet: (sets: SqlSet[]) => this.executeSetInternal(sets),
         });
-        await CapacitorSQLite.run({
+        await CapacitorSQLite.commitTransaction({
           database: LocalDatabase.DbName,
-          statement: 'COMMIT',
-          values: [],
-          readonly: false,
         });
         return result;
       } catch (error) {
         try {
-          await CapacitorSQLite.run({
+          await CapacitorSQLite.rollbackTransaction({
             database: LocalDatabase.DbName,
-            statement: 'ROLLBACK',
-            values: [],
-            readonly: false,
           });
         } catch {
-          // ROLLBACK-Scheitern verdeckt den Originalfehler nicht.
+          // ROLLBACK-Scheitern verdeckt den Originalfehler nicht
+          // (Android-Contract: rollbackTransaction ist ohne aktive
+          // Transaktion ein no-op — der catch bleibt als Defensive).
         }
         throw error;
       }

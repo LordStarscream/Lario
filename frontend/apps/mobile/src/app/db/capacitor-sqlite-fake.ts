@@ -49,6 +49,35 @@ import {
  *   außerhalb einer Transaktion wirksam ist.
  * - `query()`/`run()` werfen ohne das Pflichtfeld `values` (auch wenn
  *   es ein leeres Array wäre), wie das echte Plugin auf Android.
+ * - `run()`/`executeSet()` modellieren die `transaction`-Option des
+ *   Vertrags 8.1.1 (Default TRUE — verifiziert an der Android-Quelle
+ *   v8.1.1, `CapacitorSQLitePlugin.java`: `call.getBoolean(
+ *   "transaction", true)`, `Database.java` `execute()`/`executeSet()`):
+ *   Das Plugin startet EIGENS eine Transaktion vor den Statements
+ *   (`beginTransaction()`) und committet nachher (`commitTransaction()`);
+ *   bei Fehler rollt es in `finally` zurück (`rollbackTransaction()`
+ *   bei `_db.inTransaction()`). Der Fake spiegelt das per Snapshot
+ *   (All-oder-Nichts). Steuer-Statements per `run()` OHNE
+ *   `transaction: false` fehlschlagen daher (Review-Befund P1,
+ *   3. Runde): `BEGIN …` verschachtelt (SQLite: „cannot start a
+ *   transaction within a transaction“); `COMMIT`/`ROLLBACK` beenden
+ *   die Plugin-Transaktion, worauf die Plugin-eigene
+ *   `commitTransaction()`-Prüfung „No transaction active“ wirft.
+ *   Mit `transaction: false` läuft das Statement direkt; `BEGIN`/
+ *   `COMMIT`/`ROLLBACK` steuern die manuelle Transaktion. `executeSet`
+ *   mit `transaction: false` wendet die Statements sofort an — bei
+ *   Fehler kann ein Teilzustand in der offenen (manuellen)
+ *   Transaktion bleiben (Plugin-Contract, `executeSet` ohne
+ *   begin/rollback); `LocalDatabase` rollt explizit zurück.
+ * - Native Transaktions-Methoden `beginTransaction()`/
+ *   `commitTransaction()`/`rollbackTransaction()`/`isTransactionActive()`
+ *   (Contract 8.1.1, verifiziert an `Database.java` v8.1.1 —
+ *   `beginTransaction` ist eine deferred Write-Transaktion):
+ *   `beginTransaction` mit offener Transaktion wirft „Already in
+ *   transaction“; `commitTransaction` ohne Transaktion wirft „No
+ *   transaction active“; `rollbackTransaction` ohne Transaktion ist
+ *   ein no-op. `LocalDatabase.withWriteTransaction` nutzt diese
+ *   (Review-Befund P1 — keine Steuer-Statements per `run()`).
  *
  * Tabellenspeicher (Batch B, Design D2/D4): `meta`, `bookings`,
  * `splits`, `outbox`, `drafts` plus eine Liste der erfolgreich
@@ -671,7 +700,19 @@ export interface CapacitorSqliteMock {
     transaction?: boolean;
   }): Promise<void>;
   query(options: { database: string; statement: string; values?: unknown[]; readonly?: boolean }): Promise<{ values: unknown[] }>;
-  run(options: { database: string; statement: string; values?: unknown[]; readonly?: boolean }): Promise<void>;
+  run(options: {
+    database: string;
+    statement: string;
+    values?: unknown[];
+    readonly?: boolean;
+    /** Contract 8.1.1: Default true (automatische Plugin-Transaktion). */
+    transaction?: boolean;
+  }): Promise<void>;
+  /** Native Transaktions-Methoden (Contract 8.1.1) — siehe Datei-Doku. */
+  beginTransaction(options: { database: string; readonly?: boolean }): Promise<void>;
+  commitTransaction(options: { database: string; readonly?: boolean }): Promise<void>;
+  rollbackTransaction(options: { database: string; readonly?: boolean }): Promise<void>;
+  isTransactionActive(options: { database: string; readonly?: boolean }): Promise<{ result: boolean }>;
 }
 
 /**
@@ -734,26 +775,36 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
         }
         const inTransaction = options.transaction !== false;
         // Verschachtelungs-Schutz (Review-Befund P2): während eine
-        // manuelle Transaktion (run: BEGIN …) in Fluge ist, ist keine
-        // automatische Transaktion (transaction: true) erlaubt —
-        // SQLite: „cannot start a transaction within a transaction“.
+        // manuelle Transaktion in Fluge ist, ist keine automatische
+        // Transaktion (transaction: true) erlaubt — SQLite: „cannot
+        // start a transaction within a transaction“.
         if (inTransaction && dbState.manualTxActive) {
           throw new Error(
             'cannot start a transaction within a transaction',
           );
         }
+        // PRAGMA foreign_keys wirkt nur außerhalb EINES Transaktions-
+        // Kontexts (SQLite-Semantik): auch eine manuell offene
+        // Transaktion zählt (Konsistenz mit run()).
+        const effectiveTx = inTransaction || dbState.manualTxActive;
         const snapshot = inTransaction ? takeSnapshot(dbState) : null;
         try {
           for (let index = 0; index < options.set.length; index += 1) {
             if (dbState.failOnStatementIndex === index) {
               throw new Error('simulated failure');
             }
-            applySet(dbState, options.set[index], inTransaction);
+            applySet(dbState, options.set[index], effectiveTx);
           }
         } catch (error) {
           if (snapshot) {
             restoreSnapshot(dbState, snapshot);
           }
+          // transaction: false (z. B. in einer manuellen Transaktion):
+          // die Statements wirken sofort — bei Fehler kann ein
+          // Teilzustand in der offenen Transaktion bleiben (Plugin-
+          // Contract 8.1.1: executeSet ohne begin/rollback). Der
+          // Aufrufer (LocalDatabase.withWriteTransaction) rollt
+          // explizit zurück.
           throw error;
         }
         dbState.executedSets.push({
@@ -788,6 +839,7 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
         statement: string;
         values?: unknown[];
         readonly?: boolean;
+        transaction?: boolean;
       }) {
         if (options.values === undefined || !Array.isArray(options.values)) {
           throw new Error('Run: Must provide an Array of values');
@@ -803,15 +855,53 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
         if (!conn.opened) {
           throw new Error(`database ${options.database} not opened`);
         }
-        // Manuelle Schreibtransaktion (Review-Befund P2, Batch B):
-        // BEGIN/COMMIT/ROLLBACK auf der Connection. ROLLBACK stellt den
-        // BEGIN-Snapshot wieder her (kein Teilzustand).
+        // Plugin-Vertrag 8.1.1 (verifiziert an Database.java v8.1.1):
+        // `transaction` default TRUE — das Plugin startet EIGENS eine
+        // Transaktion um das Statement (beginTransaction → Statement →
+        // commitTransaction; bei Fehler finally: rollbackTransaction).
+        // Steuer-Statements per run() OHNE `transaction: false`
+        // fehlschlagen daher (Review-Befund P1, 3. Runde):
+        // - BEGIN: verschachtelt → SQLite-Fehler
+        // - COMMIT/ROLLBACK: das Statement beendet die Plugin-
+        //   Transaktion, dann wirft die Plugin-eigene
+        //   commitTransaction()-Prüfung „No transaction active“
+        const autoTx = options.transaction !== false;
         const txStatement = normalize(options.statement).replace(/;$/, '');
         const isBegin = /^begin(\s+(immediate|deferred|exclusive))?$/i.test(
           txStatement,
         );
         const isCommit = /^commit(\s+transaction)?$/i.test(txStatement);
         const isRollback = /^rollback(\s+transaction)?$/i.test(txStatement);
+        if (autoTx) {
+          if (isBegin) {
+            throw new Error(
+              'cannot start a transaction within a transaction',
+            );
+          }
+          if (isCommit || isRollback) {
+            // Net-Effekt: keine State-Änderung (die Plugin-Transaktion
+            // ist leer), dann Fehler — wie im echten Plugin.
+            throw new Error('No transaction active');
+          }
+          // Daten-Statement: All-oder-Nichts via Snapshot (das echte
+          // Plugin rollt seine Automatik-Transaktion bei Fehler in
+          // finally zurück).
+          const snapshot = takeSnapshot(dbState);
+          try {
+            applySet(
+              dbState,
+              { statement: options.statement, values: options.values },
+              true,
+            );
+          } catch (error) {
+            restoreSnapshot(dbState, snapshot);
+            throw error;
+          }
+          return;
+        }
+        // Manuelle Transaktion (transaction: false): SQLite-Semantik —
+        // ein fehlerhaftes Daten-Statement LÄSST die Transaktion
+        // offen; der Aufrufer (LocalDatabase) rollt explizit zurück.
         if (isBegin) {
           if (dbState.manualTxActive) {
             throw new Error(
@@ -824,7 +914,11 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
         }
         if (isCommit || isRollback) {
           if (!dbState.manualTxActive) {
-            throw new Error('cannot commit - no transaction is active');
+            throw new Error(
+              isCommit
+                ? 'cannot commit - no transaction is active'
+                : 'cannot rollback - no transaction is active',
+            );
           }
           if (isRollback) {
             restoreSnapshot(dbState, dbState.manualTxSnapshot!);
@@ -833,7 +927,83 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
           dbState.manualTxSnapshot = null;
           return;
         }
-        applySet(dbState, { statement: options.statement, values: options.values }, true);
+        // Daten-Statement: sofort angewandt (PRAGMA foreign_keys
+        // no-op-Regel innerhalb offener Transaktion).
+        applySet(
+          dbState,
+          { statement: options.statement, values: options.values },
+          dbState.manualTxActive,
+        );
+      },
+      /**
+       * Native Transaktions-Methoden (Contract 8.1.1; Android:
+       * `Database.beginTransaction()` — deferred Write-Transaktion).
+       * `LocalDatabase.withWriteTransaction` nutzt diese (Review-Befund
+       * P1 — keine Steuer-Statements per `run()`).
+       */
+      async beginTransaction(options: {
+        database: string;
+        readonly?: boolean;
+      }) {
+        const conn = dbState.connections.get('RW_' + options.database);
+        if (!conn || !conn.opened) {
+          throw new Error(
+            `No available connection for database ${options.database}`,
+          );
+        }
+        if (dbState.manualTxActive) {
+          // Android-Contract (Database.beginTransaction()).
+          throw new Error('Already in transaction');
+        }
+        dbState.manualTxSnapshot = takeSnapshot(dbState);
+        dbState.manualTxActive = true;
+      },
+      async commitTransaction(options: {
+        database: string;
+        readonly?: boolean;
+      }) {
+        const conn = dbState.connections.get('RW_' + options.database);
+        if (!conn || !conn.opened) {
+          throw new Error(
+            `No available connection for database ${options.database}`,
+          );
+        }
+        if (!dbState.manualTxActive) {
+          // Android-Contract (Database.commitTransaction()).
+          throw new Error('No transaction active');
+        }
+        // Commit: BEGIN-Snapshot verwerfen (aktueller State gilt).
+        dbState.manualTxActive = false;
+        dbState.manualTxSnapshot = null;
+      },
+      async rollbackTransaction(options: {
+        database: string;
+        readonly?: boolean;
+      }) {
+        const conn = dbState.connections.get('RW_' + options.database);
+        if (!conn || !conn.opened) {
+          throw new Error(
+            `No available connection for database ${options.database}`,
+          );
+        }
+        if (!dbState.manualTxActive) {
+          return; // Android-Contract: no-op ohne aktive Transaktion.
+        }
+        restoreSnapshot(dbState, dbState.manualTxSnapshot!);
+        dbState.manualTxActive = false;
+        dbState.manualTxSnapshot = null;
+      },
+      async isTransactionActive(options: {
+        database: string;
+        readonly?: boolean;
+      }) {
+        const conn = dbState.connections.get('RW_' + options.database);
+        if (!conn || !conn.opened) {
+          throw new Error(
+            `No available connection for database ${options.database}`,
+          );
+        }
+        return { result: dbState.manualTxActive };
       },
     },
   };

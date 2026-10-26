@@ -47,6 +47,18 @@ vi.mock('@capacitor-community/sqlite', () => {
         mock().query(opts),
       run: (opts: Parameters<CapacitorSqliteMock['run']>[0]) =>
         mock().run(opts),
+      beginTransaction: (
+        opts: Parameters<CapacitorSqliteMock['beginTransaction']>[0],
+      ) => mock().beginTransaction(opts),
+      commitTransaction: (
+        opts: Parameters<CapacitorSqliteMock['commitTransaction']>[0],
+      ) => mock().commitTransaction(opts),
+      rollbackTransaction: (
+        opts: Parameters<CapacitorSqliteMock['rollbackTransaction']>[0],
+      ) => mock().rollbackTransaction(opts),
+      isTransactionActive: (
+        opts: Parameters<CapacitorSqliteMock['isTransactionActive']>[0],
+      ) => mock().isTransactionActive(opts),
     } satisfies CapacitorSqliteMock,
   };
 });
@@ -421,9 +433,11 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
       await expect(db2.init()).rejects.toThrow(
         'simulated connection failure',
       );
-      // Ohne Connection lehnt das Plugin jede Anfrage ab.
+      // save sichert getOrCreateDeviceId → withWriteTransaction →
+      // init() — der createConnection-Retry wirft denselben Fehler
+      // (nichts wird geschrieben, keine Teilstate).
       await expect(repo2.save(SAMPLE_INPUT, FIXED_NOW)).rejects.toThrow(
-        'No available connection',
+        'simulated connection failure',
       );
 
       // Kein Teilzustand (direkt am Fake-State — ohne Connection sind

@@ -35,6 +35,18 @@ vi.mock('@capacitor-community/sqlite', () => {
         mock().query(opts),
       run: (opts: Parameters<CapacitorSqliteMock['run']>[0]) =>
         mock().run(opts),
+      beginTransaction: (
+        opts: Parameters<CapacitorSqliteMock['beginTransaction']>[0],
+      ) => mock().beginTransaction(opts),
+      commitTransaction: (
+        opts: Parameters<CapacitorSqliteMock['commitTransaction']>[0],
+      ) => mock().commitTransaction(opts),
+      rollbackTransaction: (
+        opts: Parameters<CapacitorSqliteMock['rollbackTransaction']>[0],
+      ) => mock().rollbackTransaction(opts),
+      isTransactionActive: (
+        opts: Parameters<CapacitorSqliteMock['isTransactionActive']>[0],
+      ) => mock().isTransactionActive(opts),
     } satisfies CapacitorSqliteMock,
   };
 });

@@ -38,6 +38,18 @@ vi.mock('@capacitor-community/sqlite', () => {
         mock().query(opts),
       run: (opts: Parameters<CapacitorSqliteMock['run']>[0]) =>
         mock().run(opts),
+      beginTransaction: (
+        opts: Parameters<CapacitorSqliteMock['beginTransaction']>[0],
+      ) => mock().beginTransaction(opts),
+      commitTransaction: (
+        opts: Parameters<CapacitorSqliteMock['commitTransaction']>[0],
+      ) => mock().commitTransaction(opts),
+      rollbackTransaction: (
+        opts: Parameters<CapacitorSqliteMock['rollbackTransaction']>[0],
+      ) => mock().rollbackTransaction(opts),
+      isTransactionActive: (
+        opts: Parameters<CapacitorSqliteMock['isTransactionActive']>[0],
+      ) => mock().isTransactionActive(opts),
     } satisfies CapacitorSqliteMock,
   };
 });
@@ -289,11 +301,65 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
     });
   });
 
-  describe('withWriteTransaction (Review-Befund P2, Batch B)', () => {
-    it('führt BEGIN → Callback → COMMIT auf derselben Connection aus und gibt das Ergebnis zurück', async () => {
+  describe('withWriteTransaction (Review-Befund P2, Batch B; P1, 3. Runde)', () => {
+    it('P1: Transaktionssteuerung via nativen Methoden — kein run()-Steuer-Statement (Plugin-Default transaction:true)', async () => {
       const db = new LocalDatabase();
       await db.init();
       const runSpy = vi.spyOn(CapacitorSQLite, 'run');
+      const beginSpy = vi.spyOn(CapacitorSQLite, 'beginTransaction');
+      const commitSpy = vi.spyOn(CapacitorSQLite, 'commitTransaction');
+
+      await db.withWriteTransaction(async () => 1);
+
+      // Steuerung läuft über die nativen Plugin-Methoden (Contract
+      // 8.1.1) — und NICHT über Steuer-Statements per run(): run() hat
+      // den Plugin-Default transaction:true (das Plugin öffnet selbst
+      // eine Transaktion), ein `BEGIN` per run() würde auf Android
+      // verschachteln und fehlschlagen (Review-Befund P1, 3. Runde).
+      expect(beginSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      expect(commitSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      expect(runSpy).not.toHaveBeenCalled();
+    });
+
+    it('P1-Regression: BEGIN per run() mit Plugin-Default (transaction:true) verschachtelt und schlägt fehl', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      // So hätte der alte Code (vor Review P1) gesteuert — das Plugin
+      // öffnet per Default selbst eine Transaktion, das BEGIN
+      // verschachtelt:
+      await expect(
+        CapacitorSQLite.run({
+          database: LocalDatabase.DbName,
+          statement: 'BEGIN IMMEDIATE',
+          values: [],
+        }),
+      ).rejects.toThrow('cannot start a transaction within a transaction');
+      // Mit transaction: false bleibt run() die manuelle Steuer-
+      // Alternative (im Fake funktionsfähig, in Lario nicht genutzt):
+      await CapacitorSQLite.run({
+        database: LocalDatabase.DbName,
+        statement: 'BEGIN IMMEDIATE',
+        values: [],
+        transaction: false,
+      });
+      await CapacitorSQLite.run({
+        database: LocalDatabase.DbName,
+        statement: 'COMMIT',
+        values: [],
+        transaction: false,
+      });
+      expect(
+        await CapacitorSQLite.isTransactionActive({
+          database: LocalDatabase.DbName,
+        }),
+      ).toEqual({ result: false });
+    });
+
+    it('führt beginTransaction → Callback → commitTransaction auf derselben Connection aus und gibt das Ergebnis zurück', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const beginSpy = vi.spyOn(CapacitorSQLite, 'beginTransaction');
+      const commitSpy = vi.spyOn(CapacitorSQLite, 'commitTransaction');
       const bookingId = 'bkt-commit-1';
 
       const result = await db.withWriteTransaction(async (tx) => {
@@ -311,12 +377,8 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
       });
 
       expect(result).toBe(42);
-      expect(runSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ statement: 'BEGIN IMMEDIATE', values: [], database: LocalDatabase.DbName }),
-      );
-      expect(runSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ statement: 'COMMIT', values: [], database: LocalDatabase.DbName }),
-      );
+      expect(beginSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      expect(commitSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
       // Daten sind konsistent gespeichert:
       expect(
         await db.query(SELECT_BOOKING_BY_ID, [bookingId]),
@@ -363,7 +425,8 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
     it('rolled bei Callback-Fehler zurück (kein Teilzustand) und propagiert den Fehler', async () => {
       const db = new LocalDatabase();
       await db.init();
-      const runSpy = vi.spyOn(CapacitorSQLite, 'run');
+      const rollbackSpy = vi.spyOn(CapacitorSQLite, 'rollbackTransaction');
+      const commitSpy = vi.spyOn(CapacitorSQLite, 'commitTransaction');
       const bookingId = 'bkt-rollback-1';
       const boom = new Error('Callback-Fehler');
 
@@ -383,12 +446,10 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
         }),
       ).rejects.toBe(boom);
 
-      expect(runSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ statement: 'ROLLBACK', values: [], database: LocalDatabase.DbName }),
-      );
-      expect(runSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ statement: 'COMMIT', values: [] }),
-      );
+      // Steuerung via nativen Methoden (Review P1): ROLLBACK ja,
+      // COMMIT nie:
+      expect(rollbackSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      expect(commitSpy).not.toHaveBeenCalled();
       // Kein Teilzustand:
       expect(await db.query(SELECT_BOOKING_BY_ID, [bookingId])).toEqual([]);
       expect(await db.query(SELECT_SPLITS_BY_BOOKING, [bookingId])).toEqual([]);
@@ -397,7 +458,7 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
     it('rolled bei Statement-Fehler innerhalb des Callbacks zurück (kein Teilzustand)', async () => {
       const db = new LocalDatabase();
       await db.init();
-      const runSpy = vi.spyOn(CapacitorSQLite, 'run');
+      const rollbackSpy = vi.spyOn(CapacitorSQLite, 'rollbackTransaction');
       const bookingId = 'bkt-rollback-stmt-1';
 
       await expect(
@@ -413,9 +474,11 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
         }),
       ).rejects.toThrow('unterstützt das Statement nicht');
 
-      expect(runSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ statement: 'ROLLBACK', values: [], database: LocalDatabase.DbName }),
-      );
+      // LocalDatabase rollt via nativer Methode zurück — der Fake
+      // hält die Transaktion nach dem Statement-Fehler treu zu
+      // SQLite offen, der ROLLBACK macht den Teilzustand (Buchungs-
+      // zeile) real rückgängig:
+      expect(rollbackSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
       // Buchungszeile wurde zurückgerollt:
       expect(await db.query(SELECT_BOOKING_BY_ID, [bookingId])).toEqual([]);
     });
