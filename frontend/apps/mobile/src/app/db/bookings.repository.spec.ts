@@ -579,4 +579,45 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
       expect(splitRow.marked_amount_cents).toBe(2000);
     });
   });
+
+  describe('(m) Status-Check innerhalb der Schreibtransaktion (P2-Reviewbefund)', () => {
+    function statusSelectsSince(index: number) {
+      return dbState.queryLog.slice(index).filter(
+        (entry) =>
+          entry.statement.startsWith('SELECT') &&
+          (entry.statement.includes('FROM bookings') ||
+            entry.statement.includes('FROM outbox')),
+      );
+    }
+
+    it('update: Status-Lesungen laufen in offener Schreibtransaktion (manualTxActive)', async () => {
+      const saved = await repo.save(SAMPLE_INPUT, FIXED_NOW);
+      const before = dbState.queryLog.length;
+
+      await repo.update(
+        saved.bookingId,
+        { ...SAMPLE_INPUT, note: 'Geändert' },
+        FIXED_NOW,
+      );
+
+      const selects = statusSelectsSince(before);
+      expect(selects.length).toBeGreaterThanOrEqual(2);
+      for (const entry of selects) {
+        expect(entry.manualTxActive).toBe(true);
+      }
+    });
+
+    it('discard: Status-Lesungen laufen in offener Schreibtransaktion (manualTxActive)', async () => {
+      const saved = await repo.save(SAMPLE_INPUT, FIXED_NOW);
+      const before = dbState.queryLog.length;
+
+      await repo.discard(saved.bookingId);
+
+      const selects = statusSelectsSince(before);
+      expect(selects.length).toBeGreaterThanOrEqual(2);
+      for (const entry of selects) {
+        expect(entry.manualTxActive).toBe(true);
+      }
+    });
+  });
 });

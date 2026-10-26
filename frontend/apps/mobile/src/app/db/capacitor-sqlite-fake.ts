@@ -186,6 +186,14 @@ export interface CapacitorSqliteFakeState {
   drafts: Map<string, FakeDraftRow>;
   /** Alle erfolgreich ausgeführten executeSet-Batches, in Reihenfolge. */
   executedSets: FakeExecuteSetBatch[];
+  /**
+   * Query-Ausführungstage (Review-Befund P2, Runde 4): Jede Query wird
+   * in Reihenfolge mit dem Transaktionszustand zum Ausführungszeitpunkt
+   * (`manualTxActive`) aufgezeichnet. Tests beweisen damit, dass
+   * Status-Lesungen innerhalb einer offenen Schreibtransaktion laufen.
+   * `reset()` leert das Log.
+   */
+  queryLog: { statement: string; manualTxActive: boolean }[];
   /** true, nachdem mindestens ein CREATE TABLE … IF NOT EXISTS lief. */
   schemaStatementsExecuted: boolean;
   /**
@@ -239,6 +247,7 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
     // Nur Typ-Referenzen (werden zur Laufzeit eliminiert) — kein
     // Hoisting-Problem mit vi.hoisted.
     executedSets: [] as FakeExecuteSetBatch[],
+    queryLog: [] as { statement: string; manualTxActive: boolean }[],
     schemaStatementsExecuted: false,
     foreignKeys: false,
     failOnStatementIndex: null as number | null,
@@ -264,6 +273,7 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
       state.outbox.clear();
       state.drafts.clear();
       state.executedSets.length = 0;
+      state.queryLog.length = 0;
       state.schemaStatementsExecuted = false;
       state.foreignKeys = false;
       state.failOnStatementIndex = null;
@@ -839,6 +849,10 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
         if (!conn.opened) {
           throw new Error(`database ${options.database} not opened`);
         }
+        dbState.queryLog.push({
+          statement: options.statement,
+          manualTxActive: dbState.manualTxActive,
+        });
         return { values: runQuery(dbState, options.statement, options.values) };
       },
       async run(options: {

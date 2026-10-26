@@ -1,5 +1,8 @@
 import { Injectable, inject } from '@angular/core';
-import { LocalDatabase } from './local-database';
+import {
+  LocalDatabase,
+  type LocalDatabaseTransaction,
+} from './local-database';
 import { MetaService } from './meta.service';
 import {
   OP_SEQ_META_KEY,
@@ -366,7 +369,7 @@ export class BookingsRepository {
     input: LocalExpenseInput,
     now: Date,
   ): Promise<void> {
-    const { operationId } = await this.loadQueued(bookingId);
+    // Validierung VOR der Transaktion (rein — kein Datenbankzugriff).
     validateExpense(input);
     // Kanonische Split-IDs (gleiche Buchungs-ID + Position →
     // deterministisch, Payload und Datenbank bleiben identisch).
@@ -375,25 +378,30 @@ export class BookingsRepository {
     const hash = payloadHash(payload);
     const nowIso = now.toISOString();
 
-    // EIN executeSet-Batch (atomar): Buchung ersetzen, Splits
-    // löschen/neu anlegen (Anzahl kann sich ändern), Outbox-Payload
-    // aktualisieren. Keine Zähler-Änderung — operationId bleibt.
-    const sets = [
-      {
-        statement: UPDATE_BOOKING,
-        values: [input.date, input.totalAmountCents, input.accountId, input.note, bookingId],
-      },
-      { statement: DELETE_SPLITS, values: [bookingId] },
-      ...normalized.splits.map((split) => ({
-        statement: INSERT_SPLIT,
-        values: splitInsertValues(split, bookingId),
-      })),
-      {
-        statement: UPDATE_OUTBOX_PAYLOAD,
-        values: [payload, hash, nowIso, operationId, 'queued'],
-      },
-    ];
-    await this.db.executeSet(sets);
+    // Status-Prüfung und Schreib-Batch in EINER Schreibtransaktion
+    // (Review-Befund P2): kein in-process-Schreibzugriff kann zwischen
+    // Check und Write laufen. Ein executeSet-Batch (atomar): Buchung
+    // ersetzen, Splits löschen/neu anlegen (Anzahl kann sich ändern),
+    // Outbox-Payload aktualisieren. Keine Zähler-Änderung —
+    // operationId bleibt.
+    await this.db.withWriteTransaction(async (tx) => {
+      const { operationId } = await this.loadQueued(bookingId, tx);
+      await tx.executeSet([
+        {
+          statement: UPDATE_BOOKING,
+          values: [input.date, input.totalAmountCents, input.accountId, input.note, bookingId],
+        },
+        { statement: DELETE_SPLITS, values: [bookingId] },
+        ...normalized.splits.map((split) => ({
+          statement: INSERT_SPLIT,
+          values: splitInsertValues(split, bookingId),
+        })),
+        {
+          statement: UPDATE_OUTBOX_PAYLOAD,
+          values: [payload, hash, nowIso, operationId, 'queued'],
+        },
+      ]);
+    });
   }
 
   /**
@@ -402,14 +410,17 @@ export class BookingsRepository {
    * (Operation-IDs bleiben eindeutig). Nicht queued → `not_queued`.
    */
   async discard(bookingId: string): Promise<void> {
-    const { operationId } = await this.loadQueued(bookingId);
-    // Explizite Lösch-Reihenfolge Splits → Buchung → Outbox
-    // (Verteidigungstiefe, Design D2a).
-    await this.db.executeSet([
-      { statement: DELETE_SPLITS, values: [bookingId] },
-      { statement: DELETE_BOOKING, values: [bookingId] },
-      { statement: DELETE_OUTBOX, values: [operationId] },
-    ]);
+    // Status-Prüfung und Lösch-Batch in EINER Schreibtransaktion
+    // (Review-Befund P2). Explizite Lösch-Reihenfolge Splits →
+    // Buchung → Outbox (Verteidigungstiefe, Design D2a).
+    await this.db.withWriteTransaction(async (tx) => {
+      const { operationId } = await this.loadQueued(bookingId, tx);
+      await tx.executeSet([
+        { statement: DELETE_SPLITS, values: [bookingId] },
+        { statement: DELETE_BOOKING, values: [bookingId] },
+        { statement: DELETE_OUTBOX, values: [operationId] },
+      ]);
+    });
   }
 
   /**
@@ -465,18 +476,22 @@ export class BookingsRepository {
   /**
    * Buchung + Outbox-Zeile laden und prüfen, dass sie `queued` ist.
    * Fehlende Buchung/Outbox → `not_found`; nicht queued → `not_queued`.
+   * Läuft innerhalb der Transaktion des Aufrufers (Review-Befund P2):
+   * Status-Check und Folge-Schreib-Batch teilen dieselbe
+   * Schreibtransaktion — kein Check-then-Write-Fenster in-process.
    */
   private async loadQueued(
     bookingId: string,
+    tx: LocalDatabaseTransaction,
   ): Promise<{ operationId: string }> {
-    const bookingRows = await this.db.query<Record<string, unknown>>(
+    const bookingRows = await tx.query<Record<string, unknown>>(
       SELECT_BOOKING_BY_ID,
       [bookingId],
     );
     if (bookingRows.length === 0) {
       throw new BookingStateError('not_found', `Buchung ${bookingId} nicht gefunden`);
     }
-    const outboxRows = await this.db.query<Record<string, unknown>>(
+    const outboxRows = await tx.query<Record<string, unknown>>(
       SELECT_OUTBOX_BY_BOOKING,
       [bookingId],
     );
