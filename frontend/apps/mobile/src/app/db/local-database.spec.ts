@@ -1,20 +1,82 @@
 // @vitest-environment jsdom
 import { TestBed } from '@angular/core/testing';
 import { CapacitorSQLite } from '@capacitor-community/sqlite';
-import { capacitorSqliteMockFactory, dbState } from './capacitor-sqlite-fake';
+import { capacitorSqliteMockFactory, dbState, type CapacitorSqliteMock } from './capacitor-sqlite-fake';
 import { LocalDatabase } from './local-database';
 import { MetaService } from './meta.service';
-import { SCHEMA_STATEMENTS } from './statements';
+import {
+  DELETE_BOOKING,
+  INSERT_BOOKING,
+  INSERT_OUTBOX,
+  INSERT_SPLIT,
+  SCHEMA_STATEMENTS,
+  SELECT_BOOKING_BY_ID,
+  SELECT_SPLITS_BY_BOOKING,
+} from './statements';
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => true },
 }));
 
-vi.mock('@capacitor-community/sqlite', capacitorSqliteMockFactory);
+// Das Mocker-Hoisting setzt diesen Aufruf ueber alle Import-Konstanten der
+// Spec; die Factory laeuft, wenn das gemockte Modul zuerst importiert wird —
+// das passiert innerhalb des geteilten esbuild-Chunks (Fake + LocalDatabase)
+// VOR der Initialisierung der Import-Konstanten der Spec. Die Factory darf
+// daher KEINE Import-Referenzen unmittelbar loesen: Sie erzeugt nur das
+// Objekt, die Fake-Referenz wird erst bei tatsaechlichem Methodenaufruf
+// (in den Tests) geloest.
+vi.mock('@capacitor-community/sqlite', () => {
+  const mock = () => capacitorSqliteMockFactory().CapacitorSQLite;
+  return {
+    CapacitorSQLite: {
+      createConnection: (
+        opts: Parameters<CapacitorSqliteMock['createConnection']>[0],
+      ) => mock().createConnection(opts),
+      open: (opts: Parameters<CapacitorSqliteMock['open']>[0]) =>
+        mock().open(opts),
+      executeSet: (opts: Parameters<CapacitorSqliteMock['executeSet']>[0]) =>
+        mock().executeSet(opts),
+      query: (opts: Parameters<CapacitorSqliteMock['query']>[0]) =>
+        mock().query(opts),
+      run: (opts: Parameters<CapacitorSqliteMock['run']>[0]) =>
+        mock().run(opts),
+      beginTransaction: (
+        opts: Parameters<CapacitorSqliteMock['beginTransaction']>[0],
+      ) => mock().beginTransaction(opts),
+      commitTransaction: (
+        opts: Parameters<CapacitorSqliteMock['commitTransaction']>[0],
+      ) => mock().commitTransaction(opts),
+      rollbackTransaction: (
+        opts: Parameters<CapacitorSqliteMock['rollbackTransaction']>[0],
+      ) => mock().rollbackTransaction(opts),
+      isTransactionActive: (
+        opts: Parameters<CapacitorSqliteMock['isTransactionActive']>[0],
+      ) => mock().isTransactionActive(opts),
+    } satisfies CapacitorSqliteMock,
+  };
+});
+
+// SQL für die withWriteTransaction-Tests: kanonische statements.ts-
+// Konstanten (die Fake erkennt die normalisierten Strings; eigene
+// Multi-Line-Varianten würden an Leerzeichen um Klammern scheitern).
+const INSERT_META_SQL =
+  'INSERT INTO meta (key, value) VALUES (?, ?) ' +
+  'ON CONFLICT(key) DO UPDATE SET value = excluded.value';
+const INSERT_BOOKING_SQL = INSERT_BOOKING;
+const INSERT_SPLIT_SQL = INSERT_SPLIT;
+const INSERT_OUTBOX_SQL = INSERT_OUTBOX;
+const DELETE_BOOKING_SQL = DELETE_BOOKING;
 
 describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
   beforeEach(() => {
     dbState.reset();
+  });
+
+  // Der unit-test-Builder stellt kein restoreMocks zur Verfügung:
+  // Spies (vi.spyOn) werden pro Test manuell zurückgestellt, damit sie
+  // nicht in nachfolgende Tests (auch andere Describes) lecken.
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('init-Lifecycle', () => {
@@ -191,6 +253,312 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
       ]);
       expect(last.sets).not.toBe(sets); // Normalisierung kopiert
     });
+
+    it('P2: serialisiert Schreib-Operationen nacheinander auf der Connection-Operations-Kette', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+
+      // Ausführungsreihenfolge der Schreib-Batches an der Plugin-Grenze.
+      const runOrder: string[] = [];
+      const originalExecuteSet = CapacitorSQLite.executeSet;
+      const executeSetSpy = vi
+        .spyOn(CapacitorSQLite, 'executeSet')
+        .mockImplementation(async (options) => {
+          runOrder.push(options.set!.map((s) => String(s.values?.[0])).join('|'));
+          return originalExecuteSet(options);
+        });
+
+      let releaseTx!: () => void;
+      const txGate = new Promise<void>((resolve) => (releaseTx = resolve));
+      const txPromise = db.withWriteTransaction(async (tx) => {
+        await tx.executeSet([{ statement: INSERT_META_SQL, values: ['tx', '1'] }]);
+        await txGate; // Transaktion bleibt während des Gates offen.
+      });
+      const execPromise = db.executeSet([
+        { statement: INSERT_META_SQL, values: ['exec', '2'] },
+      ]);
+
+      // Der Tx-Batch ist ausgeführt, der executeSet-Batch wartet —
+      // die Transaktion hält die Connection, kein Interleaving.
+      await vi.waitFor(() => expect(runOrder).toEqual(['tx']));
+      // Der zweite Batch wartet noch in der Kette — Plugin-Aufruf 2
+      // ist noch nicht erfolgt (nur der Tx-Batch lief).
+      expect(executeSetSpy).toHaveBeenCalledTimes(1);
+      releaseTx();
+      await Promise.all([txPromise, execPromise]);
+      expect(runOrder).toEqual(['tx', 'exec']);
+      // Beide Werte sind konsistent gespeichert.
+      expect(await db.query('SELECT value FROM meta WHERE key = ?', ['tx'])).toEqual([{ value: '1' }]);
+      expect(await db.query('SELECT value FROM meta WHERE key = ?', ['exec'])).toEqual([{ value: '2' }]);
+    });
+
+    it('P2: serialisiert einen fehlerhaften executeSet ohne Blockade der Kette', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      // Statement, das die Fake bewusst nicht kennt → Fehler.
+      await expect(
+        db.executeSet([{ statement: 'UNKNOWNS STATEMENT', values: [] }]),
+      ).rejects.toThrow('unterstützt das Statement nicht');
+      // Kette bleibt funktionsfähig:
+      await db.executeSet([{ statement: INSERT_META_SQL, values: ['kette', 'ok'] }]);
+      expect(await db.query('SELECT value FROM meta WHERE key = ?', ['kette'])).toEqual([{ value: 'ok' }]);
+    });
+  });
+
+  describe('withWriteTransaction (Review-Befund P2, Batch B; P1, 3. Runde)', () => {
+    it('P1: Transaktionssteuerung via nativen Methoden — kein run()-Steuer-Statement (Plugin-Default transaction:true)', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const runSpy = vi.spyOn(CapacitorSQLite, 'run');
+      const beginSpy = vi.spyOn(CapacitorSQLite, 'beginTransaction');
+      const commitSpy = vi.spyOn(CapacitorSQLite, 'commitTransaction');
+
+      await db.withWriteTransaction(async () => 1);
+
+      // Steuerung läuft über die nativen Plugin-Methoden (Contract
+      // 8.1.1) — und NICHT über Steuer-Statements per run(): run() hat
+      // den Plugin-Default transaction:true (das Plugin öffnet selbst
+      // eine Transaktion), ein `BEGIN` per run() würde auf Android
+      // verschachteln und fehlschlagen (Review-Befund P1, 3. Runde).
+      expect(beginSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      expect(commitSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      expect(runSpy).not.toHaveBeenCalled();
+    });
+
+    it('P1-Regression: BEGIN per run() mit Plugin-Default (transaction:true) verschachtelt und schlägt fehl', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      // So hätte der alte Code (vor Review P1) gesteuert — das Plugin
+      // öffnet per Default selbst eine Transaktion, das BEGIN
+      // verschachtelt:
+      await expect(
+        CapacitorSQLite.run({
+          database: LocalDatabase.DbName,
+          statement: 'BEGIN IMMEDIATE',
+          values: [],
+        }),
+      ).rejects.toThrow('cannot start a transaction within a transaction');
+      // Mit transaction: false bleibt run() die manuelle Steuer-
+      // Alternative (im Fake funktionsfähig, in Lario nicht genutzt):
+      await CapacitorSQLite.run({
+        database: LocalDatabase.DbName,
+        statement: 'BEGIN IMMEDIATE',
+        values: [],
+        transaction: false,
+      });
+      await CapacitorSQLite.run({
+        database: LocalDatabase.DbName,
+        statement: 'COMMIT',
+        values: [],
+        transaction: false,
+      });
+      expect(
+        await CapacitorSQLite.isTransactionActive({
+          database: LocalDatabase.DbName,
+        }),
+      ).toEqual({ result: false });
+    });
+
+    it('führt beginTransaction → Callback → commitTransaction auf derselben Connection aus und gibt das Ergebnis zurück', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const beginSpy = vi.spyOn(CapacitorSQLite, 'beginTransaction');
+      const commitSpy = vi.spyOn(CapacitorSQLite, 'commitTransaction');
+      const bookingId = 'bkt-commit-1';
+
+      const result = await db.withWriteTransaction(async (tx) => {
+        await tx.executeSet([
+          {
+            statement: INSERT_BOOKING_SQL,
+            values: [bookingId, '2026-01-15', 'expense', 'acc-1', 1000, null, 3, '2026-01-15T10:00:00Z'],
+          },
+          {
+            statement: INSERT_SPLIT_SQL,
+            values: [`spl-${bookingId}`, bookingId, 1000, 'pool-1', 'cat-1', null, 0, null, null, null, null],
+          },
+        ]);
+        return 42;
+      });
+
+      expect(result).toBe(42);
+      expect(beginSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      expect(commitSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      // Daten sind konsistent gespeichert:
+      expect(
+        await db.query(SELECT_BOOKING_BY_ID, [bookingId]),
+      ).toHaveLength(1);
+      expect(
+        await db.query(SELECT_SPLITS_BY_BOOKING, [bookingId]),
+      ).toHaveLength(1);
+    });
+
+    it('macht Callback-Schreibzugriffe während der Transaktion für Queries derselben Connection sichtbar', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const bookingId = 'bkt-interleave-1';
+      let insertDone = false;
+      let releaseTx!: () => void;
+      const txGate = new Promise<void>((resolve) => (releaseTx = resolve));
+
+      const txPromise = db.withWriteTransaction(async (tx) => {
+        await tx.executeSet([
+          {
+            statement: INSERT_BOOKING_SQL,
+            values: [bookingId, '2026-02-01', 'expense', 'acc-1', 250, null, 4, '2026-02-01T09:00:00Z'],
+          },
+        ]);
+        insertDone = true;
+        await txGate; // Transaktion bleibt offen, Insert angewendet.
+      });
+
+      // Warten, bis das Insert innerhalb der Transaktion angewendet ist.
+      await vi.waitFor(() => expect(insertDone).toBe(true));
+      // Öffentliche Query (außerhalb des Callbacks) auf derselben
+      // Connection sieht die noch uncommittete Zeile.
+      const visible = await db.query(SELECT_BOOKING_BY_ID, [bookingId]);
+      expect(visible).toHaveLength(1);
+
+      releaseTx();
+      await txPromise;
+      // Nach COMMIT bleibt die Zeile bestehen.
+      expect(
+        await db.query(SELECT_BOOKING_BY_ID, [bookingId]),
+      ).toHaveLength(1);
+    });
+
+    it('rolled bei Callback-Fehler zurück (kein Teilzustand) und propagiert den Fehler', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const rollbackSpy = vi.spyOn(CapacitorSQLite, 'rollbackTransaction');
+      const commitSpy = vi.spyOn(CapacitorSQLite, 'commitTransaction');
+      const bookingId = 'bkt-rollback-1';
+      const boom = new Error('Callback-Fehler');
+
+      await expect(
+        db.withWriteTransaction(async (tx) => {
+          await tx.executeSet([
+            {
+              statement: INSERT_BOOKING_SQL,
+              values: [bookingId, '2026-03-10', 'expense', 'acc-1', 500, null, 5, '2026-03-10T12:00:00Z'],
+            },
+            {
+              statement: INSERT_SPLIT_SQL,
+              values: [`spl-${bookingId}`, bookingId, 500, 'pool-1', 'cat-1', null, 0, null, null, null, null],
+            },
+          ]);
+          throw boom;
+        }),
+      ).rejects.toBe(boom);
+
+      // Steuerung via nativen Methoden (Review P1): ROLLBACK ja,
+      // COMMIT nie:
+      expect(rollbackSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      expect(commitSpy).not.toHaveBeenCalled();
+      // Kein Teilzustand:
+      expect(await db.query(SELECT_BOOKING_BY_ID, [bookingId])).toEqual([]);
+      expect(await db.query(SELECT_SPLITS_BY_BOOKING, [bookingId])).toEqual([]);
+    });
+
+    it('rolled bei Statement-Fehler innerhalb des Callbacks zurück (kein Teilzustand)', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const rollbackSpy = vi.spyOn(CapacitorSQLite, 'rollbackTransaction');
+      const bookingId = 'bkt-rollback-stmt-1';
+
+      await expect(
+        db.withWriteTransaction(async (tx) => {
+          await tx.executeSet([
+            {
+              statement: INSERT_BOOKING_SQL,
+              values: [bookingId, '2026-04-01', 'expense', 'acc-1', 750, null, 6, '2026-04-01T11:00:00Z'],
+            },
+          ]);
+          // Bewusst ungültiges Statement → ROLLBACK-Pfad.
+          await tx.executeSet([{ statement: 'UNKNOWNS STATEMENT', values: [] }]);
+        }),
+      ).rejects.toThrow('unterstützt das Statement nicht');
+
+      // LocalDatabase rollt via nativer Methode zurück — der Fake
+      // hält die Transaktion nach dem Statement-Fehler treu zu
+      // SQLite offen, der ROLLBACK macht den Teilzustand (Buchungs-
+      // zeile) real rückgängig:
+      expect(rollbackSpy).toHaveBeenCalledWith({ database: LocalDatabase.DbName });
+      // Buchungszeile wurde zurückgerollt:
+      expect(await db.query(SELECT_BOOKING_BY_ID, [bookingId])).toEqual([]);
+    });
+
+    it('serialisiert Schreib-Operationen während des Callbacks (kein Interleaving)', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const runOrder: string[] = [];
+      const originalExecuteSet = CapacitorSQLite.executeSet;
+      vi.spyOn(CapacitorSQLite, 'executeSet').mockImplementation(async (options) => {
+        runOrder.push(options.set!.map((s) => String(s.values?.[0])).join('|'));
+        return originalExecuteSet(options);
+      });
+
+      let releaseTx!: () => void;
+      const txGate = new Promise<void>((resolve) => (releaseTx = resolve));
+      const txPromise = db.withWriteTransaction(async (tx) => {
+        await tx.executeSet([{ statement: INSERT_META_SQL, values: ['serial-tx', '1'] }]);
+        await txGate;
+      });
+      const execPromise = db.executeSet([{ statement: INSERT_META_SQL, values: ['serial-exec', '2'] }]);
+
+      // Tx-Batch angewendet, executeSet wartet.
+      await vi.waitFor(() => expect(runOrder).toEqual(['serial-tx']));
+      releaseTx();
+      await Promise.all([txPromise, execPromise]);
+      expect(runOrder).toEqual(['serial-tx', 'serial-exec']);
+    });
+
+    it('führt Callback-Statements ohne eigene automatische Transaktion aus (transaction:false)', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const execSpy = vi.spyOn(CapacitorSQLite, 'executeSet');
+      await db.withWriteTransaction(async (tx) => {
+        await tx.executeSet([{ statement: INSERT_META_SQL, values: ['nottx', '1'] }]);
+      });
+      // Der Callback-Batch lief mit transaction: false (kein eigenes BEGIN).
+      const callbackCall = execSpy.mock.calls.find((c) =>
+        (c[0].set as { values?: unknown[] }[]).some((s) => s.values?.[0] === 'nottx'),
+      );
+      expect(callbackCall?.[0].transaction).toBe(false);
+    });
+  });
+
+  describe('Batch B: DELETE_BOOKING-Cascade (Fake, Option A Review B10)', () => {
+    it('löscht Splits und Outbox-Zeilen mit der Buchung (ON DELETE CASCADE)', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+      const bookingId = 'bk-cascade-1';
+      const opId = `op-${bookingId}`;
+      await db.executeSet([
+        {
+          statement: INSERT_BOOKING_SQL,
+          values: [bookingId, '2026-05-01', 'expense', 'acc-1', 300, null, null, '2026-05-01T10:00:00Z'],
+        },
+        {
+          statement: INSERT_SPLIT_SQL,
+          values: [`spl-${bookingId}`, bookingId, 300, 'pool-1', 'cat-1', null, 0, null, null, null, null],
+        },
+        {
+          statement: INSERT_OUTBOX_SQL,
+          values: [opId, 'dev-1', 'expense', bookingId, '{"v":1}', 'h', null, 'queued', '2026-05-01T10:00:00Z', '2026-05-01T10:00:00Z'],
+        },
+      ]);
+      expect(await db.query(SELECT_BOOKING_BY_ID, [bookingId])).toHaveLength(1);
+      expect(await db.query(SELECT_SPLITS_BY_BOOKING, [bookingId])).toHaveLength(1);
+      expect(dbState.outbox.get(opId)).toBeDefined();
+
+      // DELETE_BOOKING ohne DELETE_SPLITS/DELETE_OUTBOX (Fidelity-Fix):
+      await db.executeSet([{ statement: DELETE_BOOKING_SQL, values: [bookingId] }]);
+
+      // ON DELETE CASCADE in der DDL: Splits und Outbox-Zeile folgen.
+      expect(await db.query(SELECT_BOOKING_BY_ID, [bookingId])).toEqual([]);
+      expect(await db.query(SELECT_SPLITS_BY_BOOKING, [bookingId])).toEqual([]);
+      expect(dbState.outbox.has(opId)).toBe(false);
+    });
   });
 
   describe('query-Wrapper', () => {
@@ -265,6 +633,10 @@ describe('MetaService (Batch A, simuliertes Native-Backend)', () => {
     // MetaService holt LocalDatabase über inject() → Konstruktion im
     // DI-Kontext. Die Instanz teilt sich den (geöffneten) Fake-State.
     meta = TestBed.runInInjectionContext(() => new MetaService());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('setzt und liest einen Wert (Roundtrip)', async () => {
