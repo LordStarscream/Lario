@@ -110,6 +110,19 @@ export interface FakeOutboxRow {
   updated_at_utc: string;
 }
 
+/**
+ * Tabellensnapshot für manuelle Transaktionen (BEGIN/ROLLBACK, Review-
+ * Befund P2, Batch B) und die All-or-Nothing-Garantie von executeSet.
+ */
+export interface FakeTableSnapshot {
+  meta: Map<string, string>;
+  bookings: Map<string, FakeBookingRow>;
+  splits: Map<string, FakeSplitRow>;
+  outbox: Map<string, FakeOutboxRow>;
+  drafts: Map<string, FakeDraftRow>;
+  schemaStatementsExecuted: boolean;
+}
+
 /** Entwurf (spiegelt die Batch-A-Spalten 1:1, snake_case). */
 export interface FakeDraftRow {
   id: string;
@@ -173,6 +186,17 @@ export interface CapacitorSqliteFakeState {
   simulateRestart(): void;
   /** Leert Verbindungsregister, alle Tabellen und die Batch-Historie. */
   reset(): void;
+  /**
+   * Manuelle Schreibtransaktion (run: BEGIN/COMMIT/ROLLBACK, Review-
+   * Befund P2, Batch B): true, solange ein BEGIN ohne korrespondierendes
+   * COMMIT/ROLLBACK in Fluge ist.
+   */
+  manualTxActive: boolean;
+  /**
+   * Tabellensnapshot zum BEGIN (für ROLLBACK bzw. Prozess-Abbruch in
+   * simulateRestart). null = keine offene manuelle Transaktion.
+   */
+  manualTxSnapshot: FakeTableSnapshot | null;
 }
 
 export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
@@ -190,7 +214,17 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
     foreignKeys: false,
     failOnStatementIndex: null as number | null,
     failOnCreateConnection: false,
+    manualTxActive: false,
+    manualTxSnapshot: null as FakeTableSnapshot | null,
     simulateRestart() {
+      // Prozess-Abbruch: eine uncommittede manuelle Transaktion wird
+      // zurückgerollt (SQLite rollt uncommittede Transaktionen beim
+      // Prozessende zurück).
+      if (state.manualTxActive && state.manualTxSnapshot) {
+        restoreSnapshot(state, state.manualTxSnapshot);
+      }
+      state.manualTxActive = false;
+      state.manualTxSnapshot = null;
       state.connections.clear();
     },
     reset() {
@@ -205,6 +239,8 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
       state.foreignKeys = false;
       state.failOnStatementIndex = null;
       state.failOnCreateConnection = false;
+      state.manualTxActive = false;
+      state.manualTxSnapshot = null;
     },
   };
   return state;
@@ -235,6 +271,34 @@ function constraintError(table: string, column: string, value: string): Error {
   return new Error(
     `SQLITE_CONSTRAINT_PRIMARYKEY: ${table}.${column} ${value} bereits vorhanden`,
   );
+}
+
+/**
+ * Tabellensnapshot erstellen (All-or-Nothing-Garantie von executeSet
+ * und ROLLBACK/Prozess-Abbruch von manuellen Transaktionen).
+ */
+function takeSnapshot(state: StateTables): FakeTableSnapshot {
+  return {
+    meta: new Map(state.meta),
+    bookings: new Map([...state.bookings].map(([key, row]) => [key, { ...row }])),
+    splits: new Map([...state.splits].map(([key, row]) => [key, { ...row }])),
+    outbox: new Map([...state.outbox].map(([key, row]) => [key, { ...row }])),
+    drafts: new Map([...state.drafts].map(([key, row]) => [key, { ...row }])),
+    schemaStatementsExecuted: state.schemaStatementsExecuted,
+  };
+}
+
+/** Snapshot aus takeSnapshot() wiederherstellen. */
+function restoreSnapshot(
+  state: StateTables,
+  snapshot: FakeTableSnapshot,
+): void {
+  state.meta = snapshot.meta;
+  state.bookings = snapshot.bookings;
+  state.splits = snapshot.splits;
+  state.outbox = snapshot.outbox;
+  state.drafts = snapshot.drafts;
+  state.schemaStatementsExecuted = snapshot.schemaStatementsExecuted;
 }
 
 /**
@@ -669,24 +733,16 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
           }
         }
         const inTransaction = options.transaction !== false;
-        const snapshot = inTransaction
-          ? {
-              meta: new Map(dbState.meta),
-              bookings: new Map(
-                [...dbState.bookings].map(([key, row]) => [key, { ...row }]),
-              ),
-              splits: new Map(
-                [...dbState.splits].map(([key, row]) => [key, { ...row }]),
-              ),
-              outbox: new Map(
-                [...dbState.outbox].map(([key, row]) => [key, { ...row }]),
-              ),
-              drafts: new Map(
-                [...dbState.drafts].map(([key, row]) => [key, { ...row }]),
-              ),
-              schemaStatementsExecuted: dbState.schemaStatementsExecuted,
-            }
-          : null;
+        // Verschachtelungs-Schutz (Review-Befund P2): während eine
+        // manuelle Transaktion (run: BEGIN …) in Fluge ist, ist keine
+        // automatische Transaktion (transaction: true) erlaubt —
+        // SQLite: „cannot start a transaction within a transaction“.
+        if (inTransaction && dbState.manualTxActive) {
+          throw new Error(
+            'cannot start a transaction within a transaction',
+          );
+        }
+        const snapshot = inTransaction ? takeSnapshot(dbState) : null;
         try {
           for (let index = 0; index < options.set.length; index += 1) {
             if (dbState.failOnStatementIndex === index) {
@@ -696,12 +752,7 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
           }
         } catch (error) {
           if (snapshot) {
-            dbState.meta = snapshot.meta;
-            dbState.bookings = snapshot.bookings;
-            dbState.splits = snapshot.splits;
-            dbState.outbox = snapshot.outbox;
-            dbState.drafts = snapshot.drafts;
-            dbState.schemaStatementsExecuted = snapshot.schemaStatementsExecuted;
+            restoreSnapshot(dbState, snapshot);
           }
           throw error;
         }
@@ -751,6 +802,36 @@ export function capacitorSqliteMockFactory(): { CapacitorSQLite: CapacitorSqlite
         }
         if (!conn.opened) {
           throw new Error(`database ${options.database} not opened`);
+        }
+        // Manuelle Schreibtransaktion (Review-Befund P2, Batch B):
+        // BEGIN/COMMIT/ROLLBACK auf der Connection. ROLLBACK stellt den
+        // BEGIN-Snapshot wieder her (kein Teilzustand).
+        const txStatement = normalize(options.statement).replace(/;$/, '');
+        const isBegin = /^begin(\s+(immediate|deferred|exclusive))?$/i.test(
+          txStatement,
+        );
+        const isCommit = /^commit(\s+transaction)?$/i.test(txStatement);
+        const isRollback = /^rollback(\s+transaction)?$/i.test(txStatement);
+        if (isBegin) {
+          if (dbState.manualTxActive) {
+            throw new Error(
+              'cannot start a transaction within a transaction',
+            );
+          }
+          dbState.manualTxSnapshot = takeSnapshot(dbState);
+          dbState.manualTxActive = true;
+          return;
+        }
+        if (isCommit || isRollback) {
+          if (!dbState.manualTxActive) {
+            throw new Error('cannot commit - no transaction is active');
+          }
+          if (isRollback) {
+            restoreSnapshot(dbState, dbState.manualTxSnapshot!);
+          }
+          dbState.manualTxActive = false;
+          dbState.manualTxSnapshot = null;
+          return;
         }
         applySet(dbState, { statement: options.statement, values: options.values }, true);
       },

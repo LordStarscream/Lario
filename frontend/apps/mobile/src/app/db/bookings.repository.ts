@@ -27,6 +27,7 @@ import {
   SELECT_SPLITS_BY_BOOKING,
   UPDATE_BOOKING,
   UPDATE_OUTBOX_PAYLOAD,
+  selectMetaSet,
   upsertMetaSet,
 } from './statements';
 
@@ -64,9 +65,10 @@ function newId(): string {
  * werden innerhalb derselben Kette gelesen/geschrieben, dadurch
  * erzeugen parallele Aufrufe keine doppelten Operation-IDs oder
  * abweichenden Geräte-IDs. Die Anlage der `device.id` (einmalig,
- * stabil) läuft in der lokalen Methode `getOrCreateDeviceId` — ein eigener
- * atomarer Meta-Batch VOR dem Haupt-Batch; sie gehört nicht zum
- * D7-Batch (Buchung + Splits + Outbox + Zähler).
+ * stabil) läuft in der lokalen Methode `getOrCreateDeviceId` — eine
+ * eigene atomare Schreibtransaktion (SELECT→UPSERT) VOR dem
+ * Haupt-Batch; sie gehört nicht zum D7-Batch (Buchung + Splits +
+ * Outbox + Zähler).
  *
  * Nur `queued`-Buchungen dürfen geändert oder verworfen werden — der
  * Host hat die Operation dann nie gesehen (Design D4).
@@ -285,18 +287,27 @@ export class BookingsRepository {
 
   /**
    * Stabile Geräte-ID lesen bzw. einmalig anlegen (Design D1; `device.id`,
-   * UUIDv4). `save` ruft diese innerhalb der `saveChain` auf — die Anlage
-   * (ein `meta`-Upsert) ist dadurch gegen parallele erste Saves serialisiert.
-   * Der Upsert ist idempotent.
+   * UUIDv4). Liest und legt die ID in einer atomaren Schreibtransaktion
+   * (SELECT→UPSERT) an: Auch ohne die `saveChain`-Serialisierung kann
+   * kein zweiter Aufruf eine abweichende ID anlegen (Read-Check-Write
+   * ohne TOCTOU-Fenster). `save` ruft diese innerhalb der `saveChain`
+   * auf; der Upsert ist idempotent.
    */
   private async getOrCreateDeviceId(): Promise<string> {
-    const existing = await this.meta.get(DEVICE_ID_META_KEY);
-    if (existing !== null) {
-      return existing;
-    }
-    const deviceId = newId();
-    await this.meta.set(DEVICE_ID_META_KEY, deviceId);
-    return deviceId;
+    return this.db.withWriteTransaction(async (tx) => {
+      const metaSelect = selectMetaSet(DEVICE_ID_META_KEY);
+      const rows = await tx.query<{ value: string | null }>(
+        metaSelect.statement,
+        metaSelect.values ?? [],
+      );
+      const existing = rows[0]?.value ?? null;
+      if (existing !== null) {
+        return existing;
+      }
+      const deviceId = newId();
+      await tx.executeSet([upsertMetaSet(DEVICE_ID_META_KEY, deviceId)]);
+      return deviceId;
+    });
   }
 
   private async doSave(
