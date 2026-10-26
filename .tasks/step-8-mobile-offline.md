@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (`abc521b`) + Transaktions-Nachgang (`f0ef94c`, PR #16 offen) · Last updated: 26. Okt. 2026_
+_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (`abc521b`) + Transaktions-Nachgang (`f0ef94c`/`9a7ab6e`) + P3-Nachgang (`3ef7e8d`) + P1/P2-Nachgang R4 (`a1f2640`, `60295ea`), PR #16 offen (gepushed) · Last updated: 26. Okt. 2026_
 
 **Branches:**
 - Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
@@ -187,6 +187,28 @@ Cascade, Update-auf-confirmed, Unique operation_id, Splits-Ersatz) + DDL
 outbox.booking_id `REFERENCES bookings(id) ON DELETE CASCADE`. **Checks:**
 lint host+mobile grün, 225 Tests (host 130 + mobile 95), build:mobile grün.
 Keine Host-App-/Domain-Änderung, keine Produktivserver-URL.
+
+**Unabhängige Review Runden 3/4 (24.–26.10.2026, Berichte im Review-Worktree
+`Lario-worktrees/step-8b-review/REVIEW-*.md`):**
+- P1-Nachgang 3. Runde (nativen Transaktionsmethoden statt Steuer-Statements
+  per `run()`) → `f0ef94c`/`9a7ab6e`.
+- P3-Nachgang (Outbox-Cascade im DELETE_BOOKING-Handler, Stale-Kommentare,
+  Cascade-Tests) → `3ef7e8d`.
+- **P1-Nachgang R4 (Commit `a1f2640`, 26.10.):** `!relevant`-Steuerkennzeichnung
+  trägt keinen Teilbetrag (Domain-Regel `TaxMarking.ValidateSelf`, maßgeblich):
+  Payload `markedAmount: null` UND DB-Spalte `marked_amount_cents: NULL`
+  (davor: voller Splitbetrag in beiden → Host hätte die Operation im Sync
+  abgeworfen). Tests: expense-payload.spec.ts + bookings.repository.spec.ts
+  Abschnitt (l).
+- **P2-Nachgang R4 (Commit `60295ea`, 26.10.):** update/discard führen
+  Status-Prüfung und Schreib-Batch in EINER `withWriteTransaction` aus
+  (`loadQueued` nimmt das Transaktions-Handle) — davor bestand ein
+  Check-then-Write-Fenster (Status-Lese außerhalb der Transaktion, eigener
+  executeSet-Batch). Test Abschnitt (m): Status-SELECTs laufen mit
+  `manualTxActive = true` (neues `queryLog` im Fake, per `reset()` geleert).
+
+**Checks R4 (26.10.2026):** lint host+mobile grün, 240 Tests (host 130 +
+mobile 110), build:mobile grün. Pushed `3ef7e8d..60295ea`; PR #16 offen.
 
 **Transaktions-Nachgang (26.10.2026, Commit `f0ef94c`, Review-Worktree):**
 `LocalDatabase.withWriteTransaction` — native Schreibtransaktion
