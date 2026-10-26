@@ -86,6 +86,8 @@ export class BookingValidationError extends Error {
       | 'invalid_account'
       | 'no_splits'
       | 'invalid_split_amount'
+      | 'invalid_pool'
+      | 'invalid_category'
       | 'split_sum_mismatch'
       | 'tax_inconsistent'
       | 'invalid_marked_amount',
@@ -200,6 +202,16 @@ export function validateExpense(input: LocalExpenseInput): void {
         'invalid_split_amount',
         `Splitbetrag ungültig: ${split.amountCents} (erwartet ganze Cent-Zahl > 0)`,
       );
+    }
+    // Pflichtreferenzen (P2-Reviewbefund): leere/leerzeichenige Pool-
+    // bzw. Kategorie-ID ablehnen. Die Referenz-IDs werden NICHT still
+    // getrimmt/ersetzt — ungültige Eingaben (nur Leerzeichen) fallen auf,
+    // gültige bleiben unverändert erhalten (wie bei `invalid_account`).
+    if (!split.poolId || split.poolId.trim().length === 0) {
+      throw new BookingValidationError('invalid_pool', 'Pool fehlt');
+    }
+    if (!split.categoryId || split.categoryId.trim().length === 0) {
+      throw new BookingValidationError('invalid_category', 'Kategorie fehlt');
     }
     sum += split.amountCents;
     validateSplitTax(split);

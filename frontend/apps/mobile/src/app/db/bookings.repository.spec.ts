@@ -620,4 +620,108 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
       }
     });
   });
+
+  describe('(n) Split-Pflichtreferenzen Pool/Kategorie (P2-Reviewbefund)', () => {
+    // Ungültige Eingaben: leerer String und reine Leerzeichen — die
+    // Referenz-IDs werden abgelehnt, NICHT still getrimmt/ersetzt.
+    const EMPTY_VALUES: { label: string; value: string }[] = [
+      { label: "leerer String ''", value: '' },
+      { label: 'reine Leerzeichen', value: '   \t ' },
+    ];
+
+    function withPool(value: string): LocalExpenseInput {
+      return {
+        ...SAMPLE_INPUT,
+        splits: [
+          { ...SAMPLE_INPUT.splits[0]!, poolId: value },
+          { ...SAMPLE_INPUT.splits[1]! },
+        ],
+      };
+    }
+    function withCategory(value: string): LocalExpenseInput {
+      return {
+        ...SAMPLE_INPUT,
+        splits: [
+          { ...SAMPLE_INPUT.splits[0]!, categoryId: value },
+          { ...SAMPLE_INPUT.splits[1]! },
+        ],
+      };
+    }
+
+    describe('save', () => {
+      for (const { label, value } of EMPTY_VALUES) {
+        it(`Pool ${label}: invalid_pool, nichts geschrieben, Zähler bleibt 0`, async () => {
+          const bad = withPool(value);
+          await expect(repo.save(bad, FIXED_NOW)).rejects.toMatchObject({
+            name: 'BookingValidationError',
+            reason: 'invalid_pool',
+          });
+          expect(dbState.bookings.size).toBe(0);
+          expect(dbState.splits.size).toBe(0);
+          expect(dbState.outbox.size).toBe(0);
+          expect(await meta.get(OP_SEQ_META_KEY)).toBeNull();
+        });
+        it(`Kategorie ${label}: invalid_category, nichts geschrieben, Zähler bleibt 0`, async () => {
+          const bad = withCategory(value);
+          await expect(repo.save(bad, FIXED_NOW)).rejects.toMatchObject({
+            name: 'BookingValidationError',
+            reason: 'invalid_category',
+          });
+          expect(dbState.bookings.size).toBe(0);
+          expect(dbState.splits.size).toBe(0);
+          expect(dbState.outbox.size).toBe(0);
+          expect(await meta.get(OP_SEQ_META_KEY)).toBeNull();
+        });
+      }
+    });
+
+    describe('update', () => {
+      for (const { label, value } of EMPTY_VALUES) {
+        it(`Pool ${label}: invalid_pool, vorhandene Daten bleiben unverändert`, async () => {
+          const result = await repo.save(SAMPLE_INPUT, FIXED_NOW);
+          const bookingBefore = { ...dbState.bookings.get(result.bookingId)! };
+          const outboxBefore = {
+            ...dbState.outbox.get(result.operationId)!,
+          };
+          const splitsBefore = new Map(
+            [...dbState.splits].map(([k, v]) => [k, { ...v }]),
+          );
+
+          await expect(
+            repo.update(result.bookingId, withPool(value), FIXED_NOW),
+          ).rejects.toMatchObject({
+            name: 'BookingValidationError',
+            reason: 'invalid_pool',
+          });
+
+          expect(dbState.bookings.get(result.bookingId)).toEqual(bookingBefore);
+          expect(dbState.outbox.get(result.operationId)).toEqual(outboxBefore);
+          expect(new Map([...dbState.splits].map(([k, v]) => [k, { ...v }])))
+            .toEqual(splitsBefore);
+        });
+        it(`Kategorie ${label}: invalid_category, vorhandene Daten bleiben unverändert`, async () => {
+          const result = await repo.save(SAMPLE_INPUT, FIXED_NOW);
+          const bookingBefore = { ...dbState.bookings.get(result.bookingId)! };
+          const outboxBefore = {
+            ...dbState.outbox.get(result.operationId)!,
+          };
+          const splitsBefore = new Map(
+            [...dbState.splits].map(([k, v]) => [k, { ...v }]),
+          );
+
+          await expect(
+            repo.update(result.bookingId, withCategory(value), FIXED_NOW),
+          ).rejects.toMatchObject({
+            name: 'BookingValidationError',
+            reason: 'invalid_category',
+          });
+
+          expect(dbState.bookings.get(result.bookingId)).toEqual(bookingBefore);
+          expect(dbState.outbox.get(result.operationId)).toEqual(outboxBefore);
+          expect(new Map([...dbState.splits].map(([k, v]) => [k, { ...v }])))
+            .toEqual(splitsBefore);
+        });
+      }
+    });
+  });
 });
