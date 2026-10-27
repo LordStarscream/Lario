@@ -240,6 +240,33 @@ gepusht 26.10.2026 (PR #16 aktualisiert).
 
 ## Batch C — Snapshot + Setup (P3)
 
+**Status (26.10.):** Worker `e1376e78` läuft (Worktree `/tmp/lario-step8c`,
+Branch `step/8c-snapshot-setup` ab `27191db` = main + PR #16). Vollständige
+Worker-Spezifikation: `.tasks/worker-step8c-task.md`. 12 Dateien (7 neu,
+5 geändert): `setup/host.client{,.spec}.ts`, `db/snapshot.repository{,.spec}.ts`,
+`setup/setup.component.ts` + `setup.html` + spec, dazu `statements.ts`,
+`fake-capacitor-sqlite.ts`, `booking-validation.ts`, `bookings.repository{,.spec}.ts`.
+
+**Design-Entscheidungen Batch C (26.10.):**
+- **Referenzvalidierung schließt Konto mit ein** (D7 „Konto = aktive
+  Snapshot-Referenz“ + Abnahme (d) „inaktive Referenz“): Reasons
+  `unknown_account`/`archived_account` neben `unknown_pool`/`archived_pool`/
+  `unknown_category`/`archived_category` und `no_snapshot` (keine
+  Snapshot-Meta → Erfassung verweigert mit sichtbarem Hinweis). Prüft in
+  save/update nach `validateExpense`, vor jeder Transaktion; bei Fehler wird
+  nichts persistiert (auch keine `device.id`-Meta).
+- **Logout-Auslegung** (D8 „Abmelden = Host-Logout + Token löschen“): Das
+  Bearer-Token liegt nicht in der lokalen DB (nur
+  `auth.host/username/password/expires_at`). `logout()` = best-effort
+  Re-Login (gespeicherte Zugangsdaten) + `authLogout` (Fehler ignoriert) +
+  Löschen der 4 auth-Meta-Keys; Snapshot bleibt lokal (Offline-Erfassung).
+- **Fehlerpfad connect:** Login ok, aber list/replace fehlerhaft → best-effort
+  Host-Logout (Token nicht im Host-Speicher hinterlassen), keine auth-Meta,
+  Snapshot unverändert (replace all-or-nothing).
+- Setup-View ist in Batch C eine eigenständige Zoneless-Component
+  (`selector: 'app-setup'`), noch nicht im App-Root eingebunden — das macht
+  Batch E (Tab-Shell + Routing).
+
 _Design-Fakten (verifiziert 23.10., Host-Seite):_
 - **Login:** `POST /api/v1/auth/login` `{username, password}` → 200
   `{token, expiresInMinutes}` / 401 `ErrorResponse{error:{code:'unauthorized',…}}`
