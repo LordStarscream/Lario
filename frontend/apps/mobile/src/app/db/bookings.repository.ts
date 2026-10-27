@@ -18,6 +18,10 @@ import {
 } from './expense-payload';
 import { payloadHash } from './sha256';
 import {
+  ReferenceCatalog,
+  SnapshotRepository,
+} from './snapshot.repository';
+import {
   DELETE_BOOKING,
   DELETE_OUTBOX,
   DELETE_SPLITS,
@@ -90,7 +94,16 @@ export class BookingValidationError extends Error {
       | 'invalid_category'
       | 'split_sum_mismatch'
       | 'tax_inconsistent'
-      | 'invalid_marked_amount',
+      | 'invalid_marked_amount'
+      // Batch C — Referenzvalidierung gegen den Stammdaten-Snapshot
+      // (Design D7):
+      | 'no_snapshot'
+      | 'unknown_account'
+      | 'archived_account'
+      | 'unknown_pool'
+      | 'archived_pool'
+      | 'unknown_category'
+      | 'archived_category',
     message: string,
   ) {
     super(message);
@@ -267,6 +280,7 @@ export class BookingsRepository {
   // Batch-A-Konvention).
   private readonly db = inject(LocalDatabase);
   private readonly meta = inject(MetaService);
+  private readonly snapshotRepository = inject(SnapshotRepository);
 
   /**
    * Serialisiert den Read-Modify-Write-Zyklus von `save` (Zähler lesen
@@ -307,7 +321,14 @@ export class BookingsRepository {
    * kein zweiter Aufruf eine abweichende ID anlegen (Read-Check-Write
    * ohne TOCTOU-Fenster). `save` ruft diese innerhalb der `saveChain`
    * auf; der Upsert ist idempotent.
+   *
+   * Öffentliche Fassade für die Einrichtung-View (Batch C): zeigt die
+   * Geräte-ID an; erzeugt sie bei Bedarf (idempotent).
    */
+  async getDeviceId(): Promise<string> {
+    return this.getOrCreateDeviceId();
+  }
+
   private async getOrCreateDeviceId(): Promise<string> {
     return this.db.withWriteTransaction(async (tx) => {
       const metaSelect = selectMetaSet(DEVICE_ID_META_KEY);
@@ -330,6 +351,10 @@ export class BookingsRepository {
     now: Date,
   ): Promise<{ bookingId: string; operationId: string }> {
     validateExpense(input);
+    // Referenzvalidierung gegen den Snapshot VOR der device.id-Anlage
+    // (Batch C, Design D7): bei Referenzfehler wird garantiert nichts
+    // persistiert — auch keine device.id-Meta (Design-Entscheidung 26.10.).
+    await this.validateSnapshotReferences(input);
     // Gerät-ID sicherstellen (einmalig, stabil; innerhalb der
     // saveChain serialisiert — kein Race beim ersten parallelen Save).
     const deviceId = await this.getOrCreateDeviceId();
@@ -383,6 +408,10 @@ export class BookingsRepository {
   ): Promise<void> {
     // Validierung VOR der Transaktion (rein — kein Datenbankzugriff).
     validateExpense(input);
+    // Referenzvalidierung gegen den Snapshot (Batch C, Design D7):
+    // außerhalb der Schreibtransaktion, konsistent mit `save` — die
+    // Schreibtransaktion enthält Status-Check und Schreib-Batch.
+    await this.validateSnapshotReferences(input);
     // Kanonische Split-IDs (gleiche Buchungs-ID + Position →
     // deterministisch, Payload und Datenbank bleiben identisch).
     const normalized = normalizeSplitIds(bookingId, input);
@@ -483,6 +512,71 @@ export class BookingsRepository {
           : mapOutboxStatus(outboxRows[0]['status']),
       splits: splitRows.map((row) => mapSplitRow(row)),
     };
+  }
+
+  /**
+   * Referenzvalidierung gegen den Stammdaten-Snapshot (Batch C,
+   * Design D7): Konto und alle Split-Pool/Kategorie-Referenzen müssen
+   * existieren und Status `active` haben. Läuft NACH `validateExpense`
+   * und VOR jeder Transaktion (in `save` auch VOR der device.id-Anlage);
+   * bei Fehler wird nichts persistiert.
+   *
+   * Die Steuerkategorie wird NICHT gegen den Snapshot geprüft
+   * (Host-Regel B6): sie ist eine optionale Kennzeichnung, die der
+   * Host interpretiert; Format/Konsistenz prüft `validateExpense`.
+   */
+  private async validateSnapshotReferences(
+    input: LocalExpenseInput,
+  ): Promise<void> {
+    const catalog: ReferenceCatalog | null =
+      await this.snapshotRepository.referenceCatalog();
+    if (catalog === null) {
+      throw new BookingValidationError(
+        'no_snapshot',
+        'Kein Stammdaten-Snapshot geladen — bitte in der Einrichtung verbinden',
+      );
+    }
+    const accountStatus = catalog.accounts.get(input.accountId);
+    if (accountStatus === undefined) {
+      throw new BookingValidationError(
+        'unknown_account',
+        `Unbekanntes Konto: ${input.accountId}`,
+      );
+    }
+    if (accountStatus !== 'active') {
+      throw new BookingValidationError(
+        'archived_account',
+        `Konto ist archiviert: ${input.accountId}`,
+      );
+    }
+    for (const split of input.splits) {
+      const poolStatus = catalog.pools.get(split.poolId);
+      if (poolStatus === undefined) {
+        throw new BookingValidationError(
+          'unknown_pool',
+          `Unbekannter Pool: ${split.poolId}`,
+        );
+      }
+      if (poolStatus !== 'active') {
+        throw new BookingValidationError(
+          'archived_pool',
+          `Pool ist archiviert: ${split.poolId}`,
+        );
+      }
+      const categoryStatus = catalog.categories.get(split.categoryId);
+      if (categoryStatus === undefined) {
+        throw new BookingValidationError(
+          'unknown_category',
+          `Unbekannte Kategorie: ${split.categoryId}`,
+        );
+      }
+      if (categoryStatus !== 'active') {
+        throw new BookingValidationError(
+          'archived_category',
+          `Kategorie ist archiviert: ${split.categoryId}`,
+        );
+      }
+    }
   }
 
   /**

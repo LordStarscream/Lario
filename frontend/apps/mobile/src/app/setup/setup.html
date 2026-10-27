@@ -1,0 +1,96 @@
+<section class="setup">
+  <h2>Einrichtung</h2>
+
+  <!-- Geräte-Status (Design D1) -->
+  <div class="setup__device">
+    <span>Geräte-ID:</span>
+    <code>{{ deviceId() ?? '…' }}</code>
+  </div>
+  @if (snapshotFetchedAt(); as fetchedAt) {
+    <div class="setup__snapshot">
+      <span>Stammdaten:</span>
+      <span>{{ formatFetchedAt(fetchedAt) }}</span>
+    </div>
+  }
+  @if (passwordRemembered()) {
+    <div class="setup__remembered">
+      <span>Passwort lokal gemerkt (nicht angezeigt)</span>
+    </div>
+  }
+
+  <!-- Host-Verbindung (Design D8) -->
+  <form (ngSubmit)="saveAndLoad()">
+    <div class="setup__field">
+      <label for="host-url">Host-Adresse</label>
+      <input
+        id="host-url"
+        type="url"
+        inputmode="url"
+        placeholder="http://192.168.1.226:8080"
+        name="hostUrl"
+        [ngModel]="url()"
+        (ngModelChange)="url.set($event)"
+        [disabled]="busy()"
+      />
+    </div>
+    <div class="setup__field">
+      <label for="host-username">Benutzername</label>
+      <input
+        id="host-username"
+        type="text"
+        name="username"
+        autocomplete="off"
+        [ngModel]="username()"
+        (ngModelChange)="username.set($event)"
+        [disabled]="busy()"
+      />
+    </div>
+    <div class="setup__field">
+      <label for="host-password">Passwort</label>
+      <input
+        id="host-password"
+        [type]="showPassword() ? 'text' : 'password'"
+        name="password"
+        autocomplete="new-password"
+        [ngModel]="password()"
+        (ngModelChange)="password.set($event)"
+        [disabled]="busy()"
+      />
+      <button
+        type="button"
+        class="setup__toggle"
+        (click)="showPassword.set(!showPassword())"
+      >
+        {{ showPassword() ? 'Verbergen' : 'Zeigen' }}
+      </button>
+    </div>
+
+    <div class="setup__actions">
+      <button type="submit" [disabled]="busy()">
+        {{ busy() ? 'Verbinde …' : 'Verbinden &amp; Stammdaten laden' }}
+      </button>
+      <button type="button" (click)="checkHealth()" [disabled]="busy()">
+        Health prüfen
+      </button>
+      <button type="button" (click)="disconnect()" [disabled]="busy()">
+        Abmelden
+      </button>
+    </div>
+  </form>
+
+  <!-- Status/Health (Design: Fehlerstatus + German-Meldung) -->
+  @if (health(); as healthValue) {
+    <div class="setup__health" [attr.data-health]="healthValue">
+      {{ healthValue === 'ok' ? 'Host erreichbar' : healthValue === 'unreachable' ? 'Host nicht erreichbar' : 'Host-Fehler' }}
+    </div>
+  }
+  @if (message(); as messageValue) {
+    <div
+      class="setup__message"
+      [attr.data-status]="status()"
+      role="status"
+    >
+      {{ messageValue }}
+    </div>
+  }
+</section>
