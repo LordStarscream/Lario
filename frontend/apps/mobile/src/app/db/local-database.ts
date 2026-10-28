@@ -46,6 +46,32 @@ import { SCHEMA_STATEMENTS, type SqlSet } from './statements';
  * (`Database.executeSet()`) liest `values` für jedes Element
  * zwingend und wirft ohne es. `toPluginSets()` normalisiert jedes
  * Element, auch parameterlose Sets (`values: []`).
+ *
+ * Schreib-Serialisierung (Review-Befund P2, Batch B): Alle
+ * Schreiboperationen (`executeSet`, `withWriteTransaction`) werden auf
+ * einer Connection-Operations-Kette (`opChain`) serialisiert. Eine
+ * offene Schreibtransaktion hält die Connection über die gesamte
+ * Callback-Dauer; andere Schreiboperationen warten bis nach
+ * COMMIT/ROLLBACK. Leseoperationen (`query`) bleiben außerhalb der
+ * Kette: Auf derselben Connection sehen sie den Zustand der offenen
+ * Transaktion ohnehin.
+ *
+ * Transaktionssteuerung (Review-Befund P1, 3. Runde): `withWrite-
+ * Transaction` nutzt die nativen Plugin-Methoden
+ * `beginTransaction`/`commitTransaction`/`rollbackTransaction` —
+ * KEINE Steuer-Statements (`BEGIN …`/`COMMIT`/`ROLLBACK`) per
+ * `run()`. Grund: `run()`/`executeSet()` haben laut Plugin-Vertrag
+ * 8.1.1 den Default `transaction: true` („Enable / Disable
+ * transactions, default Enable“) — das Plugin startet EIGENS eine
+ * Transaktion vor dem Statement. Ein `BEGIN` per `run()` ohne
+ * `transaction: false` würde auf Android verschachteln und mit
+ * „cannot start a transaction within a transaction“ fehlschlagen.
+ * Auf Android 8.1.1 entspricht `beginTransaction()`
+ * `SQLiteDatabase.beginTransaction()` (deferred, Write-Lock);
+ * auf der einzigen RW-Connection ist das zu IMMEDIATE äquivalent
+ * (kein konkurrierender Writer). Die Callback-Statements laufen
+ * weiterhin mit `transaction: false` (keine verschachtelte
+ * Plugin-Transaktion).
  */
 @Injectable({ providedIn: 'root' })
 export class LocalDatabase {
@@ -75,6 +101,16 @@ export class LocalDatabase {
    * Fehlschlag wird es auf null gesetzt, damit ein Retry startet.
    */
   private initializing: Promise<void> | null = null;
+
+  /**
+   * Connection-Operations-Kette (Review-Befund P2, Batch B): Alle
+   * Schreiboperationen (executeSet, withWriteTransaction) werden auf
+   * derselben Connection nacheinander ausgeführt — eine offene
+   * Schreibtransaktion hält die Connection über die gesamte
+   * Callback-Dauer; andere Schreiboperationen warten bis nach
+   * COMMIT/ROLLBACK.
+   */
+  private opChain: Promise<unknown> = Promise.resolve();
 
   /**
    * DB öffnen und Schema idempotent anlegen (Neustart-sicher).
@@ -157,13 +193,19 @@ export class LocalDatabase {
    * Satz von SQL-Sets atomar ausführen (executeSet, transaction: true).
    * Jedes Element wird an der Plugin-Grenze auf ein `values`-Array
    * normalisiert (P1: Android wirft ohne es).
+   *
+   * Serialisiert auf der Connection-Operations-Kette (P2, Batch B):
+   * Eine laufende withWriteTransaction-Transaktion hält die Connection;
+   * dieser Aufruf wartet bis nach COMMIT/ROLLBACK.
    */
   async executeSet(sets: SqlSet[]): Promise<void> {
-    await CapacitorSQLite.executeSet({
-      database: LocalDatabase.DbName,
-      set: toPluginSets(sets),
-      readonly: false, // nur die RW-Connection ist angelegt
-      transaction: true,
+    await this.serialize(async () => {
+      await CapacitorSQLite.executeSet({
+        database: LocalDatabase.DbName,
+        set: toPluginSets(sets),
+        readonly: false, // nur die RW-Connection ist angelegt
+        transaction: true,
+      });
     });
   }
 
@@ -171,6 +213,10 @@ export class LocalDatabase {
    * Query ausführen und die Ergebniszeilen normalisieren (mapRows).
    * `values` ist im Plugin-Vertrag Pflichtfeld — auch ohne Parameter
    * (Android verwirft Aufrufe ohne `values`-Feld; daher Default `[]`).
+   *
+   * Leseoperationen laufen OHNE Operations-Kette (P2, Batch B): Auf
+   * derselben Connection sind die Schreibzugriffe einer offenen
+   * Transaktion derselben Connection sichtbar.
    */
   async query<T>(statement: string, values: unknown[] = []): Promise<T[]> {
     const result = await CapacitorSQLite.query({
@@ -181,6 +227,120 @@ export class LocalDatabase {
     });
     return mapRows<T>(result.values ?? []);
   }
+
+  /**
+   * Native Schreibtransaktion (Review-Befund P2, Batch B; P1, 3. Runde):
+   * beginTransaction → Callback → commitTransaction; bei Fehler
+   * rollbackTransaction (kein Teilzustand).
+   *
+   * - Nativen Plugin-Transaktionsmethoden, keine Steuer-Statements per
+   *   `run()`: `run()` hat den Plugin-Default `transaction: true`
+   *   (das Plugin startet selbst eine Transaktion) — ein `BEGIN` per
+   *   `run()` würde auf Android verschachteln und fehlschlagen (P1).
+   *   Siehe Klassen-Doku „Transaktionssteuerung“.
+   * - Die gesamte Callback-Dauer hält die Connection (Operations-Kette);
+   *   andere Schreiboperationen warten bis nach COMMIT/ROLLBACK.
+   * - Der Callback erhält Query-/Write-Methoden auf derselben Connection;
+   *   deren Statements laufen OHNE eigene automatische Transaktion
+   *   (`transaction: false`) — keine verschachtelte Transaktion.
+   *   Der Callback soll die Handle-Methoden verwenden, nicht die
+   *   öffentlichen executeSet/query (die würden auf ihre eigene
+   *   Sperre warten → Deadlock).
+   * - Init wird idempotent sichergestellt (bereits initialisiert:
+   *   sofort no-op).
+   */
+  withWriteTransaction<T>(
+    callback: (tx: LocalDatabaseTransaction) => Promise<T>,
+  ): Promise<T> {
+    return this.serialize(async () => {
+      await this.init();
+      await CapacitorSQLite.beginTransaction({
+        database: LocalDatabase.DbName,
+      });
+      try {
+        const result = await callback({
+          query: <R>(statement: string, values?: unknown[]) =>
+            this.queryInternal<R>(statement, values ?? []),
+          executeSet: (sets: SqlSet[]) => this.executeSetInternal(sets),
+        });
+        await CapacitorSQLite.commitTransaction({
+          database: LocalDatabase.DbName,
+        });
+        return result;
+      } catch (error) {
+        try {
+          await CapacitorSQLite.rollbackTransaction({
+            database: LocalDatabase.DbName,
+          });
+        } catch {
+          // ROLLBACK-Scheitern verdeckt den Originalfehler nicht
+          // (Android-Contract: rollbackTransaction ist ohne aktive
+          // Transaktion ein no-op — der catch bleibt als Defensive).
+        }
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Query ohne Operations-Kette (nur innerhalb des Transaktions-
+   * Callbacks verwenden).
+   */
+  private async queryInternal<T>(
+    statement: string,
+    values: unknown[],
+  ): Promise<T[]> {
+    const result = await CapacitorSQLite.query({
+      database: LocalDatabase.DbName,
+      statement,
+      values,
+      readonly: false,
+    });
+    return mapRows<T>(result.values ?? []);
+  }
+
+  /**
+   * SQL-Sets ohne automatische Transaktion (transaction: false) und
+   * ohne Operations-Kette ausführen (nur innerhalb des Transaktions-
+   * Callbacks verwenden).
+   */
+  private async executeSetInternal(sets: SqlSet[]): Promise<void> {
+    await CapacitorSQLite.executeSet({
+      database: LocalDatabase.DbName,
+      set: toPluginSets(sets),
+      readonly: false,
+      transaction: false,
+    });
+  }
+
+  /**
+   * Operation auf der Connection-Operations-Kette serialisieren
+   * (P2, Batch B). Fehler brechen die Kette nicht: die nächste
+   * Operation wird weiterhin gestartet (`.then(next, next)`-Form).
+   */
+  private serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const promise = this.opChain.then(operation, operation);
+    // Kette weiterführen, egal ob Erfolg oder Fehler:
+    this.opChain = promise.then(
+      () => undefined,
+      () => undefined,
+    );
+    return promise;
+  }
+}
+
+/**
+ * Transaktions-Handle (Review-Befund P2, Batch B): Query-/Write-
+ * Methoden auf derselben Connection innerhalb einer offenen
+ * withWriteTransaction-Transaktion. Statements laufen ohne eigene
+ * automatische Transaktion (transaction: false) — keine verschachtelte
+ * Transaktion.
+ */
+export interface LocalDatabaseTransaction {
+  /** Query innerhalb der Transaktion (gleiche Connection). */
+  query<T>(statement: string, values?: unknown[]): Promise<T[]>;
+  /** SQL-Sets innerhalb der Transaktion ausführen (transaction: false). */
+  executeSet(sets: SqlSet[]): Promise<void>;
 }
 
 /**

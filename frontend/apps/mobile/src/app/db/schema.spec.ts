@@ -14,7 +14,18 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { deleteMetaSet, SCHEMA_STATEMENTS, selectMetaSet, upsertMetaSet } from './statements';
+import {
+  DELETE_BOOKING,
+  DELETE_SPLITS,
+  INSERT_BOOKING,
+  INSERT_OUTBOX,
+  INSERT_SPLIT,
+  SCHEMA_STATEMENTS,
+  UPDATE_OUTBOX_PAYLOAD,
+  deleteMetaSet,
+  selectMetaSet,
+  upsertMetaSet,
+} from './statements';
 
 /** Ein Set-Element (entspricht `SqlSet` aus statements.ts). */
 interface TestSqlSet {
@@ -57,6 +68,14 @@ function querySet(db: DatabaseSync, set: TestSqlSet): string[] {
   const values = (set.values ?? []) as (string | number | bigint | null)[];
   const rows = db.prepare(set.statement).all(...values) as { value: string }[];
   return rows.map((row) => row.value);
+}
+
+/** Zeilenzahl einer Tabelle (B10-Assertions; `table` ist Test-const). */
+function count(db: DatabaseSync, table: string): number {
+  const rows = db
+    .prepare(`SELECT COUNT(*) AS count FROM ${table}`)
+    .all() as { count: number }[];
+  return rows[0]?.count ?? 0;
 }
 
 describe('Batch-A-Schema (echte SQLite via node:sqlite)', () => {
@@ -269,5 +288,102 @@ describe('Batch-A-Schema (echte SQLite via node:sqlite)', () => {
     // Delete: danach wieder leer.
     executeSet(db, deleteMetaSet('sync.cursor'));
     expect(querySet(db, selectMetaSet('sync.cursor'))).toEqual([]);
+  });
+
+  // ── Batch B (Design D2/D4/D7): Speicherinvarianten auf echter SQLite (Review B10) ──
+  describe('Batch B — Speicherinvarianten (echte SQLite, Review B10)', () => {
+    const TS = '2026-11-01T00:00:00.000Z';
+
+    /** Buchung + Splits in einer Transaktion anlegen (Split-IDs: `<id>-s1`, …). */
+    const insertBookingWithSplits = (bookingId: string, total: number, splits: number[]): void => {
+      runScript(db, [
+        { statement: INSERT_BOOKING, values: [bookingId, '2026-11-01', 'expense', 'acc-1', total, 'note', null, TS] },
+        ...splits.map((amount, i) => ({
+          statement: INSERT_SPLIT,
+          values: [`${bookingId}-s${i + 1}`, bookingId, amount, 'pool-1', 'cat-1', null, null, null, null, null, null],
+        })),
+      ]);
+    };
+
+    it('(1) Atomarität: Outbox-FK auf fehlende Buchung → ganzer D7-Batch rollt zurück', () => {
+      initSchema(db);
+      expect(() =>
+        runScript(db, [
+          { statement: INSERT_BOOKING, values: ['bk-1', '2026-11-01', 'expense', 'acc-1', 300, 'note', null, TS] },
+          { statement: INSERT_SPLIT, values: ['bk-1-s1', 'bk-1', 300, 'pool-1', 'cat-1', null, null, null, null, null, null] },
+          { statement: INSERT_OUTBOX, values: ['op-1', 'dev-1', 'expense', 'bk-ghost', '{}', 'h', null, 'queued', TS, TS] },
+        ]),
+      ).toThrow();
+      // Transaktion ist nach dem Fehler noch offen → explizit zurückrollen.
+      db.exec('ROLLBACK');
+      expect(count(db, 'bookings')).toBe(0);
+      expect(count(db, 'splits')).toBe(0);
+      expect(count(db, 'outbox')).toBe(0);
+    });
+
+    it('(2) Cascade: DELETE_BOOKING löscht abhängige Splits und Outbox-Zeilen', () => {
+      initSchema(db);
+      insertBookingWithSplits('bk-2', 300, [200, 100]);
+      runScript(db, [
+        { statement: INSERT_OUTBOX, values: ['op-2', 'dev-1', 'expense', 'bk-2', '{"v":1}', 'h', null, 'queued', TS, TS] },
+      ]);
+      expect(count(db, 'splits')).toBe(2);
+      expect(count(db, 'outbox')).toBe(1);
+      db.prepare(DELETE_BOOKING).run('bk-2');
+      expect(count(db, 'bookings')).toBe(0);
+      expect(count(db, 'splits')).toBe(0);
+      expect(count(db, 'outbox')).toBe(0);
+    });
+
+    it('(3) UPDATE_OUTBOX_PAYLOAD auf confirmed: 0 Zeilen, Zeile unverändert', () => {
+      initSchema(db);
+      const opId = 'op-3';
+      insertBookingWithSplits('bk-3', 300, [300]);
+      runScript(db, [
+        { statement: INSERT_OUTBOX, values: [opId, 'dev-1', 'expense', 'bk-3', '{"v":1}', 'h', null, 'queued', TS, TS] },
+      ]);
+      db.prepare("UPDATE outbox SET status = 'confirmed' WHERE operation_id = ?").run(opId);
+      // Status=confirmed → WHERE status='queued' trifft 0 Zeilen, kein Fehler.
+      expect(() => db.prepare(UPDATE_OUTBOX_PAYLOAD).run('{"v":2}', 'h2', TS, opId, 'queued')).not.toThrow();
+      const row = db
+        .prepare('SELECT status, payload FROM outbox WHERE operation_id = ?')
+        .get(opId) as { status: string; payload: string };
+      expect(row.status).toBe('confirmed');
+      expect(row.payload).toBe('{"v":1}');
+      expect(count(db, 'bookings')).toBe(1);
+      expect(count(db, 'splits')).toBe(1);
+    });
+
+    it('(4) Unique operation_id: zweites INSERT mit gleicher ID wirft', () => {
+      initSchema(db);
+      insertBookingWithSplits('bk-4', 300, [300]);
+      runScript(db, [
+        { statement: INSERT_OUTBOX, values: ['op-x', 'dev-1', 'expense', 'bk-4', '{"a":1}', 'h', null, 'queued', TS, TS] },
+      ]);
+      expect(() =>
+        runScript(db, [
+          { statement: INSERT_OUTBOX, values: ['op-x', 'dev-1', 'expense', 'bk-4', '{"b":2}', 'h', null, 'queued', TS, TS] },
+        ]),
+      ).toThrow();
+      db.exec('ROLLBACK');
+      expect(count(db, 'outbox')).toBe(1);
+    });
+
+    it('(5) Splits-Ersatz: DELETE_SPLITS + neuer Split → exakt eine Zeile, Buchung intakt', () => {
+      initSchema(db);
+      insertBookingWithSplits('bk-5', 300, [200, 100]);
+      expect(count(db, 'splits')).toBe(2);
+      runScript(db, [
+        { statement: DELETE_SPLITS, values: ['bk-5'] },
+        { statement: INSERT_SPLIT, values: ['bk-5-s1', 'bk-5', 150, 'pool-1', 'cat-1', null, null, null, null, null, null] },
+      ]);
+      expect(count(db, 'splits')).toBe(1);
+      expect(count(db, 'bookings')).toBe(1);
+      const row = db
+        .prepare('SELECT id, amount_cents FROM splits WHERE booking_id = ?')
+        .get('bk-5') as { id: string; amount_cents: number };
+      expect(row.id).toBe('bk-5-s1');
+      expect(row.amount_cents).toBe(150);
+    });
   });
 });
