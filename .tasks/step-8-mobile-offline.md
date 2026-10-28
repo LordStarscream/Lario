@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang + P3-Doku, verifiziert 24.10. (PR #16 offen) · Last updated: 24. Okt. 2026_
+_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (`abc521b`) + Transaktions-Nachgang (`f0ef94c`/`9a7ab6e`) + P3-Nachgang (`3ef7e8d`) + P1/P2-Nachgang R4 (`a1f2640`, `60295ea`) + Pflichtreferenz-Nachgang (`4a77890`), PR #16 offen (gepushed) · Last updated: 26. Okt. 2026_
 
 **Branches:**
 - Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
@@ -188,27 +188,84 @@ outbox.booking_id `REFERENCES bookings(id) ON DELETE CASCADE`. **Checks:**
 lint host+mobile grün, 225 Tests (host 130 + mobile 95), build:mobile grün.
 Keine Host-App-/Domain-Änderung, keine Produktivserver-URL.
 
-**P3-Positionen der Review (24.10. abgeschlossen):**
-- **P3-1 (Fake-Fidelity + irreführender Kommentar):** behoben durch `abc521b`
-      — der Fake cascadiert bei `DELETE_BOOKING` jetzt immer (statt RESTRICT
-      zu werfen); Kommentar in `statements.ts` berichtigt.
-- **P3-2 (`tsconfig.spec.json`, außerhalb der Spec-Dateiliste):** berechtigte,
-      minimale Abweichung — `+node`-Types nur für die Typprüfung der
-      `node:crypto`/`node:sqlite`-Specs; kein Runtime-Effekt, keine
-      Dependency.
-- **P3-3 (`local-database.spec.ts` geändert statt erweitert):** berechtigt —
-      Mock-Hoisting-Fix (Deferred-Closure), echtes TDZ-Problem mit dem
-      größeren Batch-B-Fake.
-- **P3-4 (info):** Die Spec-Abnahmekommandos nannten nicht existierende
-      Scripts; die Worker-Claims wurden im Review-Worktree selbst bestätigt.
+**Unabhängige Review Runden 3/4 (24.–26.10.2026, Berichte im Review-Worktree
+`Lario-worktrees/step-8b-review/REVIEW-*.md`):**
+- P1-Nachgang 3. Runde (nativen Transaktionsmethoden statt Steuer-Statements
+  per `run()`) → `f0ef94c`/`9a7ab6e`.
+- P3-Nachgang (Outbox-Cascade im DELETE_BOOKING-Handler, Stale-Kommentare,
+  Cascade-Tests) → `3ef7e8d`.
+- **P1-Nachgang R4 (Commit `a1f2640`, 26.10.):** `!relevant`-Steuerkennzeichnung
+  trägt keinen Teilbetrag (Domain-Regel `TaxMarking.ValidateSelf`, maßgeblich):
+  Payload `markedAmount: null` UND DB-Spalte `marked_amount_cents: NULL`
+  (davor: voller Splitbetrag in beiden → Host hätte die Operation im Sync
+  abgeworfen). Tests: expense-payload.spec.ts + bookings.repository.spec.ts
+  Abschnitt (l).
+- **P2-Nachgang R4 (Commit `60295ea`, 26.10.):** update/discard führen
+  Status-Prüfung und Schreib-Batch in EINER `withWriteTransaction` aus
+  (`loadQueued` nimmt das Transaktions-Handle) — davor bestand ein
+  Check-then-Write-Fenster (Status-Lese außerhalb der Transaktion, eigener
+  executeSet-Batch). Test Abschnitt (m): Status-SELECTs laufen mit
+  `manualTxActive = true` (neues `queryLog` im Fake, per `reset()` geleert).
 
-**Verifikation 24.10. (frischer Worktree auf `abc521b`):** `npm ci`,
-`npm run lint` (host+mobile) grün, `npm run test` 225 Tests grün (host 130 +
-mobile 95), `npm run build:mobile` grün. Branch anschließend auf main
-gebracht (Task-Doku-Konflikt: Main-Version behalten) — PR #16 ist jetzt
-mergekonfliktfrei.
+**Checks R4 (26.10.2026):** lint host+mobile grün, 240 Tests (host 130 +
+mobile 110), build:mobile grün. Pushed `3ef7e8d..60295ea`; PR #16 offen.
+
+**Transaktions-Nachgang (26.10.2026, Commit `f0ef94c`, Review-Worktree):**
+`LocalDatabase.withWriteTransaction` — native Schreibtransaktion
+(BEGIN IMMEDIATE → Callback → COMMIT, bei Fehler ROLLBACK, kein
+Teilzustand). Schreiboperationen (`executeSet`, `withWriteTransaction`)
+werden auf der Connection-Operations-Kette serialisiert: eine offene
+Transaktion hält die Connection, andere Schreibzugriffe warten bis nach
+COMMIT/ROLLBACK. Leseoperationen (`query`) laufen außerhalb der Kette;
+auf derselben Connection ist der Zustand der offenen Transaktion
+sichtbar. Der Transaktions-Callback erhält Query-/Write-Methoden auf
+derselben Connection ohne eigene automatische Transaktion
+(`transaction: false`, keine Verschachtelung).
+`BookingsRepository.getOrCreateDeviceId`: Read-Check-Write
+(SELECT→UPSERT) in einer atomaren Schreibtransaktion — kein TOCTOU-
+Fenster (zuvor: `meta.get` + `meta.set` als zwei getrennte
+Transaktionen, nur durch die `saveChain`-Serialisierung geschützt).
+Fake: manuelle Transaktionsunterstützung (Snapshot beim BEGIN,
+Restore beim ROLLBACK, Rollback uncommitteter Transaktion in
+`simulateRestart`, Verschachtelungs-Schutz gegen `executeSet`-
+Transaktionen). **Motivation:** Schritt 9 (Sync) braucht Read-Check-
+Write-Atomarität mit Statuswächtern auf der Outbox (Review P2-1 hatte
+den parallelen Mutationspfad ohne SQL-Statuswächter als Divergenz-Risiko
+benannt); die Geräte-ID ohne TOCTOU; Fundament für Batches C–E.
+8 neue Tests (Serialisierung, COMMIT/ROLLBACK, Sichtbarkeit uncommitteter
+Schreibzugriffe auf derselben Connection, Fehlertoleranz der Operations-
+Kette) + Test-Isolation (`afterEach restoreAllMocks`). **Checks:**
+lint grün, 233 Tests (host 130 + mobile 103), build:mobile grün,
+gepusht 26.10.2026 (PR #16 aktualisiert).
 
 ## Batch C — Snapshot + Setup (P3)
+
+**Status (26.10.):** Worker `e1376e78` läuft (Worktree `/tmp/lario-step8c`,
+Branch `step/8c-snapshot-setup` ab `27191db` = main + PR #16). Vollständige
+Worker-Spezifikation: `.tasks/worker-step8c-task.md`. 12 Dateien (7 neu,
+5 geändert): `setup/host.client{,.spec}.ts`, `db/snapshot.repository{,.spec}.ts`,
+`setup/setup.component.ts` + `setup.html` + spec, dazu `statements.ts`,
+`fake-capacitor-sqlite.ts`, `booking-validation.ts`, `bookings.repository{,.spec}.ts`.
+
+**Design-Entscheidungen Batch C (26.10.):**
+- **Referenzvalidierung schließt Konto mit ein** (D7 „Konto = aktive
+  Snapshot-Referenz“ + Abnahme (d) „inaktive Referenz“): Reasons
+  `unknown_account`/`archived_account` neben `unknown_pool`/`archived_pool`/
+  `unknown_category`/`archived_category` und `no_snapshot` (keine
+  Snapshot-Meta → Erfassung verweigert mit sichtbarem Hinweis). Prüft in
+  save/update nach `validateExpense`, vor jeder Transaktion; bei Fehler wird
+  nichts persistiert (auch keine `device.id`-Meta).
+- **Logout-Auslegung** (D8 „Abmelden = Host-Logout + Token löschen“): Das
+  Bearer-Token liegt nicht in der lokalen DB (nur
+  `auth.host/username/password/expires_at`). `logout()` = best-effort
+  Re-Login (gespeicherte Zugangsdaten) + `authLogout` (Fehler ignoriert) +
+  Löschen der 4 auth-Meta-Keys; Snapshot bleibt lokal (Offline-Erfassung).
+- **Fehlerpfad connect:** Login ok, aber list/replace fehlerhaft → best-effort
+  Host-Logout (Token nicht im Host-Speicher hinterlassen), keine auth-Meta,
+  Snapshot unverändert (replace all-or-nothing).
+- Setup-View ist in Batch C eine eigenständige Zoneless-Component
+  (`selector: 'app-setup'`), noch nicht im App-Root eingebunden — das macht
+  Batch E (Tab-Shell + Routing).
 
 _Design-Fakten (verifiziert 23.10., Host-Seite):_
 - **Login:** `POST /api/v1/auth/login` `{username, password}` → 200
@@ -258,6 +315,15 @@ _Design-Fakten (verifiziert 23.10., Host-Seite):_
 - **Form-Referenzen:** Formular filtert auf `status='active'` (D2); Steuer:
   D7 verlangt am FORM relevant→Steuerkategorie Pflicht (strenger als Host;
   Repository-B6 bleibt bei der Host-Regel: Kategorie optional bei relevant).
+- **Split-Pool/Kategorie (Folgeprüfung, P2-Review `abc521b`):** Batch B
+  (`4a77890`) referenziert `split.poolId`/`split.categoryId` bereits als
+  Pflicht (leer/leerzeichenig → `invalid_pool`/`invalid_category`, save+update,
+  vor jeder Transaktion; IDs werden NICHT still getrimmt/ersetzt). Die Prüfung
+  auf **Existenz + Status `active`** gegen den Host-Stammdaten-Snapshot gehört
+  hierher (Batch C), weil die lokale App die Stammdaten erst per
+  Snapshot-Anbindung kennt (D3) und ohne Snapshot ohnehin keine Erfassung
+  möglich ist (D8). Referenz-Existenz/Archivierung dort als Repository-
+  Invariante prüfen (nicht nur Formular-Filter).
 
 - [ ] `HostClient` (login → Token; GET accounts/pools/categories/tax-categories;
       health) auf Basis des generierten Clients, `OpenAPI.BASE`/`TOKEN` konfigurierbar
@@ -266,6 +332,11 @@ _Design-Fakten (verifiziert 23.10., Host-Seite):_
 - [ ] Einrichtung-View: Host-URL/Zugangsdaten, „Verbinden & Stammdaten laden“,
       Geräte-ID, Snapshot-Stand, Health-Prüfung, Abmelden (Host-Logout + Token löschen)
 - [ ] Tests: Snapshot-Wechsel atomar; Token-Flow; Abmeldung
+- [ ] **Folgeprüfung aus P2-Review (`abc521b`):** Split-`poolId`/`categoryId`
+      auf Existenz + Status `active` gegen Snapshot prüfen (Repository-Invariante
+      in save/update, Fehlergrund z. B. `unknown_pool`/`archived_pool`/
+      `unknown_category`/`archived_category`); Test: unbekannte und
+      archivierter Pool/Kategorie → `BookingValidationError`, nichts geschrieben
 
 ## Batch D — Ausgabeformular (P4)
 
