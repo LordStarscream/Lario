@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig inkl. P2-Nachgang (`abc521b`) + Transaktions-Nachgang (`f0ef94c`/`9a7ab6e`) + P3-Nachgang (`3ef7e8d`) + P1/P2-Nachgang R4 (`a1f2640`, `60295ea`) + Pflichtreferenz-Nachgang (`4a77890`), PR #16 offen (gepushed) · Last updated: 26. Okt. 2026_
+_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig (PR #16 offen), Batch C fertig inkl. Review-P2-Nachgang (`9f8319a`, gepushed) · Last updated: 28. Okt. 2026_
 
 **Branches:**
 - Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
@@ -240,12 +240,36 @@ gepusht 26.10.2026 (PR #16 aktualisiert).
 
 ## Batch C — Snapshot + Setup (P3)
 
-**Status (26.10.):** Worker `e1376e78` läuft (Worktree `/tmp/lario-step8c`,
-Branch `step/8c-snapshot-setup` ab `27191db` = main + PR #16). Vollständige
+**Status (28.10.):** Fertig (Worker `e1376e78`, Worktree `/tmp/lario-step8c`,
+Branch `step/8c-snapshot-setup` ab `27191db` = main + PR #16).
 Worker-Spezifikation: `.tasks/worker-step8c-task.md`. 12 Dateien (7 neu,
 5 geändert): `setup/host.client{,.spec}.ts`, `db/snapshot.repository{,.spec}.ts`,
 `setup/setup.component.ts` + `setup.html` + spec, dazu `statements.ts`,
 `fake-capacitor-sqlite.ts`, `booking-validation.ts`, `bookings.repository{,.spec}.ts`.
+**Unabhängige Review (28.10.):** 5×P2, 4×P3, kein P1 (Bericht im Review-
+Worktree). **P2-Nachgang (Commit `9f8319a`, gepushed):**
+- `withSerializedRead`/`LocalDatabaseReadHandle` (local-database): mehrteilige
+  Lese-Sektionen (`loadSnapshot`, `referenceCatalog`) auf der
+  Connection-Operations-Kette serialisiert — gegenüber parallelen
+  Schreibtransaktionen entweder vollständig vor oder nach, nie gemischter
+  alter/neuer Stand (P2-1/P2-3).
+- `MetaService.deleteMany`: zusammenhangsgeschützte auth-Meta-Gruppen in
+  EINER atomaren Transaktion löschen (P2-4).
+- Token-Logout statt Re-Login-Ersatzwiderruf (P2-2): ausgestellter Token in
+  der auth-Meta (`auth.token`); der Host widerruft pro Logout nur den
+  mitgesendeten Bearer (verifiziert: `AuthEndpoints`/`AuthTokenStore`) —
+  `logout()` widerruft genau den gemerkten Token. Bei Fehler NACH erfolgreichem
+  Login best-effort-Logout des ausgestellten Tokens (`HostClientError.token`).
+- Setup: Snapshot + auth-Meta in EINEM Persistenz-Batch (eine Transaktion);
+  Logout-Button/Banner auch für eingerichtete Geräte (P2-5).
+- Test-DI-Fix `bookings.repository.spec`: `SnapshotRepository` in den
+  Restart-Umgebungen — mit serialisierenden Lese-Sektionen wäre die
+  Root-Fallback-Instanz (ohne `init`) sonst in der Kette geblieben.
+- P3-Befunde dokumentiert, nicht ohne Freigabe implementiert (siehe
+  Review-Bericht).
+Prüfungen (28.10.): `ng test host` 130 + `ng test mobile` 159 grün, `ng lint`
+host + mobile grün, `ng build mobile` grün (DB-/Setup-Modul noch nicht im
+App-Graf — Einbindung in Batch E, dort wird es erst relevant).
 
 **Design-Entscheidungen Batch C (26.10.):**
 - **Referenzvalidierung schließt Konto mit ein** (D7 „Konto = aktive
@@ -255,14 +279,19 @@ Worker-Spezifikation: `.tasks/worker-step8c-task.md`. 12 Dateien (7 neu,
   Snapshot-Meta → Erfassung verweigert mit sichtbarem Hinweis). Prüft in
   save/update nach `validateExpense`, vor jeder Transaktion; bei Fehler wird
   nichts persistiert (auch keine `device.id`-Meta).
-- **Logout-Auslegung** (D8 „Abmelden = Host-Logout + Token löschen“): Das
-  Bearer-Token liegt nicht in der lokalen DB (nur
-  `auth.host/username/password/expires_at`). `logout()` = best-effort
-  Re-Login (gespeicherte Zugangsdaten) + `authLogout` (Fehler ignoriert) +
-  Löschen der 4 auth-Meta-Keys; Snapshot bleibt lokal (Offline-Erfassung).
+- **Logout-Auslegung** (D8 „Abmelden = Host-Logout + Token löschen“,
+  P2-Nachgang 28.10. überarbeitet): Der ausgestellte Sitzungstoken liegt in
+  der lokalen DB (`auth.token` neben `auth.host/username/password/expires_at`);
+  der Host stellt pro Login einen unabhängigen Token aus und widerruft beim
+  `authLogout` ausschließlich den mitgesendeten Bearer (verifiziert:
+  `AuthEndpoints`/`AuthTokenStore`). `logout()` = `authLogout` mit dem
+  gemerkten Token (best-effort, Fehler ignoriert) + atomares Löschen der 5
+  auth-Meta-Keys; KEIN Re-Login-Ersatzwiderruf. Snapshot bleibt lokal
+  (Offline-Erfassung).
 - **Fehlerpfad connect:** Login ok, aber list/replace fehlerhaft → best-effort
-  Host-Logout (Token nicht im Host-Speicher hinterlassen), keine auth-Meta,
-  Snapshot unverändert (replace all-or-nothing).
+  Host-Logout des ausgestellten Tokens (`HostClientError.token`, Token nicht
+  im Host-Speicher hinterlassen), keine auth-Meta, Snapshot unverändert
+  (replace all-or-nothing; P2-Nachgang 28.10.).
 - Setup-View ist in Batch C eine eigenständige Zoneless-Component
   (`selector: 'app-setup'`), noch nicht im App-Root eingebunden — das macht
   Batch E (Tab-Shell + Routing).
@@ -325,14 +354,14 @@ _Design-Fakten (verifiziert 23.10., Host-Seite):_
   möglich ist (D8). Referenz-Existenz/Archivierung dort als Repository-
   Invariante prüfen (nicht nur Formular-Filter).
 
-- [ ] `HostClient` (login → Token; GET accounts/pools/categories/tax-categories;
+- [x] `HostClient` (login → Token; GET accounts/pools/categories/tax-categories;
       health) auf Basis des generierten Clients, `OpenAPI.BASE`/`TOKEN` konfigurierbar
-- [ ] `SnapshotRepository`: atomarer Snapshot-Wechsel (eine `executeSet`: alle
+- [x] `SnapshotRepository`: atomarer Snapshot-Wechsel (eine `executeSet`: alle
       Snapshot-Tabellen ersetzen + `meta` fetchedAt) + Test
-- [ ] Einrichtung-View: Host-URL/Zugangsdaten, „Verbinden & Stammdaten laden“,
+- [x] Einrichtung-View: Host-URL/Zugangsdaten, „Verbinden & Stammdaten laden“,
       Geräte-ID, Snapshot-Stand, Health-Prüfung, Abmelden (Host-Logout + Token löschen)
-- [ ] Tests: Snapshot-Wechsel atomar; Token-Flow; Abmeldung
-- [ ] **Folgeprüfung aus P2-Review (`abc521b`):** Split-`poolId`/`categoryId`
+- [x] Tests: Snapshot-Wechsel atomar; Token-Flow; Abmeldung
+- [x] **Folgeprüfung aus P2-Review (`abc521b`):** Split-`poolId`/`categoryId`
       auf Existenz + Status `active` gegen Snapshot prüfen (Repository-Invariante
       in save/update, Fehlergrund z. B. `unknown_pool`/`archived_pool`/
       `unknown_category`/`archived_category`); Test: unbekannte und
