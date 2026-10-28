@@ -185,10 +185,11 @@ describe('SetupComponent (Batch C)', () => {
     expect(dbState.accounts.size).toBe(1);
     expect(dbState.accounts.get('acc-1')?.name).toBe('Giro');
     expect(dbState.pools.size).toBe(1);
-    // auth-Meta: alle 4 Keys.
+    // auth-Meta: alle 5 Keys (inkl. Sitzungstoken, P2 Batch-C-Review).
     expect(dbState.meta.get('auth.host')).toBe('http://192.168.1.226:8080');
     expect(dbState.meta.get('auth.username')).toBe('user');
     expect(dbState.meta.get('auth.password')).toBe('secret');
+    expect(dbState.meta.get('auth.token')).toBe('tok-1');
     expect(dbState.meta.get('auth.expires_at')).toBeTruthy();
     expect(comp.snapshotFetchedAt()).not.toBeNull();
     // Bearer-Status für Folgeaufrufe (Design D8).
@@ -198,7 +199,7 @@ describe('SetupComponent (Batch C)', () => {
     expect(mockFetch).toHaveBeenCalledTimes(5);
   });
 
-  it('saveAndLoad: Login ok, listPools 500 → Fehler, keine auth-Meta, best-effort Logout', async () => {
+  it('saveAndLoad: Login ok, listPools 500 → Fehler, keine auth-Meta, Widerruf des ausgestellten Tokens (kein Re-Login)', async () => {
     setFields();
     const fallback = defaultRouter();
     mockFetch.mockImplementation((url: string) =>
@@ -218,12 +219,16 @@ describe('SetupComponent (Batch C)', () => {
     expect(dbState.meta.get('auth.expires_at')).toBeUndefined();
     // Snapshot-Tabelle leer (replace lief nicht).
     expect(dbState.accounts.size).toBe(0);
-    // Genau 7 Calls: Login + 4 Listen + Logout-Login + Logout.
-    expect(mockFetch).toHaveBeenCalledTimes(7);
+    // Genau 6 Calls: Login + 4 Listen + Logout — der widerrufende Logout
+    // nutzt den ausgestellten Token (kein Re-Login, P2 Batch-C-Review).
+    expect(mockFetch).toHaveBeenCalledTimes(6);
+    expect(mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/login'),
+    )).toHaveLength(1);
     expect(mockFetch.mock.calls.filter(([url]) =>
       String(url).includes('/api/v1/auth/logout'),
     )).toHaveLength(1);
-    // Bearer-Status nach dem best-effort Logout gelöscht.
+    // Bearer-Status nach dem best-effort Widerruf gelöscht.
     expect(OpenAPI.TOKEN).toBeUndefined();
   });
 
@@ -262,7 +267,7 @@ describe('SetupComponent (Batch C)', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it('disconnect mit auth-Meta: Logout-Call, auth-Meta weg, Snapshot bleibt', async () => {
+  it('disconnect mit auth-Meta: Widerruf des gemerkten Tokens, auth-Meta weg, Snapshot bleibt', async () => {
     setFields();
     await comp.saveAndLoad();
     expect(comp.snapshotFetchedAt()).not.toBeNull();
@@ -274,14 +279,19 @@ describe('SetupComponent (Batch C)', () => {
     expect(dbState.meta.get('auth.host')).toBeUndefined();
     expect(dbState.meta.get('auth.username')).toBeUndefined();
     expect(dbState.meta.get('auth.password')).toBeUndefined();
+    expect(dbState.meta.get('auth.token')).toBeUndefined();
     expect(dbState.meta.get('auth.expires_at')).toBeUndefined();
     expect(OpenAPI.TOKEN).toBeUndefined();
     // Snapshot bleibt lokal (Offline-Erfassung).
     expect(dbState.accounts.size).toBe(1);
     expect(comp.snapshotFetchedAt()).not.toBeNull();
     expect(comp.passwordRemembered()).toBe(false);
-    // 5 Calls (connect) + 2 Calls (Logout: Re-Login + authLogout).
-    expect(mockFetch).toHaveBeenCalledTimes(7);
+    // 5 Calls (connect) + 1 Call (Widerruf des gemerkten Tokens, kein
+    // Re-Login, P2 Batch-C-Review).
+    expect(mockFetch).toHaveBeenCalledTimes(6);
+    expect(mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/login'),
+    )).toHaveLength(1);
     expect(mockFetch.mock.calls.filter(([url]) =>
       String(url).includes('/api/v1/auth/logout'),
     )).toHaveLength(1);
@@ -315,6 +325,103 @@ describe('SetupComponent (Batch C)', () => {
     expect(comp.status()).toBe('success');
     // Genau ein fetch-Batch: 1 Login + 4 Listen (kein zweiter Login).
     expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/login'),
+    )).toHaveLength(1);
+  });
+
+  it('P2 Batch-C-Review: connect-Fehler nach erfolgreichem Login widerruft den ausgestellten Token ohne Re-Login', async () => {
+    setFields();
+    const fallback = defaultRouter();
+    mockFetch.mockImplementation((url: string) =>
+      String(url).includes('/api/v1/accounts')
+        ? Promise.resolve(jsonResponse(401, { message: 'expired' }))
+        : fallback(url),
+    );
+
+    await comp.saveAndLoad();
+
+    expect(comp.status()).toBe('error');
+    // 6 Calls: Login + 4 Stammdaten-Listen (Promise.all feuert alle,
+    // auch wenn accounts 401 liefert) + Logout mit ausgestelltem Token.
+    expect(mockFetch).toHaveBeenCalledTimes(6);
+    expect(mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/login'),
+    )).toHaveLength(1);
+    expect(mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/logout'),
+    )).toHaveLength(1);
+    // Keine auth-Meta, Snapshot unverändert.
+    expect(dbState.meta.get('auth.host')).toBeUndefined();
+    expect(dbState.accounts.size).toBe(0);
+  });
+
+  it('P2 Batch-C-Review: disconnect während laufendem connect wird ignoriert (Busy-Sperre)', async () => {
+    setFields();
+    let releaseLogin!: (value: Response) => void;
+    const pendingLogin = new Promise<Response>((resolve) => {
+      releaseLogin = resolve;
+    });
+    const fallback = defaultRouter();
+    mockFetch.mockImplementation((url: string) =>
+      String(url).includes('/api/v1/auth/login')
+        ? pendingLogin
+        : fallback(url),
+    );
+
+    const connect = comp.saveAndLoad();
+    // Parallel gestarteter disconnect sieht die Busy-Sperre und ignoriert —
+    // er kann die (noch folgenden) gemerkten Zugangsdaten nicht löschen.
+    await comp.disconnect();
+    expect(comp.status()).toBe('idle'); // disconnect hat nichts geschrieben
+
+    releaseLogin(jsonResponse(200, { token: 'tok-1', expiresInMinutes: 30 }));
+    await connect;
+
+    expect(comp.status()).toBe('success');
+    // Neu gemerkte auth-Meta ist vollständig (disconnect lief nicht).
+    expect(dbState.meta.get('auth.host')).toBe('http://192.168.1.226:8080');
+    expect(dbState.meta.get('auth.token')).toBe('tok-1');
+    // 1 Login + 4 Listen (kein Logout-Call).
+    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/logout'),
+    )).toHaveLength(0);
+  });
+
+  it('P2 Batch-C-Review: connect während laufendem disconnect wird ignoriert (Busy-Sperre)', async () => {
+    setFields();
+    await comp.saveAndLoad(); // auth-Meta vorhanden
+    let releaseLogout!: () => void;
+    const pendingLogout = new Promise<void>((resolve) => {
+      releaseLogout = resolve;
+    });
+    mockFetch.mockImplementation((url: string) => {
+      if (String(url).includes('/api/v1/auth/logout')) {
+        return pendingLogout.then(
+          () => jsonResponse(204, {}),
+        );
+      }
+      return defaultRouter()(url);
+    });
+
+    const disconnect = comp.disconnect();
+    // Parallel gestarter connect wird von der Busy-Sperre abgewehrt —
+    // er kann die auth-Meta nicht parallel neu merken, während sie
+    // entfernt wird.
+    await comp.saveAndLoad();
+    expect(comp.status()).toBe('success'); // erster connect-Status, unverändert
+
+    releaseLogout();
+    await disconnect;
+
+    expect(comp.status()).toBe('success'); // disconnect-Status
+    expect(comp.message()).toContain('Abgemeldet');
+    // auth-Meta vollständig entfernt (connect lief nicht).
+    expect(dbState.meta.get('auth.host')).toBeUndefined();
+    expect(dbState.meta.get('auth.token')).toBeUndefined();
+    // 5 (connect) + 1 (Logout) Calls — kein zweiter connect-Batch.
+    expect(mockFetch).toHaveBeenCalledTimes(6);
     expect(mockFetch.mock.calls.filter(([url]) =>
       String(url).includes('/api/v1/auth/login'),
     )).toHaveLength(1);

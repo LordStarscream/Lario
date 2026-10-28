@@ -283,8 +283,35 @@ export class LocalDatabase {
   }
 
   /**
+   * Serialisierte Lese-Sektion auf derselben Connection (P2, Batch-C-
+   * Review): Das Callback läuft auf der Connection-Operations-Kette —
+   * während es ausgeführt wird, können kein `executeSet` und keine
+   * `withWriteTransaction` dazwischentreten (sie warten hinter der
+   * Sektion). Mehrteilige Lesungen (z. B. Snapshot: Zeitstempel + vier
+   * Tabellen) sind damit konsistent mit parallelen Schreibtransaktionen:
+   * ein konkurrierendes `replace` ist entweder vollständig VOR oder
+   * vollständig NACH der Sektion committet — die Sektion liefert
+   * niemals einen gemischten alten/neuen Stand.
+   *
+   * Das Callback MUSS die Handle-Methode `query` verwenden — nicht die
+   * öffentliche `query`/`executeSet` (die würden hinter der eigenen
+   * Sektion in der Kette warten → Selbst-Deadlock).
+   */
+  withSerializedRead<T>(
+    callback: (db: LocalDatabaseReadHandle) => Promise<T>,
+  ): Promise<T> {
+    return this.serialize(async () => {
+      await this.init();
+      return callback({
+        query: <R>(statement: string, values?: unknown[]) =>
+          this.queryInternal<R>(statement, values ?? []),
+      });
+    });
+  }
+
+  /**
    * Query ohne Operations-Kette (nur innerhalb des Transaktions-
-   * Callbacks verwenden).
+   * Callbacks bzw. der Lese-Sektion verwenden).
    */
   private async queryInternal<T>(
     statement: string,
@@ -341,6 +368,15 @@ export interface LocalDatabaseTransaction {
   query<T>(statement: string, values?: unknown[]): Promise<T[]>;
   /** SQL-Sets innerhalb der Transaktion ausführen (transaction: false). */
   executeSet(sets: SqlSet[]): Promise<void>;
+}
+
+/**
+ * Lese-Handle für `withSerializedRead` (P2, Batch-C-Review): Query auf
+ * derselben Connection innerhalb einer serialisierten Lese-Sektion —
+ * ohne Operations-Kette, damit die Sektion nicht auf sich selbst wartet.
+ */
+export interface LocalDatabaseReadHandle {
+  query<T>(statement: string, values?: unknown[]): Promise<T[]>;
 }
 
 /**

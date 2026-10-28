@@ -414,8 +414,19 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
 
       // App-Neustart: Prozessregister leer, DB-Datei bleibt erhalten.
       dbState.simulateRestart();
+      // Der „neue Prozess“ erhält ALLE Provider im selben Environment
+      // (P2, Batch-C-Review): Lese-/Schreibsektionen initialisieren die
+      // Connection selbst — eine über die Root-Umgebung gefallene
+      // SnapshotRepository-Instanz würde eine zweite, nie initialisierte
+      // LocalDatabase erzeugen, deren init() die bereits bestehende
+      // Prozess-Connection doppelt anlegen wollte ("already exists").
       const env2 = createEnvironmentInjector(
-        [LocalDatabase, MetaService, BookingsRepository],
+        [
+          LocalDatabase,
+          MetaService,
+          SnapshotRepository,
+          BookingsRepository,
+        ],
         TestBed.inject(EnvironmentInjector),
       );
       const db2 = env2.get(LocalDatabase);
@@ -469,12 +480,20 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
 
     it('fehlendes Plugin (createConnection schlägt fehl): init und save werfen, nichts wird geschrieben', async () => {
       dbState.failOnCreateConnection = true;
-      // „Neuer Prozess“: das Verbindungsregister ist leer (die in
+      // „Neuer Prozess": das Verbindungsregister ist leer (die in
       // beforeEach initialisierte Connection existiert nicht mehr).
       dbState.simulateRestart();
 
+      // Alle Provider im selben Environment (P2, Batch-C-Review) —
+      // s. Test (a): eine Root-Instanz würde eine zweite, nie
+      // initialisierte LocalDatabase erzeugen.
       const env2 = createEnvironmentInjector(
-        [LocalDatabase, MetaService, BookingsRepository],
+        [
+          LocalDatabase,
+          MetaService,
+          SnapshotRepository,
+          BookingsRepository,
+        ],
         TestBed.inject(EnvironmentInjector),
       );
       const db2 = env2.get(LocalDatabase);
@@ -484,10 +503,12 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
         'simulated connection failure',
       );
       // Batch C (Design D7): save prüft zuerst die Referenzen gegen
-      // den Snapshot — ohne Connection wirft die Snapshot-Query
-      // (nichts wird geschrieben, keine Teilstate).
+      // den Snapshot. Die Lese-Sektion initialisiert die Connection
+      // selbst (P2, Batch-C-Review) — bei fehlendem Plugin schlägt
+      // save() damit bereits im init() der Lese-Sektion fehl (nichts
+      // wird geschrieben, keine Teilstate).
       await expect(repo2.save(SAMPLE_INPUT, FIXED_NOW)).rejects.toThrow(
-        'No available connection',
+        'simulated connection failure',
       );
 
       // Kein Teilzustand (direkt am Fake-State — ohne Connection sind

@@ -292,6 +292,7 @@ describe('HostClient (Batch C)', () => {
         AUTH_META_KEYS.host,
         AUTH_META_KEYS.username,
         AUTH_META_KEYS.password,
+        AUTH_META_KEYS.token,
         AUTH_META_KEYS.expiresAt,
       ]) {
         expect(dbState.meta.get(key)).toBeUndefined();
@@ -299,46 +300,55 @@ describe('HostClient (Batch C)', () => {
     });
   });
 
-  describe('logout (best-effort)', () => {
-    it('Login + Logout-Call; Logout-Fehler werden geschluckt; TOKEN am Ende undefined', async () => {
-      mockFetch
-        .mockResolvedValueOnce(jsonResponse(200, LOGIN_BODY)) // Re-Login
-        .mockResolvedValueOnce(jsonResponse(500, {})); // authLogout → Fehler
+  describe('logout (best-effort; P2 Batch-C-Review: Token statt Re-Login)', () => {
+    it('Logout-Call mit ausgestelltem Token (kein Re-Login); Logout-Fehler werden geschluckt; TOKEN am Ende undefined', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse(500, {})); // authLogout → Fehler
       await expect(
-        hostClient.logout('http://lario-test', 'user', 'pw'),
+        hostClient.logout('http://lario-test', 'tok-1'),
       ).resolves.toBeUndefined();
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(
-        mockFetch.mock.calls[1][0] && String(mockFetch.mock.calls[1][0]),
-      ).toContain('/api/v1/auth/logout');
+      // Genau 1 Call: authLogout (kein Re-Login mehr).
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(String(mockFetch.mock.calls[0][0])).toContain(
+        '/api/v1/auth/logout',
+      );
       expect(OpenAPI.TOKEN).toBeUndefined();
     });
 
-    it('Re-Login schlägt fehl: kein throw, TOKEN bleibt undefined', async () => {
+    it('authLogout-Netzfehler: kein throw, TOKEN wird undefined', async () => {
       mockFetch.mockRejectedValue(new TypeError('fetch failed'));
       await expect(
-        hostClient.logout('http://lario-test', 'user', 'pw'),
+        hostClient.logout('http://lario-test', 'tok-1'),
       ).resolves.toBeUndefined();
       expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(OpenAPI.TOKEN).toBeUndefined();
+    });
+
+    it('leerer Token: No-Op (kein fetch, z. B. Login war nie erfolgreich)', async () => {
+      await expect(
+        hostClient.logout('http://lario-test', ''),
+      ).resolves.toBeUndefined();
+      expect(mockFetch).not.toHaveBeenCalled();
       expect(OpenAPI.TOKEN).toBeUndefined();
     });
   });
 
   describe('auth-Meta', () => {
-    it('loadAuthMeta: null wenn Key fehlt, sonst Werte; clearAuthMeta löscht alle 4', async () => {
+    it('loadAuthMeta: null wenn Key fehlt, sonst Werte; clearAuthMeta löscht alle 5', async () => {
       expect(await hostClient.loadAuthMeta()).toBeNull();
 
-      // Drei von vier Keys → weiterhin null.
+      // Vier von fünf Keys → weiterhin null.
       await meta.set(AUTH_META_KEYS.host, 'http://h');
       await meta.set(AUTH_META_KEYS.username, 'u');
       await meta.set(AUTH_META_KEYS.password, 'p');
       expect(await hostClient.loadAuthMeta()).toBeNull();
 
+      await meta.set(AUTH_META_KEYS.token, 'tok-h');
       await meta.set(AUTH_META_KEYS.expiresAt, '2026-11-26T00:00:00.000Z');
       expect(await hostClient.loadAuthMeta()).toEqual({
         host: 'http://h',
         username: 'u',
         password: 'p',
+        token: 'tok-h',
         expiresAt: '2026-11-26T00:00:00.000Z',
       });
 
@@ -348,6 +358,7 @@ describe('HostClient (Batch C)', () => {
         AUTH_META_KEYS.host,
         AUTH_META_KEYS.username,
         AUTH_META_KEYS.password,
+        AUTH_META_KEYS.token,
         AUTH_META_KEYS.expiresAt,
       ]) {
         expect(dbState.meta.get(key)).toBeUndefined();

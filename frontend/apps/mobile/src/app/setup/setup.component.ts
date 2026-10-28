@@ -1,8 +1,9 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { BookingsRepository } from '../db/bookings.repository';
-import { MetaService } from '../db/meta.service';
+import { LocalDatabase } from '../db/local-database';
 import { SnapshotRepository } from '../db/snapshot.repository';
+import { upsertMetaSet } from '../db/statements';
 import {
   AUTH_META_KEYS,
   HostClient,
@@ -19,14 +20,23 @@ import {
  *
  * Verbindet das Gerät mit dem Host: Login, paralleles Laden der vier
  * Stammdaten-Listen, atomares Snapshot-Replace, Merken der
- * Zugangsdaten. Abmelden löscht die auth-Meta und (best-effort) das
- * Bearer-Status auf dem Host — der lokale Snapshot bleibt verfügbar
- * (Offline-Erfassung).
+ * Zugangsdaten. Abmelden widerruft (best-effort) den gemerkten
+ * Sitzungstoken und löscht die auth-Meta — der lokale Snapshot bleibt
+ * verfügbar (Offline-Erfassung).
  *
  * Orchestrierung liegt hier (nicht im HostClient): `fetchMasterData` →
- * `SnapshotRepository.replace` → auth-Meta. Die auth-Meta wird NUR
- * nach erfolgreichem Replace gesetzt (Design: Login ok, aber
- * List/Replace fehlerhaft → keine auth-Meta, Snapshot unverändert).
+ * EINE lokale Transaktion mit Snapshot-Replace UND auth-Meta (inkl.
+ * des ausgestellten Sitzungstokens; P2, Batch-C-Review). Die
+ * auth-Meta wird NUR zusammen mit dem Replace gesetzt — ein Schreib-
+ * fehler hinterlässt keinen Mischzustand (Design: Login ok, aber
+ * List fehlerhaft → keine auth-Meta, Snapshot unverändert).
+ *
+ * Busy-Sperre (P2, Batch-C-Review): connect und disconnect respektieren
+ * dieselbe `busy`-Sperre — die Sperre wird VOR dem ersten await gesetzt
+ * und im `finally` freigegeben, damit ein paralleles connect+disconnect
+ * neu gemerkte Zugangsdaten nicht löschen kann. Der Verbindungstest
+ * ist bewusst kein gesperrter Vorgang (Zweitstufe, ändert keinen
+ * Zustand).
  *
  * Zoneless: asynchrone Zustände sind Signals (Muster `app.ts`); die
  * Formularfelder bleiben normale Properties (CD wird über die
@@ -44,7 +54,7 @@ export class SetupComponent implements OnInit {
   // Entscheidung: die App-Root initialisiert die DB; `loadLocalState`
   // nutzt Repositories, die init() selbst aufrufen (idempotent).
   private readonly hostClient = inject(HostClient);
-  private readonly meta = inject(MetaService);
+  private readonly db = inject(LocalDatabase);
   private readonly snapshotRepository = inject(SnapshotRepository);
   private readonly bookingsRepository = inject(BookingsRepository);
 
@@ -110,8 +120,10 @@ export class SetupComponent implements OnInit {
 
   /**
    * Verbinden + Stammdaten laden (Design-Entscheidung 26.10.):
-   * `fetchMasterData` → atomares `replace` → auth-Meta (nur nach
-   * Erfolg). Fehler nach Login: best-effort Logout, keine auth-Meta.
+   * `fetchMasterData` → EINE lokale Transaktion mit Snapshot-Replace
+   * UND auth-Meta (inkl. Sitzungstoken, P2 Batch-C-Review). Fehler
+   * nach Login: best-effort-Widerruf des ausgestellten Tokens, keine
+   * auth-Meta.
    */
   async saveAndLoad(): Promise<void> {
     if (this.busy()) {
@@ -134,6 +146,8 @@ export class SetupComponent implements OnInit {
     }
     this.status.set('idle');
     this.message.set(null);
+    // Sperre vor dem ersten await (P2, Batch-C-Review): kein Fenster,
+    // in dem disconnect (oder ein zweiter connect) starten kann.
     this.busy.set(true);
     try {
       const now = new Date();
@@ -143,13 +157,22 @@ export class SetupComponent implements OnInit {
         password,
         now,
       );
-      // Atomares Replace (Design D3): erst danach ist der Snapshot
-      // konsistent — und nur dann wird die auth-Meta gemerkt.
-      await this.snapshotRepository.replace(result.snapshot, result.fetchedAtUtc);
+      // EINE atomare lokale Transaktion: komplettes Snapshot-Replace
+      // (4×DELETE + alle INSERT + Zeitstempel) UND die gemerkten
+      // Verbindungsdaten inkl. des ausgestellten Sitzungstokens
+      // (P2, Batch-C-Review) — all-or-nothing, kein Mischzustand
+      // (z. B. neuer Host + altes Passwort).
       const expiresAt = new Date(
         now.getTime() + result.expiresInMinutes * 60_000,
       ).toISOString();
-      await this.setAuthMeta(url, username, password, expiresAt);
+      await this.db.executeSet([
+        ...this.snapshotRepository.buildReplaceSets(result.snapshot, result.fetchedAtUtc),
+        upsertMetaSet(AUTH_META_KEYS.host, url),
+        upsertMetaSet(AUTH_META_KEYS.username, username),
+        upsertMetaSet(AUTH_META_KEYS.password, password),
+        upsertMetaSet(AUTH_META_KEYS.token, result.token),
+        upsertMetaSet(AUTH_META_KEYS.expiresAt, expiresAt),
+      ]);
       const { accounts, pools, categories } = result.snapshot;
       this.snapshotFetchedAt.set(result.fetchedAtUtc);
       this.passwordRemembered.set(true);
@@ -159,12 +182,14 @@ export class SetupComponent implements OnInit {
           `${pools.size} Pools, ${categories.size} Kategorien)`,
       );
     } catch (error) {
-      // Host-Fehler (HostClientError): Session best-effort beenden
-      // (swallowt alle Fehler), damit kein veraltetes Bearer-Token
-      // zurückbleibt. DB-Fehler (replace) lösen kein Logout aus.
-      // auth-Meta bleibt unverändert (nur nach erfolgreichem replace).
+      // Host-Fehler (HostClientError): den AUSGESTELLTEN Token
+      // best-effort widerrufen (swallowt alle Fehler) — kein Re-Login,
+      // der Host widerruft nur den mitgesendeten Bearer (P2, Batch-C-
+      // Review). `error.token` fehlt, wenn der Login nie erfolgreich
+      // war → No-op. DB-Fehler (Persistenz-Batch) lösen keinen Widerruf
+      // aus. auth-Meta bleibt unverändert (nur mit erfolgreichem Batch).
       if (error instanceof HostClientError) {
-        await this.hostClient.logout(url, username, password);
+        await this.hostClient.logout(url, error.token ?? '');
       }
       this.showError(describeError(error));
     } finally {
@@ -200,24 +225,35 @@ export class SetupComponent implements OnInit {
   }
 
   /**
-   * Abmelden (Design D8): best-effort Logout auf dem Host, auth-Meta
-   * entfernen, Bearer-Status löschen. Der lokale Snapshot bleibt
-   * verfügbar (Offline-Erfassung).
+   * Abmelden (Design D8; P2, Batch-C-Review): best-effort-Widerruf des
+   * gemerkten Sitzungstokens (kein Re-Login — der Host widerruft nur
+   * den mitgesendeten Bearer) + atomare Entfernung der auth-Meta, unter
+   * derselben Busy-Sperre wie connect: ein paralleles connect+disconnect
+   * kann neu gemerkte Zugangsdaten nicht mehr löschen. Der lokale
+   * Snapshot bleibt verfügbar (Offline-Erfassung).
    */
   async disconnect(): Promise<void> {
-    const stored = await this.hostClient.loadAuthMeta();
-    if (stored === null) {
-      this.showError('Nicht verbunden');
-      return;
+    if (this.busy()) {
+      return; // paralleler Vorgang läuft (P2, Batch-C-Review)
     }
-    await this.hostClient.logout(stored.host, stored.username, stored.password);
-    await this.hostClient.clearAuthMeta();
-    OpenAPI.TOKEN = undefined;
-    this.passwordRemembered.set(false);
-    this.status.set('success');
-    this.message.set(
-      'Abgemeldet — Snapshot bleibt lokal verfügbar (Offline-Erfassung)',
-    );
+    // Sperre vor dem ersten await (P2, Batch-C-Review).
+    this.busy.set(true);
+    try {
+      const stored = await this.hostClient.loadAuthMeta();
+      if (stored === null) {
+        this.showError('Nicht verbunden');
+        return;
+      }
+      await this.hostClient.logout(stored.host, stored.token);
+      await this.hostClient.clearAuthMeta();
+      this.passwordRemembered.set(false);
+      this.status.set('success');
+      this.message.set(
+        'Abgemeldet — Snapshot bleibt lokal verfügbar (Offline-Erfassung)',
+      );
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   /** Snapshot-Zeitstempel für die Anzeige formatieren. */
@@ -227,22 +263,6 @@ export class SetupComponent implements OnInit {
     }
     const date = new Date(iso);
     return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
-  }
-
-  /**
-   * auth-Meta schreiben (alle vier Keys; Design D3/D8). Wird NACH
-   * erfolgreichem Snapshot-Replace aufgerufen.
-   */
-  private async setAuthMeta(
-    host: string,
-    username: string,
-    password: string,
-    expiresAt: string,
-  ): Promise<void> {
-    await this.meta.set(AUTH_META_KEYS.host, host);
-    await this.meta.set(AUTH_META_KEYS.username, username);
-    await this.meta.set(AUTH_META_KEYS.password, password);
-    await this.meta.set(AUTH_META_KEYS.expiresAt, expiresAt);
   }
 
   private showError(message: string): void {

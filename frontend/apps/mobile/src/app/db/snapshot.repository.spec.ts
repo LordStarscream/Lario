@@ -340,4 +340,66 @@ describe('SnapshotRepository (Batch C)', () => {
       expect(await repo.fetchedAt()).toBe(iso);
     });
   });
+
+  describe('Serialisierung (P2, Batch C review)', () => {
+    it('loadSnapshot unter parallelem replace: konsistenter Stand, kein Mischzustand', async () => {
+      const t1 = '2026-10-26T12:00:00.000Z';
+      await repo.replace(snapshot(), t1); // V1: acc-1/pool-1/cat-1/tax-1
+
+      // Lese-Sektion und Replace werden „parallel“ auf derselben
+      // Connection-Operations-Kette registriert: einer läuft komplett
+      // vor dem anderen, niemals vermischt. (Alte Implementierung: 5
+      // Einzel-Queries — ein replace hätte dazwischengreifen können.
+      // )
+      const load = repo.loadSnapshot();
+      const t2 = '2026-10-27T12:00:00.000Z';
+      const replace = repo.replace(
+        snapshot({
+          accounts: new Map([
+            [
+              'acc-9',
+              {
+                id: 'acc-9',
+                name: 'Tresor',
+                type: 'cash',
+                isInterestBearing: false,
+                status: 'active',
+                baseRevision: 9,
+              },
+            ],
+          ]),
+          pools: new Map(),
+          categories: new Map(),
+          taxCategories: new Map(),
+        }),
+        t2,
+      );
+
+      const loaded = await load;
+      await replace;
+
+      expect(loaded).not.toBeNull();
+      // Konsistenz: ALLE vier Tabellen aus derselben Version —
+      // kompletter alter Stand (V1) oder kompletter neuer Stand (V2).
+      const v1Konsistent =
+        loaded!.accounts.has('acc-1') &&
+        loaded!.pools.has('pool-1') &&
+        loaded!.categories.has('cat-1') &&
+        loaded!.taxCategories.has('tax-1') &&
+        !loaded!.accounts.has('acc-9');
+      const v2Konsistent =
+        loaded!.accounts.has('acc-9') &&
+        !loaded!.accounts.has('acc-1') &&
+        loaded!.pools.size === 0 &&
+        loaded!.categories.size === 0 &&
+        loaded!.taxCategories.size === 0;
+      expect(v1Konsistent || v2Konsistent).toBe(true);
+      // Endzustand ist komplettes V2 (das Replace kam hinter der
+      // Lese-Sektion in der Kette an).
+      expect(await repo.fetchedAt()).toBe(t2);
+      const final = await repo.loadSnapshot();
+      expect(final!.accounts.has('acc-9')).toBe(true);
+      expect(final!.accounts.has('acc-1')).toBe(false);
+    });
+  });
 });

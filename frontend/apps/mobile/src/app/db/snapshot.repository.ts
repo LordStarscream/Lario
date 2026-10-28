@@ -1,5 +1,8 @@
 import { Injectable, inject } from '@angular/core';
-import { LocalDatabase } from './local-database';
+import {
+  LocalDatabase,
+  type LocalDatabaseReadHandle,
+} from './local-database';
 import {
   DELETE_SNAPSHOT_ACCOUNTS,
   DELETE_SNAPSHOT_CATEGORIES,
@@ -38,6 +41,13 @@ import type {
  * EINER atomaren `executeSet`-Transaktion (4×DELETE + alle INSERT +
  * Zeitstempel-Meta) — all-or-nothing, kein gemischter Zustand aus zwei
  * Ladeversuchen.
+ *
+ * Konsistente Lesungen (P2, Batch-C-Review): `loadSnapshot` und
+ * `referenceCatalog` lesen Zeitstempel UND die vier Tabellen in EINER
+ * `withSerializedRead`-Sektion (Connection-Operations-Kette): ein
+ * paralleles `replace` ist entweder vollständig vor oder nach der
+ * Lese-Sektion committet — die Lese liefert niemals einen gemischten
+ * alten/neuen Stand, der als gespeichert nie existierte.
  *
  * Der Snapshot dient (1) der Referenzvalidierung lokaler Ausgaben
  * (Buchung muss gegen `active` Stammdaten referenzieren) und
@@ -78,6 +88,22 @@ export class SnapshotRepository {
     snapshot: MasterDataSnapshot,
     fetchedAtUtc: string,
   ): Promise<void> {
+    // Ein Batch (atomar): alle Zeilen oder keine (Design D3).
+    await this.db.executeSet(this.buildReplaceSets(snapshot, fetchedAtUtc));
+  }
+
+  /**
+   * SQL-Sets für ein vollständiges Snapshot-Replace bauen (4×DELETE,
+   * alle INSERT, Zeitstempel-Meta) — rein, ohne Datenbankzugriff.
+   * (P2, Batch-C-Review) Die Setup-Component kombiniert diese Sets mit
+   * der auth-Meta in EINER lokalen Transaktion, damit Snapshot und
+   * Verbindungsdaten nie getrennt committet werden; `replace` nutzt den
+   * selben Baukasten als alleinigen Batch.
+   */
+  buildReplaceSets(
+    snapshot: MasterDataSnapshot,
+    fetchedAtUtc: string,
+  ): SqlSet[] {
     const sets: SqlSet[] = [
       { statement: DELETE_SNAPSHOT_ACCOUNTS, values: [] },
       { statement: DELETE_SNAPSHOT_POOLS, values: [] },
@@ -133,90 +159,119 @@ export class SnapshotRepository {
     sets.push(
       upsertMetaSet(SnapshotRepository.FETCHED_AT_META_KEY, fetchedAtUtc),
     );
-    // Ein Batch (atomar): alle Zeilen oder keine (Design D3).
-    await this.db.executeSet(sets);
+    return sets;
   }
 
   /**
    * Gespeicherten Snapshot laden; `null`, wenn noch kein Snapshot geladen
    * wurde (kein Zeitstempel-Meta). Leere Tabellen sind ein gültiger
    * (leerer) Snapshot.
+   *
+   * Zeitstempel UND Tabellen in EINER serialisierten Lese-Sektion lesen
+   * (P2, Batch-C-Review): kein `replace` kann zwischen den Queries
+   * committen — das Ergebnis ist entweder der vollständig alte oder der
+   * vollständig neue Stand (Klassen-Doku).
    */
   async loadSnapshot(): Promise<MasterDataSnapshot | null> {
-    if (await this.fetchedAt() === null) {
-      return null;
-    }
-    const accountRows = await this.db.query<Record<string, unknown>>(
-      SELECT_SNAPSHOT_ACCOUNTS,
-      [],
-    );
-    const poolRows = await this.db.query<Record<string, unknown>>(
-      SELECT_SNAPSHOT_POOLS,
-      [],
-    );
-    const categoryRows = await this.db.query<Record<string, unknown>>(
-      SELECT_SNAPSHOT_CATEGORIES,
-      [],
-    );
-    const taxCategoryRows = await this.db.query<Record<string, unknown>>(
-      SELECT_SNAPSHOT_TAX_CATEGORIES,
-      [],
-    );
-    return {
-      accounts: new Map(
-        accountRows.map((row) => [String(row['id']), mapAccountRow(row)]),
-      ),
-      pools: new Map(
-        poolRows.map((row) => [String(row['id']), mapPoolRow(row)]),
-      ),
-      categories: new Map(
-        categoryRows.map((row) => [
-          String(row['id']),
-          mapCategoryRow(row),
-        ]),
-      ),
-      taxCategories: new Map(
-        taxCategoryRows.map((row) => [
-          String(row['id']),
-          mapTaxCategoryRow(row),
-        ]),
-      ),
-    };
+    return this.db.withSerializedRead(async (db) => {
+      const fetchedAt = await this.readFetchedAt(db);
+      if (fetchedAt === null) {
+        return null;
+      }
+      const accountRows = await db.query<Record<string, unknown>>(
+        SELECT_SNAPSHOT_ACCOUNTS,
+        [],
+      );
+      const poolRows = await db.query<Record<string, unknown>>(
+        SELECT_SNAPSHOT_POOLS,
+        [],
+      );
+      const categoryRows = await db.query<Record<string, unknown>>(
+        SELECT_SNAPSHOT_CATEGORIES,
+        [],
+      );
+      const taxCategoryRows = await db.query<Record<string, unknown>>(
+        SELECT_SNAPSHOT_TAX_CATEGORIES,
+        [],
+      );
+      return {
+        accounts: new Map(
+          accountRows.map((row) => [String(row['id']), mapAccountRow(row)]),
+        ),
+        pools: new Map(
+          poolRows.map((row) => [String(row['id']), mapPoolRow(row)]),
+        ),
+        categories: new Map(
+          categoryRows.map((row) => [
+            String(row['id']),
+            mapCategoryRow(row),
+          ]),
+        ),
+        taxCategories: new Map(
+          taxCategoryRows.map((row) => [
+            String(row['id']),
+            mapTaxCategoryRow(row),
+          ]),
+        ),
+      };
+    });
   }
 
   /**
    * Existenz-/Status-Katalog für die Referenzvalidierung; `null`, wenn
    * noch kein Snapshot geladen wurde (kein Zeitstempel-Meta). Leere
    * Maps sind erlaubt (leerer Snapshot → jede Referenz unbekannt).
+   *
+   * Wie `loadSnapshot` in einer serialisierten Lese-Sektion: die
+   * Referenzvalidierung prüft nie gegen einen gemischten Katalog
+   * (P2, Batch-C-Review).
    */
   async referenceCatalog(): Promise<ReferenceCatalog | null> {
-    if (await this.fetchedAt() === null) {
-      return null;
-    }
-    const accounts = await this.db.query<Record<string, unknown>>(
-      SELECT_ACCOUNT_STATUSES,
-      [],
+    return this.db.withSerializedRead(async (db) => {
+      if ((await this.readFetchedAt(db)) === null) {
+        return null;
+      }
+      const accounts = await db.query<Record<string, unknown>>(
+        SELECT_ACCOUNT_STATUSES,
+        [],
+      );
+      const pools = await db.query<Record<string, unknown>>(
+        SELECT_POOL_STATUSES,
+        [],
+      );
+      const categories = await db.query<Record<string, unknown>>(
+        SELECT_CATEGORY_STATUSES,
+        [],
+      );
+      const taxCategories = await db.query<Record<string, unknown>>(
+        SELECT_TAX_CATEGORY_STATUSES,
+        [],
+      );
+      const toStatusMap = (rows: Record<string, unknown>[]): Map<string, string> =>
+        new Map(rows.map((row) => [String(row['id']), String(row['status'])]));
+      return {
+        accounts: toStatusMap(accounts),
+        pools: toStatusMap(pools),
+        categories: toStatusMap(categories),
+        taxCategories: toStatusMap(taxCategories),
+      };
+    });
+  }
+
+  /**
+   * Zeitstempel-Meta innerhalb einer Lese-Sektion lesen (Handle-Query,
+   * keine Operationen-Kette — P2, Batch-C-Review).
+   */
+  private async readFetchedAt(
+    db: LocalDatabaseReadHandle,
+  ): Promise<string | null> {
+    const set = selectMetaSet(SnapshotRepository.FETCHED_AT_META_KEY);
+    const rows = await db.query<Record<string, unknown>>(
+      set.statement,
+      set.values ?? [],
     );
-    const pools = await this.db.query<Record<string, unknown>>(
-      SELECT_POOL_STATUSES,
-      [],
-    );
-    const categories = await this.db.query<Record<string, unknown>>(
-      SELECT_CATEGORY_STATUSES,
-      [],
-    );
-    const taxCategories = await this.db.query<Record<string, unknown>>(
-      SELECT_TAX_CATEGORY_STATUSES,
-      [],
-    );
-    const toStatusMap = (rows: Record<string, unknown>[]): Map<string, string> =>
-      new Map(rows.map((row) => [String(row['id']), String(row['status'])]));
-    return {
-      accounts: toStatusMap(accounts),
-      pools: toStatusMap(pools),
-      categories: toStatusMap(categories),
-      taxCategories: toStatusMap(taxCategories),
-    };
+    const value = rows[0]?.['value'];
+    return typeof value === 'string' ? value : null;
   }
 
   /**

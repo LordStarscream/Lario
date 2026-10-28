@@ -12,21 +12,27 @@ import {
  * Host-Verbindung für die Einrichtung (Schritt 8, Batch C, Design D3/D8).
  *
  * `fetchMasterData` führt den Login aus und lädt die vier
- * Stammdaten-Listen parallel (Promise.all). Der Client ist bewusst
- * DB-schreibfrei: Das atomare Snapshot-Replace macht die
- * Setup-Component (über `SnapshotRepository`), die auth-Meta ebenfalls.
- * Trennschärfe: HostClient = Netzwerk + Fehlerklassifikation;
- * Komponente = Orchestrierung (Replace + Meta).
+ * Stammdaten-Listen parallel (Promise.all). `fetchMasterData` ist
+ * bewusst DB-schreibfrei: Das atomare Snapshot-Replace macht die
+ * Setup-Component (über `SnapshotRepository`), die auth-Meta ebenfalls
+ * (einschließlich des Sitzungstokens, P2 Batch-C-Review). Trennschärfe:
+ * HostClient = Netzwerk + Fehlerklassifikation + auth-Meta-Zugriff;
+ * Komponente = Orchestrierung (ein gemeinsamer Persistenz-Batch).
  *
- * Die Bearer-Zugangsdaten liegen in `OpenAPI.TOKEN` (generierter
- * Client) — ein prozessweiter Zustand, den `fetchMasterData` setzt und
- * `logout` wieder löscht (`undefined`).
+ * Sitzungstoken (P2, Batch-C-Review): Der Host stellt pro Login einen
+ * unabhängigen Token aus und widerruft beim `authLogout` ausschließlich
+ * den mitgesendeten Bearer (AuthEndpoints/AuthTokenStore). `logout`
+ * führt daher KEINEN Re-Login aus, sondern widerruft den tatsächlich
+ * ausgestellten Token, der zusammen mit den Zugangsdaten in der
+ * auth-Meta gemerkt ist (`auth.token`). `OpenAPI.TOKEN` (prozessweiter
+ * Zustand des generierten Clients) hält den Token für die laufende
+ * Session; `logout` setzt ihn am Ende zurück auf `undefined`.
  *
  * auth-Meta (Design D8, „lokal gemerkt"): host/username/password/
- * expires_at in der Meta-Tabelle der lokalen Geräte-DB. Das Passwort
- * liegt gemäß Design-Entscheidung als Klartext in der lokalen, nicht
- * synchronisierten Geräte-Datenbank (bewusste Entscheidung,
- * Schritt-8-Scope — die DB verlässt das Gerät nicht).
+ * token/expires_at in der Meta-Tabelle der lokalen Geräte-DB. Passwort
+ * und Token liegen gemäß Design-Entscheidung als Klartext in der
+ * lokalen, nicht synchronisierten Geräte-Datenbank (bewusste
+ * Entscheidung, Schritt-8-Scope — die DB verlässt das Gerät nicht).
  */
 
 /** Meta-Keys der gemerkten Host-Zugangsdaten (Design D3/D8). */
@@ -34,6 +40,11 @@ export const AUTH_META_KEYS = {
   host: 'auth.host',
   username: 'auth.username',
   password: 'auth.password',
+  /**
+   * Letzt ausgestellter Sitzungstoken (P2, Batch-C-Review): wird beim
+   * `authLogout` widerrufen — kein Re-Login-Ersatzwiderruf.
+   */
+  token: 'auth.token',
   expiresAt: 'auth.expires_at',
 } as const;
 
@@ -42,6 +53,8 @@ export interface StoredAuth {
   host: string;
   username: string;
   password: string;
+  /** Letzt ausgestellter Sitzungstoken (für `logout`). */
+  token: string;
   /** UTC-ISO; überfällig = Token abgelaufen (Re-Login erforderlich). */
   expiresAt: string;
 }
@@ -53,6 +66,12 @@ export interface MasterDataFetchResult {
   fetchedAtUtc: string;
   /** Token-Gültigkeit in Minuten (LoginResponse). */
   expiresInMinutes: number;
+  /**
+   * Ausgestellter Sitzungstoken (P2, Batch-C-Review): gehört zusammen
+   * mit den übrigen Verbindungsdaten in die auth-Meta und wird beim
+   * Abmelden widerrufen.
+   */
+  token: string;
 }
 
 export type HostClientErrorCode =
@@ -65,12 +84,22 @@ export type HostClientErrorCode =
 
 /** Host-Verbindungsfehler mit maschinell unterscheidbarem Code. */
 export class HostClientError extends Error {
+  /**
+   * Ausgestellter Sitzungstoken, wenn der Fehler NACH einem
+   * erfolgreichen Login auftrat (P2, Batch-C-Review): Die
+   * Setup-Component widerruft genau diesen Token best-effort, bevor er
+   * verworfen wird (`undefined` = Login nie erfolgreich).
+   */
+  readonly token?: string;
+
   constructor(
     readonly code: HostClientErrorCode,
     message: string,
+    token?: string,
   ) {
     super(message);
     this.name = 'HostClientError';
+    this.token = token;
   }
 }
 
@@ -109,10 +138,11 @@ export class HostClient {
       ]);
     } catch (error) {
       // Fehler NACH erfolgreichem Login: Bearer-Status nicht hängen
-      // lassen (hier nur TOKEN-Reset; der volle best-effort-Logout
-      // läuft in der Komponente).
+      // lassen (TOKEN-Reset; der best-effort-Widerruf des ausgestellten
+      // Tokens läuft in der Komponente, P2 Batch-C-Review). Der Token
+      // reist im Fehler mit, damit er widerrufen werden kann.
       OpenAPI.TOKEN = undefined;
-      throw this.classify(error, 'lists');
+      throw this.classify(error, 'lists', login.token);
     }
     if (
       !Array.isArray(accounts) ||
@@ -124,6 +154,7 @@ export class HostClient {
       throw new HostClientError(
         'bad_response',
         'Antwort des Hosts unlesbar: Stammdaten-Liste fehlt',
+        login.token,
       );
     }
     return {
@@ -135,23 +166,30 @@ export class HostClient {
       },
       fetchedAtUtc: now.toISOString(),
       expiresInMinutes: Number(login.expiresInMinutes),
+      token: login.token,
     };
   }
 
   /**
-   * Best-effort-Abmeldung (Design D8): Re-Login (frischer Token) +
-   * `authLogout` — ALLE Fehler werden geschluckt (Netzwerk weg, Token
-   * abgelaufen, Host nicht erreichbar): `logout` ist ein Komfortpfad,
-   * kein kritischer Vorgang. Am Ende ist `OpenAPI.TOKEN` undefined.
+   * Best-effort-Abmeldung (Design D8; P2, Batch-C-Review): widerruft
+   * den tatsächlich ausgestellten Sitzungstoken `token` per
+   * `authLogout` — KEIN Re-Login. Der Host stellt pro Login einen
+   * unabhängigen Token aus und widerruft nur den mitgesendeten Bearer;
+   * ein Re-Login würde einen NEUEN Token widerrufen, während die echte
+   * Session bis zum Ablauf gültig bliebe. `token` leer = Login nie
+   * erfolgreich → No-op (nichts zu widerrufen). ALLE Fehler werden
+   * geschluckt (Netzwerk weg, Token abgelaufen, Host nicht erreichbar):
+   * `logout` ist ein Komfortpfad, kein kritischer Vorgang. Am Ende ist
+   * `OpenAPI.TOKEN` undefined.
    */
-  async logout(host: string, username: string, password: string): Promise<void> {
+  async logout(host: string, token: string): Promise<void> {
+    if (token.length === 0) {
+      OpenAPI.TOKEN = undefined;
+      return;
+    }
     try {
       OpenAPI.BASE = host.trim();
-      const login = await LarioHostService.authLogin({ username, password });
-      if (typeof login.token !== 'string' || login.token.length === 0) {
-        return;
-      }
-      OpenAPI.TOKEN = login.token;
+      OpenAPI.TOKEN = token;
       await LarioHostService.authLogout();
     } catch (error) {
       console.warn('HostClient.logout: Abmeldung fehlgeschlagen (ignoriert)', error);
@@ -161,28 +199,35 @@ export class HostClient {
   }
 
   /**
-   * Gemerkte Zugangsdaten laden; `null`, wenn auch nur einer der vier
+   * Gemerkte Zugangsdaten laden; `null`, wenn auch nur einer der fünf
    * Keys fehlt (unvollständige Merkung = nicht verbunden).
    */
   async loadAuthMeta(): Promise<StoredAuth | null> {
-    const [host, username, password, expiresAt] = await Promise.all([
+    const [host, username, password, token, expiresAt] = await Promise.all([
       this.meta.get(AUTH_META_KEYS.host),
       this.meta.get(AUTH_META_KEYS.username),
       this.meta.get(AUTH_META_KEYS.password),
+      this.meta.get(AUTH_META_KEYS.token),
       this.meta.get(AUTH_META_KEYS.expiresAt),
     ]);
-    if (host === null || username === null || password === null || expiresAt === null) {
+    if (
+      host === null ||
+      username === null ||
+      password === null ||
+      token === null ||
+      expiresAt === null
+    ) {
       return null;
     }
-    return { host, username, password, expiresAt };
+    return { host, username, password, token, expiresAt };
   }
 
-  /** Gemerkte Zugangsdaten entfernen (alle vier Keys). */
+  /**
+   * Gemerkte Zugangsdaten entfernen (alle fünf Keys in EINER atomaren
+   * Transaktion — P2, Batch-C-Review: keine teileweise Löschung).
+   */
   async clearAuthMeta(): Promise<void> {
-    await this.meta.delete(AUTH_META_KEYS.host);
-    await this.meta.delete(AUTH_META_KEYS.username);
-    await this.meta.delete(AUTH_META_KEYS.password);
-    await this.meta.delete(AUTH_META_KEYS.expiresAt);
+    await this.meta.deleteMany(Object.values(AUTH_META_KEYS));
   }
 
   /**
@@ -218,7 +263,11 @@ export class HostClient {
    * deutsch-sprachige Meldung (UI-tauglich, die Setup-View zeigt
    * `error.message` an).
    */
-  private classify(error: unknown, context: 'login' | 'lists'): HostClientError {
+  private classify(
+    error: unknown,
+    context: 'login' | 'lists',
+    token?: string,
+  ): HostClientError {
     if (error instanceof HostClientError) {
       return error;
     }
@@ -227,8 +276,8 @@ export class HostClient {
         context === 'login'
           ? `Anmeldung fehlgeschlagen (${error.status})`
           : `Stammdaten konnten nicht geladen werden (${error.status})`;
-      return new HostClientError('http_error', message);
+      return new HostClientError('http_error', message, token);
     }
-    return new HostClientError('http_unreachable', 'Host nicht erreichbar');
+    return new HostClientError('http_unreachable', 'Host nicht erreichbar', token);
   }
 }
