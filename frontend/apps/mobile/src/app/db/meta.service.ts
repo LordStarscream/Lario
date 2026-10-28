@@ -35,4 +35,18 @@ export class MetaService {
   async delete(key: string): Promise<void> {
     await this.db.executeSet([deleteMetaSet(key)]);
   }
+
+  /**
+   * Mehrere Meta-Keys in EINER atomaren Transaktion löschen (P2,
+   * Batch-C-Review): Zusammenhangsgeschützte Metagruppen (z. B. die
+   * gemerkten Host-Zugangsdaten) werden nie teileweise entfernt — ein
+   * Schreibfehler hinterlässt keinen Mischzustand. Wirkt nichts, wenn
+   * ein Key fehlt; leere Liste = no-op.
+   */
+  async deleteMany(keys: string[]): Promise<void> {
+    if (keys.length === 0) {
+      return;
+    }
+    await this.db.executeSet(keys.map((key) => deleteMetaSet(key)));
+  }
 }

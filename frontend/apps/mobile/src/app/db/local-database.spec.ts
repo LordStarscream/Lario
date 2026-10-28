@@ -527,6 +527,48 @@ describe('LocalDatabase (Batch A, simuliertes Native-Backend)', () => {
     });
   });
 
+  describe('withSerializedRead (P2, Batch C review)', () => {
+    it('hält die Connection-Operations-Kette: paralleles executeSet wartet hinter der Lese-Sektion', async () => {
+      const db = new LocalDatabase();
+      await db.init();
+
+      const originalExecuteSet = CapacitorSQLite.executeSet;
+      const executeSetSpy = vi
+        .spyOn(CapacitorSQLite, 'executeSet')
+        .mockImplementation(originalExecuteSet);
+
+      let sectionStarted = false;
+      let releaseRead!: () => void;
+      const readGate = new Promise<void>((resolve) => (releaseRead = resolve));
+      const readPromise = db.withSerializedRead(async (handle) => {
+        sectionStarted = true;
+        await readGate; // Die Lese-Sektion hält die Kette offen.
+        // Innerhalb der Sektion: das (noch wartende) executeSet-Datum
+        // ist auf derselben Connection nicht sichtbar.
+        return handle.query<{ value: string }>(
+          'SELECT value FROM meta WHERE key = ?',
+          ['exec'],
+        );
+      });
+      const execPromise = db.executeSet([
+        { statement: INSERT_META_SQL, values: ['exec', '2'] },
+      ]);
+
+      // Die Sektion läuft; das executeSet wartet in der Kette — der
+      // Plugin-Aufruf für den Write erfolgte noch nicht.
+      await vi.waitFor(() => expect(sectionStarted).toBe(true));
+      expect(executeSetSpy).not.toHaveBeenCalled();
+
+      releaseRead();
+      expect(await readPromise).toEqual([]);
+      await execPromise;
+      // Nach Abschluss der Sektion ist der Write persistiert.
+      expect(await db.query('SELECT value FROM meta WHERE key = ?', ['exec'])).toEqual([
+        { value: '2' },
+      ]);
+    });
+  });
+
   describe('Batch B: DELETE_BOOKING-Cascade (Fake, Option A Review B10)', () => {
     it('löscht Splits und Outbox-Zeilen mit der Buchung (ON DELETE CASCADE)', async () => {
       const db = new LocalDatabase();

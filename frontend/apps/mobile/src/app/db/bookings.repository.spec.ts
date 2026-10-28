@@ -20,6 +20,7 @@ import {
   type LocalExpenseInput,
 } from './expense-payload';
 import { payloadHash } from './sha256';
+import { SnapshotRepository } from './snapshot.repository';
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => true },
@@ -128,26 +129,75 @@ const SAMPLE_INPUT: LocalExpenseInput = {
  *     (`not_found`) bzw. nicht-queued Buchung (`not_queued`) werfen
  *     `BookingStateError`; `save` bleibt der einzige Anlegepfad.
  */
+/** UTC-ISO-Zeitstempel des Standard-Snapshots (Batch-C-Tests). */
+const SNAPSHOT_ISO = '2026-10-26T12:00:00.000Z';
+
+/**
+ * Standard-Snapshot: acc-1 aktiv (acc-2 archiviert), pool-1/pool-2
+ * aktiv (pool-3 archiviert), cat-1/cat-2 aktiv (cat-3 archiviert),
+ * tax-1 aktiv. SAMPLE_INPUT (acc-1, pool-1/pool-2, cat-1/cat-2) ist
+ * damit gültig. (Batch C, Design D7: ohne Snapshot wird jede
+ * Buchung mit `no_snapshot` abgelehnt.)
+ */
+async function loadStandardSnapshot(
+  snapshotRepository: SnapshotRepository,
+): Promise<void> {
+  await snapshotRepository.replace(
+    {
+      accounts: new Map([
+        [
+          'acc-1',
+          { id: 'acc-1', name: 'Giro', type: 'bank', isInterestBearing: false, status: 'active', baseRevision: 1 },
+        ],
+        [
+          'acc-2',
+          { id: 'acc-2', name: 'Alt', type: 'bank', isInterestBearing: false, status: 'archived', baseRevision: 2 },
+        ],
+      ]),
+      pools: new Map([
+        ['pool-1', { id: 'pool-1', name: 'Flex', status: 'active', baseRevision: 1 }],
+        ['pool-2', { id: 'pool-2', name: 'Raten', status: 'active', baseRevision: 1 }],
+        ['pool-3', { id: 'pool-3', name: 'Alt-Pool', status: 'archived', baseRevision: 2 }],
+      ]),
+      categories: new Map([
+        ['cat-1', { id: 'cat-1', name: 'Essen', parentId: null, status: 'active', baseRevision: 1, taxPreset: null }],
+        ['cat-2', { id: 'cat-2', name: 'Miete', parentId: null, status: 'active', baseRevision: 1, taxPreset: null }],
+        ['cat-3', { id: 'cat-3', name: 'Alt-Kategorie', parentId: null, status: 'archived', baseRevision: 2, taxPreset: null }],
+      ]),
+      taxCategories: new Map([
+        ['tax-1', { id: 'tax-1', name: 'USt', parentId: null, status: 'active', baseRevision: 1 }],
+      ]),
+    },
+    SNAPSHOT_ISO,
+  );
+}
+
 describe('BookingsRepository.save (Batch B, Design D7)', () => {
   let db: LocalDatabase;
   let meta: MetaService;
   let repo: BookingsRepository;
+  let snapshotRepository: SnapshotRepository;
 
-  /** Anzahl der executeSet-Batches nach App-Start (init + device.id). */
+  /** executeSet-Batches nach App-Start + Snapshot (init + Replace). */
   let initBatchCount = 0;
 
   beforeEach(async () => {
     dbState.reset();
     // Eigener Environment-Injector pro Test => frische Singletons.
     const env = createEnvironmentInjector(
-      [LocalDatabase, MetaService, BookingsRepository],
+      [LocalDatabase, MetaService, SnapshotRepository, BookingsRepository],
       TestBed.inject(EnvironmentInjector),
     );
     db = env.get(LocalDatabase);
     meta = env.get(MetaService);
+    snapshotRepository = env.get(SnapshotRepository);
     repo = env.get(BookingsRepository);
     // App-Start: Schema-Initialisierung.
     await db.init();
+    // Batch C (Design D7): Referenzvalidierung prüft gegen den
+    // Stammdaten-Snapshot — Standard-Snapshot laden, damit die
+    // Batch-B-Tests (acc-1, pool-1/pool-2, cat-1/cat-2) gültig sind.
+    await loadStandardSnapshot(snapshotRepository);
     initBatchCount = dbState.executedSets.length;
   });
 
@@ -364,8 +414,19 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
 
       // App-Neustart: Prozessregister leer, DB-Datei bleibt erhalten.
       dbState.simulateRestart();
+      // Der „neue Prozess“ erhält ALLE Provider im selben Environment
+      // (P2, Batch-C-Review): Lese-/Schreibsektionen initialisieren die
+      // Connection selbst — eine über die Root-Umgebung gefallene
+      // SnapshotRepository-Instanz würde eine zweite, nie initialisierte
+      // LocalDatabase erzeugen, deren init() die bereits bestehende
+      // Prozess-Connection doppelt anlegen wollte ("already exists").
       const env2 = createEnvironmentInjector(
-        [LocalDatabase, MetaService, BookingsRepository],
+        [
+          LocalDatabase,
+          MetaService,
+          SnapshotRepository,
+          BookingsRepository,
+        ],
         TestBed.inject(EnvironmentInjector),
       );
       const db2 = env2.get(LocalDatabase);
@@ -419,12 +480,20 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
 
     it('fehlendes Plugin (createConnection schlägt fehl): init und save werfen, nichts wird geschrieben', async () => {
       dbState.failOnCreateConnection = true;
-      // „Neuer Prozess“: das Verbindungsregister ist leer (die in
+      // „Neuer Prozess": das Verbindungsregister ist leer (die in
       // beforeEach initialisierte Connection existiert nicht mehr).
       dbState.simulateRestart();
 
+      // Alle Provider im selben Environment (P2, Batch-C-Review) —
+      // s. Test (a): eine Root-Instanz würde eine zweite, nie
+      // initialisierte LocalDatabase erzeugen.
       const env2 = createEnvironmentInjector(
-        [LocalDatabase, MetaService, BookingsRepository],
+        [
+          LocalDatabase,
+          MetaService,
+          SnapshotRepository,
+          BookingsRepository,
+        ],
         TestBed.inject(EnvironmentInjector),
       );
       const db2 = env2.get(LocalDatabase);
@@ -433,9 +502,11 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
       await expect(db2.init()).rejects.toThrow(
         'simulated connection failure',
       );
-      // save sichert getOrCreateDeviceId → withWriteTransaction →
-      // init() — der createConnection-Retry wirft denselben Fehler
-      // (nichts wird geschrieben, keine Teilstate).
+      // Batch C (Design D7): save prüft zuerst die Referenzen gegen
+      // den Snapshot. Die Lese-Sektion initialisiert die Connection
+      // selbst (P2, Batch-C-Review) — bei fehlendem Plugin schlägt
+      // save() damit bereits im init() der Lese-Sektion fehl (nichts
+      // wird geschrieben, keine Teilstate).
       await expect(repo2.save(SAMPLE_INPUT, FIXED_NOW)).rejects.toThrow(
         'simulated connection failure',
       );
@@ -723,5 +794,186 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
         });
       }
     });
+  });
+});
+
+/**
+ * `BookingsRepository` — Batch C, Referenzvalidierung (Design D7):
+ * Konto + alle Split-Pool/Kategorie-Referenzen müssen im
+ * Stammdaten-Snapshot existieren und `active` sein. Steuerkategorien
+ * werden NICHT gegen den Snapshot geprüft (Host-Regel B6). Bei
+ * Referenzfehler wird nichts persistiert (auch keine device.id-Meta).
+ */
+describe('BookingsRepository — Batch C (Referenzvalidierung)', () => {
+  let db: LocalDatabase;
+  let meta: MetaService;
+  let repo: BookingsRepository;
+  let snapshotRepository: SnapshotRepository;
+
+  beforeEach(async () => {
+    dbState.reset();
+    const env = createEnvironmentInjector(
+      [
+        LocalDatabase,
+        MetaService,
+        SnapshotRepository,
+        BookingsRepository,
+      ],
+      TestBed.inject(EnvironmentInjector),
+    );
+    db = env.get(LocalDatabase);
+    meta = env.get(MetaService);
+    snapshotRepository = env.get(SnapshotRepository);
+    repo = env.get(BookingsRepository);
+    await db.init();
+  });
+
+  it('kein Snapshot: no_snapshot, nichts persistiert (auch keine device.id-Meta)', async () => {
+    await expect(repo.save(SAMPLE_INPUT, FIXED_NOW)).rejects.toMatchObject({
+      name: 'BookingValidationError',
+      reason: 'no_snapshot',
+    });
+    expect(dbState.bookings.size).toBe(0);
+    expect(dbState.splits.size).toBe(0);
+    expect(dbState.outbox.size).toBe(0);
+    expect(await meta.get(OP_SEQ_META_KEY)).toBeNull();
+    expect(await meta.get(DEVICE_ID_META_KEY)).toBeNull();
+  });
+
+  it('unbekanntes Konto: unknown_account, nichts persistiert', async () => {
+    await loadStandardSnapshot(snapshotRepository);
+    const input: LocalExpenseInput = { ...SAMPLE_INPUT, accountId: 'acc-99' };
+    await expect(repo.save(input, FIXED_NOW)).rejects.toMatchObject({
+      name: 'BookingValidationError',
+      reason: 'unknown_account',
+    });
+    expect(dbState.bookings.size).toBe(0);
+    expect(dbState.outbox.size).toBe(0);
+    expect(await meta.get(DEVICE_ID_META_KEY)).toBeNull();
+  });
+
+  it('archiviertes Konto: archived_account', async () => {
+    await loadStandardSnapshot(snapshotRepository);
+    const input: LocalExpenseInput = { ...SAMPLE_INPUT, accountId: 'acc-2' };
+    await expect(repo.save(input, FIXED_NOW)).rejects.toMatchObject({
+      name: 'BookingValidationError',
+      reason: 'archived_account',
+    });
+    expect(dbState.bookings.size).toBe(0);
+    expect(dbState.outbox.size).toBe(0);
+  });
+
+  it('unbekannter Split-Pool: unknown_pool, nichts persistiert', async () => {
+    await loadStandardSnapshot(snapshotRepository);
+    const input: LocalExpenseInput = {
+      ...SAMPLE_INPUT,
+      splits: [
+        { ...SAMPLE_INPUT.splits[0]!, poolId: 'pool-99' },
+        SAMPLE_INPUT.splits[1]!,
+      ],
+    };
+    await expect(repo.save(input, FIXED_NOW)).rejects.toMatchObject({
+      name: 'BookingValidationError',
+      reason: 'unknown_pool',
+    });
+    expect(dbState.bookings.size).toBe(0);
+    expect(dbState.outbox.size).toBe(0);
+    expect(await meta.get(DEVICE_ID_META_KEY)).toBeNull();
+  });
+
+  it('archivierte Split-Kategorie: archived_category', async () => {
+    await loadStandardSnapshot(snapshotRepository);
+    const input: LocalExpenseInput = {
+      ...SAMPLE_INPUT,
+      splits: [
+        { ...SAMPLE_INPUT.splits[0]!, categoryId: 'cat-3' },
+        SAMPLE_INPUT.splits[1]!,
+      ],
+    };
+    await expect(repo.save(input, FIXED_NOW)).rejects.toMatchObject({
+      name: 'BookingValidationError',
+      reason: 'archived_category',
+    });
+    expect(dbState.bookings.size).toBe(0);
+    expect(dbState.outbox.size).toBe(0);
+  });
+
+  it('alle Referenzen aktiv: save erfolgreich (Buchung + Outbox + device.id)', async () => {
+    await loadStandardSnapshot(snapshotRepository);
+    const result = await repo.save(SAMPLE_INPUT, FIXED_NOW);
+    expect(result.bookingId).toBeTruthy();
+    expect(dbState.bookings.get(result.bookingId)).toBeDefined();
+    expect(dbState.outbox.get(result.operationId)).toMatchObject({
+      status: 'queued',
+      booking_id: result.bookingId,
+    });
+    const deviceId = await meta.get(DEVICE_ID_META_KEY);
+    expect(deviceId).toMatch(UUID_RE);
+    expect(dbState.outbox.get(result.operationId)!.device_id).toBe(deviceId);
+  });
+
+  it('update: zwischen save und update archivierter Pool → archived_pool, Buchung + Outbox unverändert', async () => {
+    await loadStandardSnapshot(snapshotRepository);
+    const result = await repo.save(SAMPLE_INPUT, FIXED_NOW);
+    const bookingBefore = { ...dbState.bookings.get(result.bookingId)! };
+    const outboxBefore = {
+      ...dbState.outbox.get(result.operationId)!,
+    };
+
+    // Snapshot-Änderung nach dem save: pool-2 wird archiviert.
+    const snap = (await snapshotRepository.loadSnapshot())!;
+    snap.pools.set('pool-2', {
+      id: 'pool-2',
+      name: 'Raten',
+      status: 'archived',
+      baseRevision: 3,
+    });
+    await snapshotRepository.replace(
+      snap,
+      '2026-10-27T12:00:00.000Z',
+    );
+
+    await expect(
+      repo.update(result.bookingId, SAMPLE_INPUT, FIXED_NOW),
+    ).rejects.toMatchObject({
+      name: 'BookingValidationError',
+      reason: 'archived_pool',
+    });
+    expect(dbState.bookings.get(result.bookingId)).toEqual(bookingBefore);
+    expect(dbState.outbox.get(result.operationId)).toEqual(outboxBefore);
+  });
+
+  it('tax.taxCategoryId nicht im Snapshot: wird nicht geprüft, save erfolgreich', async () => {
+    await loadStandardSnapshot(snapshotRepository);
+    const input: LocalExpenseInput = {
+      ...SAMPLE_INPUT,
+      splits: [
+        SAMPLE_INPUT.splits[0]!,
+        {
+          ...SAMPLE_INPUT.splits[1]!,
+          tax: {
+            ...SAMPLE_INPUT.splits[1]!.tax!,
+            taxCategoryId: 'tax-999',
+          },
+        },
+      ],
+    };
+    const result = await repo.save(input, FIXED_NOW);
+    expect(result.bookingId).toBeTruthy();
+    expect(dbState.outbox.size).toBe(1);
+    // Die Steuerkategorie bleibt unverändert in der Split-Zeile.
+    const split = [...dbState.splits.values()].find(
+      (s) => s.id === `${result.bookingId}-s2`,
+    );
+    expect(split?.tax_category_id).toBe('tax-999');
+  });
+
+  it('getDeviceId: erzeugt device.id (Meta) und ist idempotent', async () => {
+    expect(await meta.get(DEVICE_ID_META_KEY)).toBeNull();
+    const id1 = await repo.getDeviceId();
+    expect(id1).toMatch(UUID_RE);
+    expect(await meta.get(DEVICE_ID_META_KEY)).toBe(id1);
+    const id2 = await repo.getDeviceId();
+    expect(id2).toBe(id1);
   });
 });

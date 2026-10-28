@@ -194,3 +194,49 @@ export const SELECT_DRAFTS =
 
 /** Entwurf löschen (wirkt nichts, wenn er fehlt). */
 export const DELETE_DRAFT = 'DELETE FROM drafts WHERE id = ?';
+
+// Batch C — Stammdaten-Snapshot (Design D3)
+
+/** Alle Konten des Snapshots löschen (vor neuem Replace). */
+export const DELETE_SNAPSHOT_ACCOUNTS = 'DELETE FROM accounts';
+/** Alle Pools des Snapshots löschen (vor neuem Replace). */
+export const DELETE_SNAPSHOT_POOLS = 'DELETE FROM pools';
+/** Alle Kategorien des Snapshots löschen (vor neuem Replace). */
+export const DELETE_SNAPSHOT_CATEGORIES = 'DELETE FROM categories';
+/** Alle Steuerkategorien des Snapshots löschen (vor neuem Replace). */
+export const DELETE_SNAPSHOT_TAX_CATEGORIES = 'DELETE FROM tax_categories';
+
+/** Konto in den Snapshot schreiben. */
+export const INSERT_SNAPSHOT_ACCOUNT =
+  'INSERT INTO accounts (id, name, type, is_interest_bearing, status, base_revision) VALUES (?, ?, ?, ?, ?, ?)';
+/** Pool in den Snapshot schreiben. */
+export const INSERT_SNAPSHOT_POOL =
+  'INSERT INTO pools (id, name, status, base_revision) VALUES (?, ?, ?, ?)';
+/** Kategorie in den Snapshot schreiben (`tax_preset_json` NULL oder JSON). */
+export const INSERT_SNAPSHOT_CATEGORY =
+  'INSERT INTO categories (id, name, parent_id, status, base_revision, tax_preset_json) VALUES (?, ?, ?, ?, ?, ?)';
+/** Steuerkategorie in den Snapshot schreiben. */
+export const INSERT_SNAPSHOT_TAX_CATEGORY =
+  'INSERT INTO tax_categories (id, name, parent_id, status, base_revision) VALUES (?, ?, ?, ?, ?)';
+
+/** Alle Snapshot-Konten (vollständige Zeilen). */
+export const SELECT_SNAPSHOT_ACCOUNTS =
+  'SELECT id, name, type, is_interest_bearing, status, base_revision FROM accounts';
+/** Alle Snapshot-Pools (vollständige Zeilen). */
+export const SELECT_SNAPSHOT_POOLS =
+  'SELECT id, name, status, base_revision FROM pools';
+/** Alle Snapshot-Kategorien (vollständige Zeilen). */
+export const SELECT_SNAPSHOT_CATEGORIES =
+  'SELECT id, name, parent_id, status, base_revision, tax_preset_json FROM categories';
+/** Alle Snapshot-Steuerkategorien (vollständige Zeilen). */
+export const SELECT_SNAPSHOT_TAX_CATEGORIES =
+  'SELECT id, name, parent_id, status, base_revision FROM tax_categories';
+
+/** Existenz-/Status-Katalog Konto (Referenzvalidierung). */
+export const SELECT_ACCOUNT_STATUSES = 'SELECT id, status FROM accounts';
+/** Existenz-/Status-Katalog Pool (Referenzvalidierung). */
+export const SELECT_POOL_STATUSES = 'SELECT id, status FROM pools';
+/** Existenz-/Status-Katalog Kategorie (Referenzvalidierung). */
+export const SELECT_CATEGORY_STATUSES = 'SELECT id, status FROM categories';
+/** Existenz-/Status-Katalog Steuerkategorie (Referenzvalidierung). */
+export const SELECT_TAX_CATEGORY_STATUSES = 'SELECT id, status FROM tax_categories';

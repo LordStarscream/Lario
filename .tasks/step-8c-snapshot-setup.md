@@ -61,10 +61,13 @@
 
 Checks: lint host+mobile grün, **283 Tests (host 130 + mobile 153)**, build host+mobile grün.
 
-**Review-Nachgang (27.10.2026):**
+**Review-Nachgang R1 (27.10.2026):**
 - [x] **Review-P2:** `disconnect` während laufendem `connect` (Busy-Sperre) — Fix `f373428` (disconnect wartet auf `this.busy` via `waitWhileBusy`), Test grün.
-- [x] **Review-P2 (Fehlerpfad connect, Batch-C-Review):** DB-Fehler im Persist-Batch nach erfolgreichem Login → ausgestellter Token wird nicht widerrufen, BASE/TOKEN hängen am fehlgeschlagenen Versuch (Review-Regression: A→B, B schlägt auf `auth.password` fehl → Logout genau 1× mit Bearer tok-B, auth-Meta bleibt A, BASE/TOKEN bleiben A, disconnect widerruft tok-A). Fix `1c3e281`: `saveAndLoad` liest die auth-Meta **VOR** dem Versuch; jeder Fehler vor dem lokalen Commit widerruft best-effort den ausgestellten Token (auch bei DB-Fehler; kein Re-Login) und setzt BASE/TOKEN auf die weiterhin gültige gespeicherte Verbindung zurück (sonst Bearer entfernen). Tests: replace-Fehler-Test angepasst (Logout mit Bearer tok-1, kein hängen gebliebener Bearer) + neue A→B-Regression. Checks: lint grün, 290 Tests (host 130 + mobile 160), build:mobile grün.
 - [x] **Review-P3 (2):** Logout-Bearer aus auth-Meta, nicht aus OpenAPI.TOKEN (`f373428`); JSDoc-Referenzen `f9d2b43` (F9-Nummerierung → D8/D9, D12 → D6, D12-12b → D10, P2-Kommentare → `f373428`).
+
+**Review-Nachgang R2 (28.10.2026)** — Review 28.10.: 5×P2, 4×P3, kein P1 (Bericht im Review-Worktree):
+- [x] **P2-Nachgang `9f8319a`:** `withSerializedRead`/`LocalDatabaseReadHandle` (mehrteilige Lese-Sektionen `loadSnapshot`/`referenceCatalog` auf der Connection-Operations-Kette — gegenüber parallelen Schreibtransaktionen nie gemischter Stand), `MetaService.deleteMany` (auth-Meta-Gruppe atomar), Token-Logout statt Re-Login-Ersatzwiderruf (`auth.token` in der auth-Meta; `HostClientError.token` bei Fehler nach Login), Setup-Persistenz in EINEM Batch (Snapshot+auth), Logout-UI auch für eingerichtete Geräte, Test-DI-Fix `bookings.repository.spec`. Checks: lint grün, 289 Tests (host 130 + mobile 159), build:mobile grün.
+- [x] **P2 (Fehlerpfad connect, Review-Regression):** DB-Fehler im Persist-Batch nach erfolgreichem Login → ausgestellter Token wird nicht widerrufen, BASE/TOKEN hängen am fehlgeschlagenen Versuch (A→B, B schlägt auf `auth.password` fehl). Fix `1c3e281`: `saveAndLoad` liest die auth-Meta **VOR** dem Versuch; jeder Fehler vor dem lokalen Commit widerruft best-effort den ausgestellten Token (auch bei DB-Fehler; kein Re-Login) und setzt BASE/TOKEN auf die weiterhin gültige gespeicherte Verbindung zurück (sonst Bearer entfernen). Tests: replace-Fehler-Test angepasst (Logout mit Bearer tok-1, kein hängen gebliebener Bearer) + neue A→B-Regression (Widerruf tok-B, BASE/TOKEN bleiben bei A, disconnect widerruft tok-A). Checks: lint grün, 290 Tests (host 130 + mobile 160), build:mobile grün.
 
 **PR:** #17 (`step/8c-snapshot-setup` → `main`), 27.10.2026 angelegt. **Merge-Reihenfolge: erst PR #18 (Batch-B-Rescue), dann #17.**
 
@@ -79,7 +82,7 @@ Checks: lint host+mobile grün, **283 Tests (host 130 + mobile 153)**, build hos
 
 ## Status
 
-**ABGESCHLOSSEN (28. Okt. 2026)** — alle 30 Tasks erledigt (F1–F9), Review-Nachgang (3×P2, 2×P3) fertig.
+**ABGESCHLOSSEN (28. Okt. 2026)** — alle 30 Tasks erledigt (F1–F9), Review-Nachgang R1 (27.10.) + R2 (28.10., `9f8319a` + `1c3e281`) fertig.
 
 > **Hinweis (28.10.2026):** Diese Task-Datei war aus dem Working Tree des Hauptrepos
 > verschwunden (ungetrackt; extern entfernt, kein Git-Event im Reflog). Sie wurde aus dem

@@ -3,11 +3,27 @@ import {
   DELETE_BOOKING,
   DELETE_DRAFT,
   DELETE_OUTBOX,
+  DELETE_SNAPSHOT_ACCOUNTS,
+  DELETE_SNAPSHOT_CATEGORIES,
+  DELETE_SNAPSHOT_POOLS,
+  DELETE_SNAPSHOT_TAX_CATEGORIES,
   DELETE_SPLITS,
   INSERT_BOOKING,
   INSERT_OUTBOX,
+  INSERT_SNAPSHOT_ACCOUNT,
+  INSERT_SNAPSHOT_CATEGORY,
+  INSERT_SNAPSHOT_POOL,
+  INSERT_SNAPSHOT_TAX_CATEGORY,
   INSERT_SPLIT,
+  SELECT_ACCOUNT_STATUSES,
   SELECT_BOOKING_BY_ID,
+  SELECT_CATEGORY_STATUSES,
+  SELECT_POOL_STATUSES,
+  SELECT_SNAPSHOT_ACCOUNTS,
+  SELECT_SNAPSHOT_CATEGORIES,
+  SELECT_SNAPSHOT_POOLS,
+  SELECT_SNAPSHOT_TAX_CATEGORIES,
+  SELECT_TAX_CATEGORY_STATUSES,
   SELECT_BOOKING_LIST,
   SELECT_DRAFTS,
   SELECT_DRAFT_BY_ID,
@@ -125,6 +141,43 @@ export interface FakeSplitRow {
   tax_note: string | null;
 }
 
+/** Konto (spiegelt die Batch-A-Spalten 1:1, snake_case; Batch C). */
+export interface FakeAccountRow {
+  id: string;
+  name: string;
+  type: string;
+  is_interest_bearing: number;
+  status: string;
+  base_revision: number;
+}
+
+/** Pool (spiegelt die Batch-A-Spalten 1:1, snake_case; Batch C). */
+export interface FakePoolRow {
+  id: string;
+  name: string;
+  status: string;
+  base_revision: number;
+}
+
+/** Kategorie (spiegelt die Batch-A-Spalten 1:1, snake_case; Batch C). */
+export interface FakeCategoryRow {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  status: string;
+  base_revision: number;
+  tax_preset_json: string | null;
+}
+
+/** Steuerkategorie (spiegelt die Batch-A-Spalten 1:1, snake_case; Batch C). */
+export interface FakeTaxCategoryRow {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  status: string;
+  base_revision: number;
+}
+
 /** Outbox-Zeile (Design D4) — spiegelt die Batch-A-Spalten 1:1. */
 export interface FakeOutboxRow {
   operation_id: string;
@@ -145,6 +198,10 @@ export interface FakeOutboxRow {
  */
 export interface FakeTableSnapshot {
   meta: Map<string, string>;
+  accounts: Map<string, FakeAccountRow>;
+  pools: Map<string, FakePoolRow>;
+  categories: Map<string, FakeCategoryRow>;
+  taxCategories: Map<string, FakeTaxCategoryRow>;
   bookings: Map<string, FakeBookingRow>;
   splits: Map<string, FakeSplitRow>;
   outbox: Map<string, FakeOutboxRow>;
@@ -176,6 +233,14 @@ export interface CapacitorSqliteFakeState {
   connections: Map<string, { opened: boolean }>;
   /** Batch-A-Tabellenspeicher: Meta-Keys/Werte. */
   meta: Map<string, string>;
+  /** Batch-C-Tabellenspeicher: Stammdaten-Snapshot, Key = id. */
+  accounts: Map<string, FakeAccountRow>;
+  /** Batch-C-Tabellenspeicher: Stammdaten-Snapshot, Key = id. */
+  pools: Map<string, FakePoolRow>;
+  /** Batch-C-Tabellenspeicher: Stammdaten-Snapshot, Key = id. */
+  categories: Map<string, FakeCategoryRow>;
+  /** Batch-C-Tabellenspeicher: Stammdaten-Snapshot, Key = id. */
+  taxCategories: Map<string, FakeTaxCategoryRow>;
   /** Batch-B-Tabellenspeicher: Buchungen, Key = id. */
   bookings: Map<string, FakeBookingRow>;
   /** Batch-B-Tabellenspeicher: Splits, Key = id. */
@@ -240,6 +305,10 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
   const state = {
     connections: new Map<string, { opened: boolean }>(),
     meta: new Map<string, string>(),
+    accounts: new Map<string, FakeAccountRow>(),
+    pools: new Map<string, FakePoolRow>(),
+    categories: new Map<string, FakeCategoryRow>(),
+    taxCategories: new Map<string, FakeTaxCategoryRow>(),
     bookings: new Map<string, FakeBookingRow>(),
     splits: new Map<string, FakeSplitRow>(),
     outbox: new Map<string, FakeOutboxRow>(),
@@ -268,6 +337,10 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
     reset() {
       state.connections.clear();
       state.meta.clear();
+      state.accounts.clear();
+      state.pools.clear();
+      state.categories.clear();
+      state.taxCategories.clear();
       state.bookings.clear();
       state.splits.clear();
       state.outbox.clear();
@@ -302,8 +375,17 @@ const META_STATEMENTS = {
 
 type StateTables = Pick<
   CapacitorSqliteFakeState,
-  'meta' | 'bookings' | 'splits' | 'outbox' | 'drafts' |
-  'schemaStatementsExecuted' | 'foreignKeys'
+  | 'meta'
+  | 'accounts'
+  | 'pools'
+  | 'categories'
+  | 'taxCategories'
+  | 'bookings'
+  | 'splits'
+  | 'outbox'
+  | 'drafts'
+  | 'schemaStatementsExecuted'
+  | 'foreignKeys'
 >;
 
 function constraintError(table: string, column: string, value: string): Error {
@@ -319,6 +401,12 @@ function constraintError(table: string, column: string, value: string): Error {
 function takeSnapshot(state: StateTables): FakeTableSnapshot {
   return {
     meta: new Map(state.meta),
+    accounts: new Map([...state.accounts].map(([key, row]) => [key, { ...row }])),
+    pools: new Map([...state.pools].map(([key, row]) => [key, { ...row }])),
+    categories: new Map([...state.categories].map(([key, row]) => [key, { ...row }])),
+    taxCategories: new Map(
+      [...state.taxCategories].map(([key, row]) => [key, { ...row }]),
+    ),
     bookings: new Map([...state.bookings].map(([key, row]) => [key, { ...row }])),
     splits: new Map([...state.splits].map(([key, row]) => [key, { ...row }])),
     outbox: new Map([...state.outbox].map(([key, row]) => [key, { ...row }])),
@@ -333,6 +421,10 @@ function restoreSnapshot(
   snapshot: FakeTableSnapshot,
 ): void {
   state.meta = snapshot.meta;
+  state.accounts = snapshot.accounts;
+  state.pools = snapshot.pools;
+  state.categories = snapshot.categories;
+  state.taxCategories = snapshot.taxCategories;
   state.bookings = snapshot.bookings;
   state.splits = snapshot.splits;
   state.outbox = snapshot.outbox;
@@ -616,6 +708,132 @@ function applySet(
     state.drafts.delete(String(values[0]));
     return;
   }
+  // ── Batch C: Stammdaten-Snapshot (Design D3) ────────────────────────────
+  if (stmt === normalize(DELETE_SNAPSHOT_ACCOUNTS)) {
+    state.accounts.clear();
+    return;
+  }
+  if (stmt === normalize(DELETE_SNAPSHOT_POOLS)) {
+    state.pools.clear();
+    return;
+  }
+  if (stmt === normalize(DELETE_SNAPSHOT_CATEGORIES)) {
+    state.categories.clear();
+    return;
+  }
+  if (stmt === normalize(DELETE_SNAPSHOT_TAX_CATEGORIES)) {
+    state.taxCategories.clear();
+    return;
+  }
+  if (stmt === normalize(INSERT_SNAPSHOT_ACCOUNT)) {
+    const [id, name, type, isInterestBearing, status, baseRevision] =
+      values as (string | number)[];
+    for (const [column, value] of [
+      ['name', name],
+      ['type', type],
+      ['is_interest_bearing', isInterestBearing],
+      ['status', status],
+      ['base_revision', baseRevision],
+    ] as const) {
+      if (value === null || value === undefined) {
+        throw new Error(
+          `SQLITE_CONSTRAINT_NOTNULL: NOT NULL constraint failed: accounts.${column}`,
+        );
+      }
+    }
+    if (state.accounts.has(String(id))) {
+      throw constraintError('accounts', 'id', String(id));
+    }
+    state.accounts.set(String(id), {
+      id: String(id),
+      name: String(name),
+      type: String(type),
+      is_interest_bearing: Number(isInterestBearing),
+      status: String(status),
+      base_revision: Number(baseRevision),
+    });
+    return;
+  }
+  if (stmt === normalize(INSERT_SNAPSHOT_POOL)) {
+    const [id, name, status, baseRevision] = values as (string | number)[];
+    for (const [column, value] of [
+      ['name', name],
+      ['status', status],
+      ['base_revision', baseRevision],
+    ] as const) {
+      if (value === null || value === undefined) {
+        throw new Error(
+          `SQLITE_CONSTRAINT_NOTNULL: NOT NULL constraint failed: pools.${column}`,
+        );
+      }
+    }
+    if (state.pools.has(String(id))) {
+      throw constraintError('pools', 'id', String(id));
+    }
+    state.pools.set(String(id), {
+      id: String(id),
+      name: String(name),
+      status: String(status),
+      base_revision: Number(baseRevision),
+    });
+    return;
+  }
+  if (stmt === normalize(INSERT_SNAPSHOT_CATEGORY)) {
+    const [id, name, parentId, status, baseRevision, taxPresetJson] =
+      values as (string | null)[];
+    for (const [column, value] of [
+      ['name', name],
+      ['status', status],
+      ['base_revision', baseRevision],
+    ] as const) {
+      if (value === null || value === undefined) {
+        throw new Error(
+          `SQLITE_CONSTRAINT_NOTNULL: NOT NULL constraint failed: categories.${column}`,
+        );
+      }
+    }
+    if (state.categories.has(String(id))) {
+      throw constraintError('categories', 'id', String(id));
+    }
+    state.categories.set(String(id), {
+      id: String(id),
+      name: String(name),
+      parent_id: parentId === null || parentId === undefined ? null : String(parentId),
+      status: String(status),
+      base_revision: Number(baseRevision),
+      tax_preset_json:
+        taxPresetJson === null || taxPresetJson === undefined
+          ? null
+          : String(taxPresetJson),
+    });
+    return;
+  }
+  if (stmt === normalize(INSERT_SNAPSHOT_TAX_CATEGORY)) {
+    const [id, name, parentId, status, baseRevision] =
+      values as (string | null)[];
+    for (const [column, value] of [
+      ['name', name],
+      ['status', status],
+      ['base_revision', baseRevision],
+    ] as const) {
+      if (value === null || value === undefined) {
+        throw new Error(
+          `SQLITE_CONSTRAINT_NOTNULL: NOT NULL constraint failed: tax_categories.${column}`,
+        );
+      }
+    }
+    if (state.taxCategories.has(String(id))) {
+      throw constraintError('tax_categories', 'id', String(id));
+    }
+    state.taxCategories.set(String(id), {
+      id: String(id),
+      name: String(name),
+      parent_id: parentId === null || parentId === undefined ? null : String(parentId),
+      status: String(status),
+      base_revision: Number(baseRevision),
+    });
+    return;
+  }
   throw new Error(
     `capacitor-sqlite-fake: executeSet unterstützt das Statement nicht: ${statement}`,
   );
@@ -696,6 +914,43 @@ function runQuery(state: StateTables, statement: string, values: unknown[]): unk
         b.id.localeCompare(a.id),
     );
     return rows;
+  }
+  // ── Batch C: Stammdaten-Snapshot (Design D3) ────────────────────────────
+  if (stmt === normalize(SELECT_SNAPSHOT_ACCOUNTS)) {
+    return [...state.accounts.values()];
+  }
+  if (stmt === normalize(SELECT_SNAPSHOT_POOLS)) {
+    return [...state.pools.values()];
+  }
+  if (stmt === normalize(SELECT_SNAPSHOT_CATEGORIES)) {
+    return [...state.categories.values()];
+  }
+  if (stmt === normalize(SELECT_SNAPSHOT_TAX_CATEGORIES)) {
+    return [...state.taxCategories.values()];
+  }
+  if (stmt === normalize(SELECT_ACCOUNT_STATUSES)) {
+    return [...state.accounts.values()].map((row) => ({
+      id: row.id,
+      status: row.status,
+    }));
+  }
+  if (stmt === normalize(SELECT_POOL_STATUSES)) {
+    return [...state.pools.values()].map((row) => ({
+      id: row.id,
+      status: row.status,
+    }));
+  }
+  if (stmt === normalize(SELECT_CATEGORY_STATUSES)) {
+    return [...state.categories.values()].map((row) => ({
+      id: row.id,
+      status: row.status,
+    }));
+  }
+  if (stmt === normalize(SELECT_TAX_CATEGORY_STATUSES)) {
+    return [...state.taxCategories.values()].map((row) => ({
+      id: row.id,
+      status: row.status,
+    }));
   }
   throw new Error(
     `capacitor-sqlite-fake: query unterstützt das Statement nicht: ${statement}`,
