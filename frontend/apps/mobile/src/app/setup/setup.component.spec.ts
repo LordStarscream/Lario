@@ -75,6 +75,18 @@ function jsonResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
+/**
+ * Authorization-Header eines fetch-Calls (der generierte Client übergibt
+ * `Headers` im RequestInit) — für die Bearer-Prüfung der Logout-Calls.
+ */
+function authHeader(
+  call: readonly (string | RequestInit | undefined)[],
+): string | null {
+  const init = call[1] as RequestInit | undefined;
+  const headers = init?.headers;
+  return headers instanceof Headers ? headers.get('Authorization') : null;
+}
+
 /** Login 200 + vier Stammdaten-Listen 200 (je 1 Element). */
 function defaultRouter(): (url: string, init?: RequestInit) => Promise<Response> {
   return (url: string) => {
@@ -232,9 +244,9 @@ describe('SetupComponent (Batch C)', () => {
     expect(OpenAPI.TOKEN).toBeUndefined();
   });
 
-  it('saveAndLoad bei replace-Fehler: Fehler, keine auth-Meta, kein Logout', async () => {
+  it('saveAndLoad bei replace-Fehler (P2-Regression): Fehler, keine auth-Meta, ausgestellter Token wird widerrufen, kein Bearer hängen geblieben', async () => {
     setFields();
-    // Erster Statement des replace (DELETE) schlägt fehl.
+    // Erster Statement des Persist-Batches (DELETE) schlägt fehl.
     dbState.failOnStatementIndex = 0;
 
     await comp.saveAndLoad();
@@ -242,9 +254,103 @@ describe('SetupComponent (Batch C)', () => {
     expect(comp.status()).toBe('error');
     expect(dbState.meta.get('auth.host')).toBeUndefined();
     expect(dbState.accounts.size).toBe(0);
-    // DB-Fehler ist kein HostClientError → kein Logout (5 Calls, nicht 7).
-    expect(mockFetch).toHaveBeenCalledTimes(5);
-    expect(OpenAPI.TOKEN).toBe('tok-1');
+    // 6 Calls: Login + 4 Listen + 1 Logout — der DB-Fehler im
+    // Persist-Batch widerruft den ausgestellten Token (P2-Regression,
+    // Batch-C-Review) und entfernt den Bearer (keine vorherige
+    // Verbindung).
+    expect(mockFetch).toHaveBeenCalledTimes(6);
+    expect(mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/login'),
+    )).toHaveLength(1);
+    const logoutCalls = mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/logout'),
+    );
+    expect(logoutCalls).toHaveLength(1);
+    // Genauer Token des fehlgeschlagenen Versuchs.
+    expect(authHeader(logoutCalls[0])).toBe('Bearer tok-1');
+    expect(OpenAPI.TOKEN).toBeUndefined();
+  });
+
+  it('P2-Regression: Connect zu B schlägt im Persist-Batch fehl → Widerruf des B-Tokens, BASE/TOKEN bleiben bei A; disconnect widerruft A', async () => {
+    // Zwei Hosts mit eigenen Tokens; nur das Konto unterscheidet sich
+    // (Beweis, dass der B-Snapshot-Replace gerollt wurde).
+    mockFetch.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.includes('/api/v1/auth/login')) {
+        return Promise.resolve(
+          jsonResponse(
+            200,
+            u.startsWith('http://host-a')
+              ? { token: 'tok-A', expiresInMinutes: 30 }
+              : { token: 'tok-B', expiresInMinutes: 30 },
+          ),
+        );
+      }
+      if (u.includes('/api/v1/accounts')) {
+        return Promise.resolve(
+          jsonResponse(
+            200,
+            u.startsWith('http://host-a')
+              ? [{ id: 'acc-A', name: 'Konto A', type: 'bank', isInterestBearing: false, status: 'active', baseRevision: 1 }]
+              : [{ id: 'acc-B', name: 'Konto B', type: 'bank', isInterestBearing: false, status: 'active', baseRevision: 1 }],
+          ),
+        );
+      }
+      if (u.includes('/api/v1/auth/logout')) {
+        return Promise.resolve(jsonResponse(204, {}));
+      }
+      return defaultRouter()(url);
+    });
+
+    // Verbindung A erfolgreich.
+    comp.url.set('http://host-a');
+    comp.username.set('user-a');
+    comp.password.set('pass-a');
+    await comp.saveAndLoad();
+    expect(comp.status()).toBe('success');
+    expect(OpenAPI.BASE).toBe('http://host-a');
+    expect(OpenAPI.TOKEN).toBe('tok-A');
+
+    // Verbindung B: Login + Listen ok, Persist-Batch schlägt auf
+    // `auth.password` fehl (Index 11 = 4×DELETE + 4×INSERT +
+    // snapshot.fetched_at + auth.host + auth.username + password).
+    dbState.failOnStatementIndex = 11;
+    comp.url.set('http://host-b');
+    comp.username.set('user-b');
+    comp.password.set('pass-b');
+    await comp.saveAndLoad();
+
+    expect(comp.status()).toBe('error');
+    // Gespeicherter Zustand bleibt A (Batch gerollt zurück).
+    expect(dbState.meta.get('auth.host')).toBe('http://host-a');
+    expect(dbState.meta.get('auth.token')).toBe('tok-A');
+    expect(dbState.accounts.size).toBe(1);
+    expect(dbState.accounts.get('acc-A')?.name).toBe('Konto A');
+    // Laufzeit-Konfiguration konsistent zur gespeicherten Verbindung A
+    // (kein hängen gebliebener Host/Token des fehlgeschlagenen
+    // Versuchs).
+    expect(OpenAPI.BASE).toBe('http://host-a');
+    expect(OpenAPI.TOKEN).toBe('tok-A');
+    // Widerruf: genau 1 Logout mit dem Token des fehlgeschlagenen
+    // Versuchs (tok-B) — nicht tok-A.
+    const logoutCalls = mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/logout'),
+    );
+    expect(logoutCalls).toHaveLength(1);
+    expect(authHeader(logoutCalls[0])).toBe('Bearer tok-B');
+    expect(mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/login'),
+    )).toHaveLength(2);
+
+    // disconnect widerruft den gemerkten Token A (nicht B).
+    await comp.disconnect();
+    const logoutCallsAfter = mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/v1/auth/logout'),
+    );
+    expect(logoutCallsAfter).toHaveLength(2);
+    expect(authHeader(logoutCallsAfter[1])).toBe('Bearer tok-A');
+    expect(dbState.meta.get('auth.token')).toBeUndefined();
+    expect(OpenAPI.TOKEN).toBeUndefined();
   });
 
   it('disconnect ohne auth-Meta: „Nicht verbunden“, Snapshot bleibt', async () => {

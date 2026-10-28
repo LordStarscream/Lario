@@ -8,6 +8,7 @@ import {
   AUTH_META_KEYS,
   HostClient,
   HostClientError,
+  type StoredAuth,
 } from './host.client';
 import {
   ApiError,
@@ -30,6 +31,15 @@ import {
  * auth-Meta wird NUR zusammen mit dem Replace gesetzt — ein Schreib-
  * fehler hinterlässt keinen Mischzustand (Design: Login ok, aber
  * List fehlerhaft → keine auth-Meta, Snapshot unverändert).
+ *
+ * Fehlerpfad connect (P2-Regression, Batch-C-Review): Jeder Fehler
+ * VOR dem lokalen Commit (Host-Fehler nach Login, DB-Fehler im
+ * Persist-Batch) widerruft best-effort den für diesen Versuch
+ * ausgestellten Token (kein Re-Login) und setzt die Laufzeit-
+ * Konfiguration (BASE/TOKEN) auf die weiterhin gültige gespeicherte
+ * Verbindung zurück — ohne vorherige Verbindung wird der Bearer
+ * entfernt. Sonst bliebe der Token des fehlgeschlagenen Versuchs im
+ * prozessweiten Client hängen und auf dem Host aktiv bis Ablauf.
  *
  * Busy-Sperre (P2, Batch-C-Review): connect und disconnect respektieren
  * dieselbe `busy`-Sperre — die Sperre wird VOR dem ersten await gesetzt
@@ -121,9 +131,16 @@ export class SetupComponent implements OnInit {
   /**
    * Verbinden + Stammdaten laden (Design-Entscheidung 26.10.):
    * `fetchMasterData` → EINE lokale Transaktion mit Snapshot-Replace
-   * UND auth-Meta (inkl. Sitzungstoken, P2 Batch-C-Review). Fehler
-   * nach Login: best-effort-Widerruf des ausgestellten Tokens, keine
-   * auth-Meta.
+   * UND auth-Meta (inkl. Sitzungstoken, P2 Batch-C-Review).
+   *
+   * Fehler VOR dem lokalen Commit (P2-Regression, Batch-C-Review):
+   * best-effort-Widerruf des ausgestellten Tokens dieses Versuchs
+   * (auch bei DB-Fehler im Persist-Batch — der Token wäre sonst
+   * weder widerrufen noch in der auth-Meta abgelegt) +
+   * Wiederherstellung der Laufzeit-Konfiguration (BASE/TOKEN) aus
+   * der weiterhin gültigen gespeicherten auth-Meta; ohne vorherige
+   * Verbindung wird der Bearer entfernt. Die auth-Meta bleibt
+   * unverändert (nur ein erfolgreicher Batch ersetzt sie).
    */
   async saveAndLoad(): Promise<void> {
     if (this.busy()) {
@@ -149,7 +166,14 @@ export class SetupComponent implements OnInit {
     // Sperre vor dem ersten await (P2, Batch-C-Review): kein Fenster,
     // in dem disconnect (oder ein zweiter connect) starten kann.
     this.busy.set(true);
+    // VOR dem Versuch lesen (P2-Regression, Batch-C-Review): der
+    // Fehlerpfad muss die weiterhin gültige gespeicherte Verbindung
+    // kennen — auch wenn der Persist-Batch selbst fehlschlägt
+    // (Rollback → auth-Meta unverändert).
+    let previous: StoredAuth | null = null;
+    let issuedToken: string | undefined;
     try {
+      previous = await this.hostClient.loadAuthMeta();
       const now = new Date();
       const result = await this.hostClient.fetchMasterData(
         url,
@@ -157,6 +181,7 @@ export class SetupComponent implements OnInit {
         password,
         now,
       );
+      issuedToken = result.token;
       // EINE atomare lokale Transaktion: komplettes Snapshot-Replace
       // (4×DELETE + alle INSERT + Zeitstempel) UND die gemerkten
       // Verbindungsdaten inkl. des ausgestellten Sitzungstokens
@@ -182,15 +207,34 @@ export class SetupComponent implements OnInit {
           `${pools.size} Pools, ${categories.size} Kategorien)`,
       );
     } catch (error) {
-      // Host-Fehler (HostClientError): den AUSGESTELLTEN Token
-      // best-effort widerrufen (swallowt alle Fehler) — kein Re-Login,
-      // der Host widerruft nur den mitgesendeten Bearer (P2, Batch-C-
-      // Review). `error.token` fehlt, wenn der Login nie erfolgreich
-      // war → No-op. DB-Fehler (Persistenz-Batch) lösen keinen Widerruf
-      // aus. auth-Meta bleibt unverändert (nur mit erfolgreichem Batch).
-      if (error instanceof HostClientError) {
-        await this.hostClient.logout(url, error.token ?? '');
+      // Jeder Fehler VOR dem lokalen Commit (Host-Fehler nach Login,
+      // DB-Fehler im Persist-Batch) löst dasselbe Aufräumen aus
+      // (P2-Regression, Batch-C-Review):
+      // 1. Der für diesen Versuch ausgestellte Token wird
+      //    best-effort widerrufen (swallowt alle Fehler) — kein
+      //    Re-Login, der Host widerruft nur den mitgesendeten
+      //    Bearer. `issuedToken` (Fehler im Persist-Batch) bzw.
+      //    `error.token` (HostClientError nach Login); leer = Login
+      //    nie erfolgreich → No-op.
+      const tokenToRevoke =
+        issuedToken ??
+        (error instanceof HostClientError ? error.token : undefined);
+      if (tokenToRevoke !== undefined && tokenToRevoke.length > 0) {
+        await this.hostClient.logout(url, tokenToRevoke);
       }
+      // 2. Laufzeit-Konfiguration konsistent zur (durch den Rollback
+      //    unveränderten) gespeicherten Verbindung — ohne vorherige
+      //    Verbindung wird der Bearer entfernt. Sonst bliebe
+      //    Host/Token des fehlgeschlagenen Versuchs im prozessweiten
+      //    Client hängen.
+      if (previous !== null) {
+        OpenAPI.BASE = previous.host;
+        OpenAPI.TOKEN = previous.token;
+      } else {
+        OpenAPI.TOKEN = undefined;
+      }
+      // auth-Meta bleibt unverändert (nur ein erfolgreicher Batch
+      // ersetzt sie).
       this.showError(describeError(error));
     } finally {
       this.busy.set(false);
