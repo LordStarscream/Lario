@@ -16,6 +16,7 @@ import {
   type CapacitorSqliteMock,
 } from '../db/capacitor-sqlite-fake';
 import { LocalDatabase } from '../db/local-database';
+import { DraftsRepository } from '../db/drafts.repository';
 import { SnapshotRepository } from '../db/snapshot.repository';
 import type {
   AccountDto,
@@ -320,6 +321,48 @@ describe('EntryComponent', () => {
     expect(comp.saveMessage()).toBe('Kein Entwurf vorhanden.');
   });
 
+  it('beschädigter Entwurf (kaputtes JSON) → verworfen, Meldung, Formular unverändert', async () => {
+    const { comp, dbState } = await createLoaded(testSnapshot());
+    setValidForm(comp);
+    const before = comp.form();
+
+    const drafts = TestBed.inject(DraftsRepository);
+    // DRAFT_ID ist in der Component nicht exportiert — fester Slot 'expense-entry'.
+    await drafts.save('expense-entry', 'Ausgabeeingabe', 'kaputtes-json {', new Date());
+    await comp.loadDraft();
+
+    expect(comp.saveStatus()).toBe('error');
+    expect(comp.saveMessage()).toBe('Entwurf beschädigt — verworfen.');
+    expect(dbState.drafts.size).toBe(0); // beschädigter Entwurf verworfen
+    expect(comp.form()).toEqual(before); // Formular bleibt unverändert
+  });
+
+  it('beschädigter Entwurf (splits kein Array) → verworfen, Meldung, Formular unverändert', async () => {
+    const { comp, dbState } = await createLoaded(testSnapshot());
+    setValidForm(comp);
+    const before = comp.form();
+
+    const drafts = TestBed.inject(DraftsRepository);
+    await drafts.save(
+      'expense-entry',
+      'Ausgabeeingabe',
+      JSON.stringify({
+        date: '2026-10-30',
+        amountInput: '1,00',
+        accountId: 'acc-1',
+        note: '',
+        splits: {},
+      }),
+      new Date(),
+    );
+    await comp.loadDraft();
+
+    expect(comp.saveStatus()).toBe('error');
+    expect(comp.saveMessage()).toBe('Entwurf beschädigt — verworfen.');
+    expect(dbState.drafts.size).toBe(0);
+    expect(comp.form()).toEqual(before);
+  });
+
   it('Kategorie-Preset: Steuerkategorie wird vorgefüllt; Schalter aus → Felder geleert', async () => {
     const { comp } = await createLoaded(testSnapshot());
     setValidForm(comp);
@@ -329,7 +372,7 @@ describe('EntryComponent', () => {
     const split = comp.form().splits[0];
     expect(split.tax.relevant).toBe(true);
     expect(split.tax.taxCategoryId).toBe('tx-1');
-    expect(split.tax.markedAmountInput).toBe('10,00'); // Vollmarkierung
+    expect(split.tax.markedAmountInput).toBe('10'); // Vollmarkierung, formatCents(1000)
 
     // Schalter auf "nicht relevant" → Steuer-Felder werden geleert.
     comp.onSplitTaxRelevantChange('s1', false);
@@ -375,7 +418,7 @@ describe('EntryComponent', () => {
     comp.quickFillLast();
     expect(comp.form().splits.map((s) => s.amountInput)).toEqual([
       '10,00',
-      '15,00',
+      '15', // formatCents(1500): ganze Euro ohne Cent-Anteil
     ]);
   });
 
@@ -431,7 +474,7 @@ describe('EntryComponent', () => {
       '[data-testid="entry-deviation"]',
     );
     expect(deviation).not.toBeNull();
-    expect(deviation?.textContent).toContain('−20,00');
+    expect(deviation?.textContent).toContain('−20'); // formatCents(2000): ganze Euro
     expect(comp.deviationCents()).toBe(-2000);
   });
 

@@ -35,15 +35,17 @@ export function parseAmount(raw: string): number | null | undefined {
 }
 
 /**
- * Formatiert einen nichtnegativen Cent-Betrag als "12,50" (deutsches
- * Dezimalkomma). Negative Werte sind keine gültigen Ausgabe-Beträge und
- * werden nicht formatiert (ruft eine Exception aus).
+ * Formatiert einen nichtnegativen Cent-Betrag als Eingabe-Format mit
+ * deutschem Dezimalkomma: "12,50"; ganze Euro ohne Cent-Anteil werden
+ * als "12" ausgegeben (Eingabe-Format, s. `parseAmount`). Negative
+ * Werte sind keine gültigen Ausgabe-Beträge und werden nicht
+ * formatiert (ruft eine Exception aus).
  */
 export function formatCents(cents: number): string {
   if (!Number.isSafeInteger(cents) || cents < 0) {
     throw new Error(`formatCents: keine nichtnegative sichere Ganzzahl: ${cents}`);
   }
   const euros = Math.floor(cents / 100);
-  const rest = String(cents % 100).padStart(2, '0');
-  return `${euros},${rest}`;
+  const rest = cents % 100;
+  return rest === 0 ? `${euros}` : `${euros},${String(rest).padStart(2, '0')}`;
 }

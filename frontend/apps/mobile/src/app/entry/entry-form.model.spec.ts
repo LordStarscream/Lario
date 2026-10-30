@@ -2,7 +2,7 @@
 // Quick-Actions, taxPreset, toLocalInput. Reines TS, keine
 // Angular-/DOM-Abhängigkeit.
 import { describe, expect, it } from 'vitest';
-import { parseAmount } from '../amount';
+import { formatCents, parseAmount } from '../amount';
 import type { MasterDataSnapshot } from '../db/snapshot.repository';
 import type { TaxPresetDto } from '../../generated';
 import {
@@ -10,6 +10,9 @@ import {
   applyHalfSplit,
   applyTaxPreset,
   createDefaultSplit,
+  fillLastSplit,
+  parseDraft,
+  serializeDraft,
   toLocalInput,
   todayInBerlin,
   validateEntryForm,
@@ -455,3 +458,176 @@ function sumOfSplits(model: EntryFormModel): number {
     return sum + c!;
   }, 0);
 }
+
+describe('formatCents (Batch D, P4)', () => {
+  it('Cent-Anteil vorhanden → „12,50“', () => {
+    expect(formatCents(1250)).toBe('12,50');
+  });
+
+  it('ganz ohne Cent-Anteil → „12“ (Eingabe-Format, kein „12,00“)', () => {
+    expect(formatCents(1200)).toBe('12');
+  });
+
+  it('weniger als 100 Cent → führende Null „0,05“', () => {
+    expect(formatCents(5)).toBe('0,05');
+  });
+});
+
+describe('todayInBerlin (Batch D, P4)', () => {
+  it('liefert yyyy-MM-dd', () => {
+    expect(todayInBerlin()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe('serializeDraft/parseDraft (Batch D, P4)', () => {
+  it('Runde: teilgefülltes Formular (2 Splits, Steuer markiert) → identisches Modell', () => {
+    const model: EntryFormModel = {
+      date: '2026-10-30',
+      amountInput: '12,50',
+      accountId: 'acc-1',
+      note: 'Teilzustand',
+      splits: [
+        {
+          id: 's1',
+          key: 's1',
+          amountInput: '7,50',
+          poolId: 'pool-1',
+          categoryId: 'cat-1',
+          note: '',
+          tax: { relevant: false, taxCategoryId: null, taxCategoryName: null, markedAmountInput: '', note: '' },
+        },
+        {
+          id: 's2',
+          key: 's2',
+          amountInput: '5,00',
+          poolId: 'pool-1',
+          categoryId: 'cat-1',
+          note: '',
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt', markedAmountInput: '', note: 'Markierung' },
+        },
+      ],
+    };
+    expect(parseDraft(serializeDraft(model))).toEqual(model);
+  });
+
+  it('kaputtes JSON → null (beschädigter Entwurf)', () => {
+    expect(parseDraft('kein-json {')).toBeNull();
+  });
+
+  it('Top-Level Array statt Objekt → null', () => {
+    expect(parseDraft('[1, 2, 3]')).toBeNull();
+  });
+
+  it('splits kein Array → null', () => {
+    expect(
+      parseDraft(
+        JSON.stringify({
+          date: '2026-10-30',
+          amountInput: '1,00',
+          accountId: 'acc-1',
+          note: '',
+          splits: {},
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('Split mit falschem Typ in Pflichtfeld (note ist Zahl) → null', () => {
+    expect(
+      parseDraft(
+        JSON.stringify({
+          date: '2026-10-30',
+          amountInput: '1,00',
+          accountId: 'acc-1',
+          note: '',
+          splits: [
+            {
+              id: 's1',
+              key: 's1',
+              amountInput: '1,00',
+              poolId: 'pool-1',
+              categoryId: 'cat-1',
+              note: 42,
+              tax: { relevant: false, taxCategoryId: null, taxCategoryName: null, markedAmountInput: '', note: '' },
+            },
+          ],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('tax.relevant mit falschem Typ (Zahl) → null', () => {
+    expect(
+      parseDraft(
+        JSON.stringify({
+          date: '2026-10-30',
+          amountInput: '1,00',
+          accountId: 'acc-1',
+          note: '',
+          splits: [
+            {
+              id: 's1',
+              key: 's1',
+              amountInput: '1,00',
+              poolId: 'pool-1',
+              categoryId: 'cat-1',
+              note: '',
+              tax: { relevant: 1, taxCategoryId: null, taxCategoryName: null, markedAmountInput: '', note: '' },
+            },
+          ],
+        }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('fillLastSplit (Batch D, P4)', () => {
+  it('Total 5,00, übrige Splits 10,00 → Rest negativ → letzter Split wird geleert', () => {
+    const model: EntryFormModel = {
+      date: '2026-10-30',
+      amountInput: '5,00',
+      accountId: 'acc-1',
+      note: '',
+      splits: [
+        withSplit({ amountInput: '10,00' }),
+        withSplit({ id: 's2', key: 's2', amountInput: '1,00' }),
+      ],
+    };
+    const result = fillLastSplit(model);
+    expect(result.splits[0].amountInput).toBe('10,00'); // übrige Splits unverändert
+    expect(result.splits[1].amountInput).toBe(''); // Rest −500 Cent → leeren
+  });
+
+  it('Rest exakt 0 → letzter Split wird geleert (Grenzfall)', () => {
+    // Übrige Splits erschöpfen das Total → Rest 0 → letzter wird geleert.
+    const model: EntryFormModel = {
+      date: '2026-10-30',
+      amountInput: '10,00',
+      accountId: 'acc-1',
+      note: '',
+      splits: [
+        withSplit({ amountInput: '10,00' }),
+        withSplit({ id: 's2', key: 's2', amountInput: '1,00' }),
+      ],
+    };
+    const result = fillLastSplit(model);
+    expect(result.splits[1].amountInput).toBe('');
+  });
+
+  it('nur 1 Split → erhält das Total', () => {
+    const model: EntryFormModel = {
+      date: '2026-10-30',
+      amountInput: '10,00',
+      accountId: 'acc-1',
+      note: '',
+      splits: [withSplit({ amountInput: '3,00' })],
+    };
+    const result = fillLastSplit(model);
+    expect(result.splits[0].amountInput).toBe('10'); // formatCents(1000), ganze Euro
+  });
+
+  it('ungültiges Total → unverändert (dasselbe Objekt)', () => {
+    const model = { ...validForm(), amountInput: 'abc' };
+    expect(fillLastSplit(model)).toBe(model);
+  });
+});
