@@ -1,0 +1,244 @@
+<h2>Erfassen</h2>
+
+@if (snapshotError(); as snapshotErr) {
+  <p class="entry-error" data-testid="snapshot-error">{{ snapshotErr }}</p>
+}
+
+@if (snapshot() === null && snapshotError() === null) {
+  <p class="entry-hint" data-testid="snapshot-missing">
+    Kein Stammdatensnapshot — bitte zuerst in der Einrichtung verbinden.
+  </p>
+}
+
+<section class="entry-section" data-testid="entry-basics">
+  <h3>Grunddaten</h3>
+  <label>
+    Datum
+    <input
+      type="date"
+      data-testid="entry-date"
+      [ngModel]="form().date"
+      (ngModelChange)="updateField({ date: $event })"
+    />
+  </label>
+  <label>
+    Gesamtbetrag (€)
+    <input
+      type="text"
+      inputmode="decimal"
+      placeholder="0,00"
+      data-testid="entry-total"
+      [ngModel]="form().amountInput"
+      (ngModelChange)="updateField({ amountInput: $event })"
+    />
+  </label>
+  <label>
+    Konto
+    <select
+      data-testid="entry-account"
+      [ngModel]="form().accountId"
+      (ngModelChange)="updateField({ accountId: $event })"
+    >
+      <option value="">— Konto wählen —</option>
+      @for (account of accountOptions(); track account.id) {
+        <option [value]="account.id">{{ account.label }}</option>
+      }
+    </select>
+  </label>
+  <label>
+    Notiz
+    <input
+      type="text"
+      data-testid="entry-note"
+      [ngModel]="form().note"
+      (ngModelChange)="updateField({ note: $event })"
+    />
+  </label>
+</section>
+
+<section class="entry-section" data-testid="entry-splits">
+  <h3>Splits</h3>
+  @for (split of form().splits; track split.key; let i = $index) {
+    <div class="entry-split" [attr.data-testid]="'entry-split-' + (i + 1)">
+      <div class="entry-split-row">
+        <label>
+          Betrag (€)
+          <input
+            type="text"
+            inputmode="decimal"
+            placeholder="0,00"
+            [attr.data-testid]="'entry-split-amount-' + (i + 1)"
+            [ngModel]="split.amountInput"
+            (ngModelChange)="updateSplit(split.key, { amountInput: $event })"
+          />
+        </label>
+        <label>
+          Pool
+          <select
+            [attr.data-testid]="'entry-split-pool-' + (i + 1)"
+            [ngModel]="split.poolId"
+            (ngModelChange)="onSplitPoolChange(split.key, $event)"
+          >
+            <option value="">— Pool wählen —</option>
+            @for (pool of poolOptions(); track pool.id) {
+              <option [value]="pool.id">{{ pool.label }}</option>
+            }
+          </select>
+        </label>
+        <label>
+          Kategorie
+          <select
+            [attr.data-testid]="'entry-split-category-' + (i + 1)"
+            [ngModel]="split.categoryId"
+            (ngModelChange)="onSplitCategoryChange(split.key, $event)"
+          >
+            <option value="">— Kategorie wählen —</option>
+            @for (category of categoryOptions(); track category.id) {
+              <option [value]="category.id">{{ category.label }}</option>
+            }
+          </select>
+        </label>
+        <button
+          type="button"
+          class="entry-split-remove"
+          [attr.data-testid]="'entry-split-remove-' + (i + 1)"
+          (click)="removeSplit(split.key)"
+        >
+          Entfernen
+        </button>
+      </div>
+      <label class="entry-split-note">
+        Notiz
+        <input
+          type="text"
+          [attr.data-testid]="'entry-split-note-' + (i + 1)"
+          [ngModel]="split.note"
+          (ngModelChange)="updateSplit(split.key, { note: $event })"
+        />
+      </label>
+
+      <div class="entry-tax">
+        <label class="entry-tax-toggle">
+          <input
+            type="checkbox"
+            [attr.data-testid]="'entry-tax-' + (i + 1)"
+            [ngModel]="split.tax.relevant"
+            (ngModelChange)="onSplitTaxRelevantChange(split.key, $event)"
+          />
+          Steuer relevant
+        </label>
+        @if (split.tax.relevant) {
+          <label>
+            Steuerkategorie
+            <select
+              [attr.data-testid]="'entry-tax-category-' + (i + 1)"
+              [ngModel]="split.tax.taxCategoryId ?? ''"
+              (ngModelChange)="updateSplitTax(split.key, { taxCategoryId: $event === '' ? null : $event })"
+            >
+              <option value="">— Steuerkategorie wählen —</option>
+              @for (taxCategory of taxCategoryOptions(); track taxCategory.id) {
+                <option [value]="taxCategory.id">{{ taxCategory.label }}</option>
+              }
+            </select>
+          </label>
+          <label>
+            Markierter Betrag (€)
+            <input
+              type="text"
+              inputmode="decimal"
+              [placeholder]="markedAmountPlaceholder(split)"
+              [attr.data-testid]="'entry-marked-' + (i + 1)"
+              [ngModel]="split.tax.markedAmountInput"
+              (ngModelChange)="updateSplitTax(split.key, { markedAmountInput: $event })"
+            />
+          </label>
+          <label>
+            Steuer-Notiz
+            <input
+              type="text"
+              [attr.data-testid]="'entry-tax-note-' + (i + 1)"
+              [ngModel]="split.tax.note"
+              (ngModelChange)="updateSplitTax(split.key, { note: $event })"
+            />
+          </label>
+        }
+      </div>
+    </div>
+  }
+  <button type="button" data-testid="entry-split-add" (click)="addSplit()">
+    Split hinzufügen
+  </button>
+</section>
+
+<section class="entry-section entry-summary" data-testid="entry-summary">
+  <p>
+    Gesamt: {{ formatCentsDisplay(totalCents()) }} €
+    | Split-Summe: {{ formatCentsDisplay(splitSum()) }} €
+  </p>
+  @if (deviationCents() !== null && deviationCents() !== 0) {
+    <p class="entry-deviation" data-testid="entry-deviation">
+      Abweichung: {{ formatDeviation(deviationCents()) }} €
+    </p>
+  }
+  <div class="entry-quick-actions">
+    <button
+      type="button"
+      data-testid="entry-quick-even"
+      [disabled]="!quickActionsEnabled()"
+      (click)="quickEvenly()"
+    >
+      Gleichmäßig
+    </button>
+    <button
+      type="button"
+      data-testid="entry-quick-fill-last"
+      [disabled]="!quickActionsEnabled()"
+      (click)="quickFillLast()"
+    >
+      Rest in letzten Split
+    </button>
+  </div>
+</section>
+
+@if (errors().length > 0) {
+  <ul class="entry-errors" data-testid="entry-errors">
+    @for (error of errors(); track $index) {
+      <li>{{ error.message }}</li>
+    }
+  </ul>
+}
+
+<section class="entry-section" data-testid="entry-actions">
+  <button
+    type="button"
+    data-testid="entry-save"
+    [disabled]="!saveEnabled()"
+    (click)="save()"
+  >
+    @if (saving()) {
+      Speichern …
+    } @else {
+      Speichern
+    }
+  </button>
+  @if (saveStatus() !== 'idle') {
+    <p
+      [class.entry-error]="saveStatus() === 'error'"
+      [class.entry-saved]="saveStatus() === 'saved'"
+      data-testid="entry-save-status"
+    >
+      {{ saveMessage() }}
+    </p>
+  }
+  <div class="entry-draft-actions">
+    <button type="button" data-testid="entry-draft-save" (click)="saveDraft()">
+      Entwurf speichern
+    </button>
+    <button type="button" data-testid="entry-draft-load" (click)="loadDraft()">
+      Entwurf laden
+    </button>
+    <button type="button" data-testid="entry-draft-discard" (click)="discardDraft()">
+      Entwurf verwerfen
+    </button>
+  </div>
+</section>

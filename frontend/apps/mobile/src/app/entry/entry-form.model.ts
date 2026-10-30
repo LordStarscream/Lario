@@ -502,3 +502,160 @@ export function applyTaxPreset(
     },
   };
 }
+
+/**
+ * Quick-Action "Rest in letzten Split" (Design D8): setzt den
+ * letzten Split auf `Gesamtbetrag − Σ(alle anderen gültigen Splits)`.
+ *
+ * - Nur möglich, wenn der Gesamtbetrag gültig ist und mindestens ein
+ *   Split vorhanden ist.
+ * - Rest < 1 Cent (auch negativ, wenn die Splits das Total
+ *   überschreiten) → letzter Split wird geleert.
+ * - Sonst: unverändert.
+ */
+export function fillLastSplit(model: EntryFormModel): EntryFormModel {
+  const totalCents = parseAmount(model.amountInput);
+  if (totalCents === null || totalCents === undefined || model.splits.length === 0) {
+    return model;
+  }
+  let otherSum = 0;
+  for (let i = 0; i < model.splits.length - 1; i++) {
+    const cents = parseAmount(model.splits[i].amountInput);
+    if (cents !== null && cents !== undefined && cents > 0) {
+      otherSum += cents;
+    }
+  }
+  const rest = totalCents - otherSum;
+  const last = model.splits[model.splits.length - 1];
+  const updatedLast: EntrySplitModel = {
+    ...last,
+    amountInput: rest >= 1 ? formatCents(rest) : '',
+  };
+  return {
+    ...model,
+    splits: [...model.splits.slice(0, -1), updatedLast],
+  };
+}
+
+/**
+ * Setzt den Steuer-Status eines Splits. Beim Umschalten auf "nicht
+ * relevant" werden Steuerkategorie und markierter Betrag geleert
+ * (Design D7: keine verwaisten Kennzeichnungsdaten).
+ */
+export function setTaxRelevant(
+  model: EntryFormModel,
+  splitKey: string,
+  relevant: boolean,
+): EntryFormModel {
+  return {
+    ...model,
+    splits: model.splits.map((s) => {
+      if (s.key !== splitKey) {
+        return s;
+      }
+      if (relevant) {
+        return { ...s, tax: { ...s.tax, relevant: true } };
+      }
+      return {
+        ...s,
+        tax: {
+          ...s.tax,
+          relevant: false,
+          taxCategoryId: null,
+          taxCategoryName: null,
+          markedAmountInput: '',
+        },
+      };
+    }),
+  };
+}
+
+/**
+ * Serialisiert das Formular als Entwurf-JSON (Draft-Dienst, Design D8).
+ */
+export function serializeDraft(model: EntryFormModel): string {
+  return JSON.stringify(model);
+}
+
+/**
+ * Parst ein Entwurf-JSON zurück in ein Formularmodell. Strukturelle
+ * Guards: alle Pflichtfelder müssen die erwarteten Typen haben, sonst
+ * `null` (beschädigter Entwurf — der Aufrufer verwirft ihn).
+ *
+ * Hinweis: das committede `EntryFormModel` hat kein Versionsfeld; die
+ * Guards sind rein strukturell (Greenfield — keine Altdaten).
+ */
+export function parseDraft(json: string): EntryFormModel | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+  const obj = raw as Record<string, unknown>;
+  if (
+    typeof obj['date'] !== 'string' ||
+    typeof obj['amountInput'] !== 'string' ||
+    typeof obj['accountId'] !== 'string' ||
+    typeof obj['note'] !== 'string' ||
+    !Array.isArray(obj['splits'])
+  ) {
+    return null;
+  }
+  const splits: EntrySplitModel[] = [];
+  for (const item of obj['splits'] as unknown[]) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      return null;
+    }
+    const split = item as Record<string, unknown>;
+    const tax = split['tax'];
+    if (
+      typeof split['id'] !== 'string' ||
+      typeof split['key'] !== 'string' ||
+      typeof split['amountInput'] !== 'string' ||
+      typeof split['poolId'] !== 'string' ||
+      typeof split['categoryId'] !== 'string' ||
+      typeof split['note'] !== 'string' ||
+      tax === null ||
+      typeof tax !== 'object' ||
+      Array.isArray(tax)
+    ) {
+      return null;
+    }
+    const taxObj = tax as Record<string, unknown>;
+    if (
+      typeof taxObj['relevant'] !== 'boolean' ||
+      (taxObj['taxCategoryId'] !== null && typeof taxObj['taxCategoryId'] !== 'string') ||
+      (taxObj['taxCategoryName'] !== null && typeof taxObj['taxCategoryName'] !== 'string') ||
+      typeof taxObj['markedAmountInput'] !== 'string' ||
+      typeof taxObj['note'] !== 'string'
+    ) {
+      return null;
+    }
+    splits.push({
+      id: split['id'] as string,
+      key: split['key'] as string,
+      amountInput: split['amountInput'] as string,
+      poolId: split['poolId'] as string,
+      categoryId: split['categoryId'] as string,
+      note: split['note'] as string,
+      tax: {
+        relevant: taxObj['relevant'] as boolean,
+        taxCategoryId: (taxObj['taxCategoryId'] as string | null) ?? null,
+        taxCategoryName: (taxObj['taxCategoryName'] as string | null) ?? null,
+        markedAmountInput: taxObj['markedAmountInput'] as string,
+        note: taxObj['note'] as string,
+      },
+    });
+  }
+  return {
+    date: obj['date'] as string,
+    amountInput: obj['amountInput'] as string,
+    accountId: obj['accountId'] as string,
+    note: obj['note'] as string,
+    splits,
+  };
+}
