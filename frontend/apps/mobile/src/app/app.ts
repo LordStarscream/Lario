@@ -1,6 +1,7 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { SqliteService, PrototypeEntry } from './sqlite.service';
+import { parseAmount } from './amount';
 import { HostService, HostCheckResult } from './host.service';
 
 @Component({
@@ -135,23 +136,6 @@ function describeError(err: unknown): string {
   return String(err);
 }
 
-/**
- * Geldbeträge werden als ganzzahlige Centwerte gespeichert. Der
- * Prototyp akzeptiert nur das dezimale Komma („12,50“); ganze Zahlen
- * („12“) sind erlaubt. Ungültige Eingaben werden abgelehnt, nicht
- * gerundet oder still gedeutet.
- */
-export function parseAmount(raw: string): number | null | undefined {
-  const trimmed = raw.trim();
-  if (trimmed === '') {
-    return null;
-  }
-  // 13 Stellen vor dem Komma = Systemgrenze (long-Cent-Speicher, .NET);
-  // 10^15 Cent bleibt innerhalb von Number.MAX_SAFE_INTEGER.
-  const match = /^(\d{1,13})(?:[.,](\d{1,2}))?$/.exec(trimmed);
-  if (!match) {
-    return undefined;
-  }
-  const decimals = (match[2] ?? '').padEnd(2, '0');
-  return Number(match[1]) * 100 + Number(decimals);
-}
+// Batch D (P4): `parseAmount` lebt in `amount.ts` (1:1-Extraktion für das
+// Erfassen-Formular); der Re-Export erhält `app.html`/`app.spec.ts`.
+export { parseAmount } from './amount';

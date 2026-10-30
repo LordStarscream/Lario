@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
-import { App, parseAmount } from './app';
+import { App } from './app';
+import { parseAmount } from './amount';
 import { PrototypeEntry, SqliteService } from './sqlite.service';
 
 /** Minimale Fetch-Antwort ohne jsdom-/Node-`Response`-Abhängigkeit. */
