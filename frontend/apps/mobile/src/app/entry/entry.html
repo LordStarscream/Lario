@@ -17,6 +17,7 @@
     <input
       type="date"
       data-testid="entry-date"
+      [attr.disabled]="saving() ? '' : null"
       [ngModel]="form().date"
       (ngModelChange)="updateField({ date: $event })"
     />
@@ -28,6 +29,7 @@
       inputmode="decimal"
       placeholder="0,00"
       data-testid="entry-total"
+      [attr.disabled]="saving() ? '' : null"
       [ngModel]="form().amountInput"
       (ngModelChange)="updateField({ amountInput: $event })"
     />
@@ -36,6 +38,7 @@
     Konto
     <select
       data-testid="entry-account"
+      [attr.disabled]="saving() ? '' : null"
       [ngModel]="form().accountId"
       (ngModelChange)="updateField({ accountId: $event })"
     >
@@ -50,6 +53,7 @@
     <input
       type="text"
       data-testid="entry-note"
+      [attr.disabled]="saving() ? '' : null"
       [ngModel]="form().note"
       (ngModelChange)="updateField({ note: $event })"
     />
@@ -68,6 +72,7 @@
             inputmode="decimal"
             placeholder="0,00"
             [attr.data-testid]="'entry-split-amount-' + (i + 1)"
+            [attr.disabled]="saving() ? '' : null"
             [ngModel]="split.amountInput"
             (ngModelChange)="updateSplit(split.key, { amountInput: $event })"
           />
@@ -76,6 +81,7 @@
           Pool
           <select
             [attr.data-testid]="'entry-split-pool-' + (i + 1)"
+            [attr.disabled]="saving() ? '' : null"
             [ngModel]="split.poolId"
             (ngModelChange)="onSplitPoolChange(split.key, $event)"
           >
@@ -89,6 +95,7 @@
           Kategorie
           <select
             [attr.data-testid]="'entry-split-category-' + (i + 1)"
+            [attr.disabled]="saving() ? '' : null"
             [ngModel]="split.categoryId"
             (ngModelChange)="onSplitCategoryChange(split.key, $event)"
           >
@@ -102,6 +109,7 @@
           type="button"
           class="entry-split-remove"
           [attr.data-testid]="'entry-split-remove-' + (i + 1)"
+          [disabled]="saving()"
           (click)="removeSplit(split.key)"
         >
           Entfernen
@@ -112,6 +120,7 @@
         <input
           type="text"
           [attr.data-testid]="'entry-split-note-' + (i + 1)"
+          [attr.disabled]="saving() ? '' : null"
           [ngModel]="split.note"
           (ngModelChange)="updateSplit(split.key, { note: $event })"
         />
@@ -122,6 +131,7 @@
           <input
             type="checkbox"
             [attr.data-testid]="'entry-tax-' + (i + 1)"
+            [attr.disabled]="saving() ? '' : null"
             [ngModel]="split.tax.relevant"
             (ngModelChange)="onSplitTaxRelevantChange(split.key, $event)"
           />
@@ -132,8 +142,9 @@
             Steuerkategorie
             <select
               [attr.data-testid]="'entry-tax-category-' + (i + 1)"
+              [attr.disabled]="saving() ? '' : null"
               [ngModel]="split.tax.taxCategoryId ?? ''"
-              (ngModelChange)="updateSplitTax(split.key, { taxCategoryId: $event === '' ? null : $event })"
+              (ngModelChange)="onSplitTaxCategoryChange(split.key, $event === '' ? null : $event)"
             >
               <option value="">— Steuerkategorie wählen —</option>
               @for (taxCategory of taxCategoryOptions(); track taxCategory.id) {
@@ -148,6 +159,7 @@
               inputmode="decimal"
               [placeholder]="markedAmountPlaceholder(split)"
               [attr.data-testid]="'entry-marked-' + (i + 1)"
+              [attr.disabled]="saving() ? '' : null"
               [ngModel]="split.tax.markedAmountInput"
               (ngModelChange)="updateSplitTax(split.key, { markedAmountInput: $event })"
             />
@@ -157,6 +169,7 @@
             <input
               type="text"
               [attr.data-testid]="'entry-tax-note-' + (i + 1)"
+              [attr.disabled]="saving() ? '' : null"
               [ngModel]="split.tax.note"
               (ngModelChange)="updateSplitTax(split.key, { note: $event })"
             />
@@ -165,7 +178,7 @@
       </div>
     </div>
   }
-  <button type="button" data-testid="entry-split-add" (click)="addSplit()">
+  <button type="button" data-testid="entry-split-add" [disabled]="saving()" (click)="addSplit()">
     Split hinzufügen
   </button>
 </section>
@@ -184,7 +197,7 @@
     <button
       type="button"
       data-testid="entry-quick-even"
-      [disabled]="!quickActionsEnabled()"
+      [disabled]="!quickActionsEnabled() || saving()"
       (click)="quickEvenly()"
     >
       Gleichmäßig
@@ -192,7 +205,7 @@
     <button
       type="button"
       data-testid="entry-quick-fill-last"
-      [disabled]="!quickActionsEnabled()"
+      [disabled]="!quickActionsEnabled() || saving()"
       (click)="quickFillLast()"
     >
       Rest in letzten Split
@@ -231,13 +244,13 @@
     </p>
   }
   <div class="entry-draft-actions">
-    <button type="button" data-testid="entry-draft-save" (click)="saveDraft()">
+    <button type="button" data-testid="entry-draft-save" [disabled]="saving()" (click)="saveDraft()">
       Entwurf speichern
     </button>
-    <button type="button" data-testid="entry-draft-load" (click)="loadDraft()">
+    <button type="button" data-testid="entry-draft-load" [disabled]="saving()" (click)="loadDraft()">
       Entwurf laden
     </button>
-    <button type="button" data-testid="entry-draft-discard" (click)="discardDraft()">
+    <button type="button" data-testid="entry-draft-discard" [disabled]="saving()" (click)="discardDraft()">
       Entwurf verwerfen
     </button>
   </div>

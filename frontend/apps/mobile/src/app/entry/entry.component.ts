@@ -34,6 +34,7 @@ import {
   parseDraft,
   serializeDraft,
   setTaxRelevant,
+  sumCentsSafe,
   toLocalInput,
   todayInBerlin,
   validateEntryForm,
@@ -77,18 +78,28 @@ export class EntryComponent implements OnInit {
     return c === null || c === undefined ? null : c;
   });
 
-  /** Summe der gültigen Split-Beträge in Cent. */
-  readonly splitSum = computed<number>(() =>
-    this.form().splits.reduce((sum, s) => {
+  /** Summe der gültigen Split-Beträge in Cent (null = außerhalb des
+   *  sicheren Bereichs, Batch D Review, P3 — die Live-Anzeige darf
+   *  nicht werfen).
+   */
+  readonly splitSum = computed<number | null>(() => {
+    const cents: number[] = [];
+    for (const s of this.form().splits) {
       const c = parseAmount(s.amountInput);
-      return c === null || c === undefined ? sum : sum + c;
-    }, 0),
-  );
+      if (c !== null && c !== undefined) {
+        cents.push(c);
+      }
+    }
+    return sumCentsSafe(cents);
+  });
 
-  /** Abweichung Split-Summe − Gesamt (null = Gesamt ungültig). */
+  /** Abweichung Split-Summe − Gesamt (null = Gesamt oder Summe
+   *  ungültig).
+   */
   readonly deviationCents = computed<number | null>(() => {
     const total = this.totalCents();
-    return total === null ? null : this.splitSum() - total;
+    const sum = this.splitSum();
+    return total === null || sum === null ? null : sum - total;
   });
 
   /** Konto-Optionen (aktiv, nach Name sortiert). */
@@ -126,6 +137,15 @@ export class EntryComponent implements OnInit {
     () => !this.saving() && this.snapshot() !== null,
   );
 
+  /**
+   * Generationszähler des Formularzustands (Batch D Review, P2):
+   * jede Mutation erhöht ihn. `save()` erfasst den Zähler vor dem
+   * Repository-Aufruf und setzt das Formular nach dem Commit nur
+   * zurück, wenn sich nichts geändert hat — eine zwischenzeitliche
+   * Änderung wird nie still gelöscht.
+   */
+  private formGeneration = 0;
+
   /** Lädt den Stammdaten-Snapshot (Design D9; Fehlfall → Hinweis, das
    *  Formular bleibt bedienbar, Speichern ist gesperrt).
    */
@@ -139,18 +159,37 @@ export class EntryComponent implements OnInit {
 
   // --- Formular-Mutationen -------------------------------------------------
 
+  /**
+   * Zentrale Mutation des Formularzustands (Batch D Review, P2):
+   * während der Save-Transaktion (`saving`) werden alle
+   * formularverändernden Operationen blockiert; jede Mutation
+   * erhöht den Generationszähler.
+   */
+  private setForm(model: EntryFormModel): void {
+    if (this.saving()) {
+      return;
+    }
+    this.formGeneration += 1;
+    this.form.set(model);
+  }
+
+  /** Patcht den Formularzustand (s. `setForm`). */
+  private mutateForm(fn: (f: EntryFormModel) => EntryFormModel): void {
+    this.setForm(fn(this.form()));
+  }
+
   /** Aktualisiert ein Top-Level-Feld des Formulars (Datum, Betrag,
    *  Konto, Notiz).
    */
   updateField(patch: Partial<Pick<EntryFormModel, 'date' | 'amountInput' | 'accountId' | 'note'>>): void {
-    this.form.update((f) => ({ ...f, ...patch }));
+    this.mutateForm((f) => ({ ...f, ...patch }));
   }
 
   /** Aktualisiert ein Feld eines Splits (Betrag, Pool, Kategorie,
    *  Notiz).
    */
   updateSplit(key: string, patch: Partial<Omit<EntrySplitModel, 'tax' | 'key' | 'id'>>): void {
-    this.form.update((f) => ({
+    this.mutateForm((f) => ({
       ...f,
       splits: f.splits.map((s) => (s.key === key ? { ...s, ...patch } : s)),
     }));
@@ -160,10 +199,31 @@ export class EntryComponent implements OnInit {
    *  markierter Betrag, Notiz).
    */
   updateSplitTax(key: string, taxPatch: Partial<EntryTaxModel>): void {
-    this.form.update((f) => ({
+    this.mutateForm((f) => ({
       ...f,
       splits: f.splits.map((s) =>
         s.key === key ? { ...s, tax: { ...s.tax, ...taxPatch } } : s,
+      ),
+    }));
+  }
+
+  /** Setzt die Steuerkategorie eines Splits; der Anzeigename wird
+   *  aus dem Snapshot abgeleitet (Batch D Review, P2). Der
+   *  persistierte Name wird von `toLocalInput` zusätzlich aus dem
+   *  Snapshot neu abgeleitet (maßgeblich).
+   */
+  onSplitTaxCategoryChange(key: string, taxCategoryId: string | null): void {
+    const snapshot = this.snapshot();
+    const name =
+      taxCategoryId === null
+        ? null
+        : snapshot?.taxCategories.get(taxCategoryId)?.name ?? null;
+    this.mutateForm((f) => ({
+      ...f,
+      splits: f.splits.map((s) =>
+        s.key === key
+          ? { ...s, tax: { ...s.tax, taxCategoryId, taxCategoryName: name } }
+          : s,
       ),
     }));
   }
@@ -173,7 +233,7 @@ export class EntryComponent implements OnInit {
    *  geleert (Design D7).
    */
   onSplitTaxRelevantChange(key: string, relevant: boolean): void {
-    this.form.update((f) => setTaxRelevant(f, key, relevant));
+    this.mutateForm((f) => setTaxRelevant(f, key, relevant));
   }
 
   /** Setzt den Pool eines Splits. */
@@ -187,7 +247,7 @@ export class EntryComponent implements OnInit {
   onSplitCategoryChange(key: string, categoryId: string): void {
     const snapshot = this.snapshot();
     const category = categoryId === '' ? undefined : snapshot?.categories.get(categoryId);
-    this.form.update((f) => ({
+    this.mutateForm((f) => ({
       ...f,
       splits: f.splits.map((s) =>
         s.key === key
@@ -199,7 +259,7 @@ export class EntryComponent implements OnInit {
 
   /** Fügt einen Split hinzu (Position: am Ende, Key "sN"). */
   addSplit(): void {
-    this.form.update((f) => {
+    this.mutateForm((f) => {
       const nextKey = `s${f.splits.length + 1}`;
       return { ...f, splits: [...f.splits, createDefaultSplit(nextKey)] };
     });
@@ -209,7 +269,7 @@ export class EntryComponent implements OnInit {
    *  erlaubt — die Validierung meldet "missing_split").
    */
   removeSplit(key: string): void {
-    this.form.update((f) => {
+    this.mutateForm((f) => {
       const remaining = f.splits.filter((s) => s.key !== key);
       // Keys neu nummerieren (s1, s2, ...), damit die Position
       // stabil bleibt (Design D4).
@@ -224,13 +284,13 @@ export class EntryComponent implements OnInit {
   quickEvenly(): void {
     const result = applyEqualSplit(this.form());
     if (result !== null) {
-      this.form.set(result);
+      this.setForm(result);
     }
   }
 
   /** Quick-Action "Rest in letzten Split" (Design D8). */
   quickFillLast(): void {
-    this.form.set(fillLastSplit(this.form()));
+    this.setForm(fillLastSplit(this.form()));
   }
 
   // --- Speichern ------------------------------------------------------------
@@ -256,6 +316,10 @@ export class EntryComponent implements OnInit {
       return;
     }
     const accountId = this.form().accountId;
+    // Generationszähler erfassen (Batch D Review, P2): nach dem Commit
+    // wird das Formular nur zurückgesetzt, wenn sich nichts geändert
+    // hat — eine zwischenzeitliche Änderung wird nie still gelöscht.
+    const savedFormGeneration = this.formGeneration;
     this.saving.set(true);
     this.saveStatus.set('idle');
     this.saveMessage.set(null);
@@ -265,7 +329,11 @@ export class EntryComponent implements OnInit {
       this.saveMessage.set(
         `Ausgabe gespeichert (Buchung ${result.bookingId}) — lokal in der Outbox.`,
       );
-      this.form.set({ ...createDefaultForm(todayInBerlin()), accountId });
+      if (this.formGeneration === savedFormGeneration) {
+        // Direktes `form.set` (nicht `setForm`): die eigene Reset-
+        // Mutation muss die `saving`-Sperre umgehen dürfen.
+        this.form.set({ ...createDefaultForm(todayInBerlin()), accountId });
+      }
     } catch (e) {
       this.saveStatus.set('error');
       this.saveMessage.set(
@@ -305,6 +373,14 @@ export class EntryComponent implements OnInit {
    *  Entwurf verworfen + Hinweis.
    */
   async loadDraft(): Promise<void> {
+    // Start-Sperre (Batch D Review, P2): kein neuer Entwurf-Ladevorgang
+    // während einer laufenden Save-Transaktion.
+    if (this.saving()) {
+      this.saveStatus.set('error');
+      this.saveMessage.set('Speichern läuft gerade — Entwurf wird nicht geladen.');
+      return;
+    }
+    const generationAtStart = this.formGeneration;
     try {
       const draft = await this.draftsRepository.get(DRAFT_ID);
       if (draft === null) {
@@ -319,7 +395,23 @@ export class EntryComponent implements OnInit {
         this.saveMessage.set('Entwurf beschädigt — verworfen.');
         return;
       }
-      this.form.set(model);
+      // In-flight-Check (Batch D Review, P2): hat während des Loads das
+      // Speichern begonnen, oder wurde das Formular in der Zwischenzeit
+      // geändert, wird das Ergebnis nicht angewendet — der Entwurf
+      // bleibt gespeichert und kann später neu geladen werden.
+      if (this.saving()) {
+        this.saveStatus.set('error');
+        this.saveMessage.set('Speichern läuft gerade — Entwurf wird nicht geladen.');
+        return;
+      }
+      if (this.formGeneration !== generationAtStart) {
+        this.saveStatus.set('error');
+        this.saveMessage.set(
+          'Formular wurde in der Zwischenzeit geändert — Entwurf nicht geladen.',
+        );
+        return;
+      }
+      this.setForm(model);
       this.saveStatus.set('saved');
       this.saveMessage.set('Entwurf geladen.');
     } catch (e) {

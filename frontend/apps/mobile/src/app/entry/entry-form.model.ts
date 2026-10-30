@@ -39,6 +39,7 @@ export type EntryFormError =
   | { code: 'missing_pool'; message: string }
   | { code: 'missing_category'; message: string }
   | { code: 'split_sum_mismatch'; message: string }
+  | { code: 'split_sum_range'; message: string }
   | { code: 'unknown_account'; message: string }
   | { code: 'unknown_pool'; message: string }
   | { code: 'unknown_category'; message: string }
@@ -147,6 +148,30 @@ function isValidDate(s: string): boolean {
 }
 
 /**
+ * Summe ganzzahliger Cent-Beträge mit expliziter Obergrenzenprüfung
+ * (Batch D Review, P3): Überschreitet die Summe
+ * `Number.MAX_SAFE_INTEGER` (oder liegt ein Wert außerhalb des
+ * sicheren Ganzzahlbereichs), wird `null` zurückgegeben — statt
+ * einen unsicheren Wert an `formatCents` oder Vergleiche zu geben.
+ * Alle Eingaben müssen nicht-negative sichere Ganzzahlen sein
+ * (so wie sie `parseAmount` liefert).
+ */
+export function sumCentsSafe(values: number[]): number | null {
+  let total = 0;
+  for (const value of values) {
+    if (
+      value < 0 ||
+      !Number.isSafeInteger(value) ||
+      value > Number.MAX_SAFE_INTEGER - total
+    ) {
+      return null;
+    }
+    total += value;
+  }
+  return total;
+}
+
+/**
  * Vollständige Formularvalidierung (Design D7). Die Reihenfolge der
  * Meldungen ist stabil: Datum, Gesamt, Konto, Splits (pro Split:
  * Betrag, Pool, Kategorie, Steuer), Summen-Abgleich, Archiv-Status.
@@ -182,7 +207,7 @@ export function validateEntryForm(
     errors.push({ code: 'missing_split', message: 'Mindestens ein Split ist erforderlich' });
   }
 
-  let splitSum = 0;
+  const validSplitCents: number[] = [];
   for (const split of model.splits) {
     const label = `Split ${split.key}: `;
 
@@ -191,7 +216,7 @@ export function validateEntryForm(
     if (!amountValid) {
       errors.push({ code: 'invalid_split_amount', message: `${label}Betrag fehlt oder ist ungültig` });
     } else {
-      splitSum += cents;
+      validSplitCents.push(cents);
     }
 
     if (split.poolId === '') {
@@ -235,11 +260,21 @@ export function validateEntryForm(
     }
   }
 
-  if (totalCents !== null && totalCents !== undefined && splitSum !== totalCents) {
-    errors.push({
-      code: 'split_sum_mismatch',
-      message: `Split-Summe ${formatCents(splitSum)} € ≠ Gesamtbetrag ${formatCents(totalCents)} €`,
-    });
+  if (totalCents !== null && totalCents !== undefined) {
+    const splitSum = sumCentsSafe(validSplitCents);
+    if (splitSum === null) {
+      // Batch D Review, P3: regulär eingebare ungültige Daten dürfen
+      // die Validierung nicht mit einer Exception abbrechen.
+      errors.push({
+        code: 'split_sum_range',
+        message: 'Split-Summe liegt außerhalb des zulässigen Bereichs',
+      });
+    } else if (splitSum !== totalCents) {
+      errors.push({
+        code: 'split_sum_mismatch',
+        message: `Split-Summe ${formatCents(splitSum)} € ≠ Gesamtbetrag ${formatCents(totalCents)} €`,
+      });
+    }
   }
 
   // Archiv-Status (nur mit Snapshot; "aktiv" ist der einzige
@@ -326,7 +361,15 @@ export function toLocalInput(
       ? {
           relevant: true,
           taxCategoryId: s.tax.taxCategoryId,
-          taxCategoryName: s.tax.taxCategoryName,
+          // Name aus dem (vorab validierten) Snapshot abgeleitet —
+          // der Formularname ist nur Anzeige und nicht maßgeblich
+          // (Batch D Review, P2): eine manuelle Auswahl ohne Preset
+          // oder ein Entwurf mit veraltetem Namen würde sonst einen
+          // inkonsistenten Anzeigewert persistieren.
+          taxCategoryName:
+            s.tax.taxCategoryId !== null
+              ? snapshot.taxCategories.get(s.tax.taxCategoryId)?.name ?? null
+              : null,
           markedAmountCents:
             s.tax.markedAmountInput === ''
               ? null
@@ -389,7 +432,9 @@ export function applyHalfSplit(model: EntryFormModel): EntryFormModel | null {
   if (amounts.some((c) => c < 0)) {
     return null;
   }
-  if (amounts.reduce((a, b) => a + b, 0) !== totalCents) {
+  // Sichere Summenbildung (Batch D Review, P3): die Präcondition
+  // sum(splits) === total darf nicht überlaufen.
+  if (sumCentsSafe(amounts) !== totalCents) {
     return null;
   }
   const half = Math.floor(totalCents / 2);
@@ -518,14 +563,17 @@ export function fillLastSplit(model: EntryFormModel): EntryFormModel {
   if (totalCents === null || totalCents === undefined || model.splits.length === 0) {
     return model;
   }
-  let otherSum = 0;
+  const otherCents: number[] = [];
   for (let i = 0; i < model.splits.length - 1; i++) {
     const cents = parseAmount(model.splits[i].amountInput);
     if (cents !== null && cents !== undefined && cents > 0) {
-      otherSum += cents;
+      otherCents.push(cents);
     }
   }
-  const rest = totalCents - otherSum;
+  // Sichere Summenbildung (Batch D Review, P3): bei Überlauf gilt
+  // der Rest als negativ → letzter Split wird geleert.
+  const otherSum = sumCentsSafe(otherCents);
+  const rest = otherSum === null ? -1 : totalCents - otherSum;
   const last = model.splits[model.splits.length - 1];
   const updatedLast: EntrySplitModel = {
     ...last,

@@ -16,8 +16,10 @@ import {
   type CapacitorSqliteMock,
 } from '../db/capacitor-sqlite-fake';
 import { LocalDatabase } from '../db/local-database';
+import { BookingsRepository } from '../db/bookings.repository';
 import { DraftsRepository } from '../db/drafts.repository';
 import { SnapshotRepository } from '../db/snapshot.repository';
+import type { LocalExpenseInput } from '../db/expense-payload';
 import type {
   AccountDto,
   CategoryDto,
@@ -157,6 +159,13 @@ function testSnapshot(): SnapshotInput {
     {
       id: 'tx-1',
       name: 'Sachbezug',
+      parentId: null,
+      status: 'active',
+      baseRevision: 1,
+    },
+    {
+      id: 'tx-2',
+      name: 'Werbungskosten',
       parentId: null,
       status: 'active',
       baseRevision: 1,
@@ -490,5 +499,236 @@ describe('EntryComponent', () => {
     expect(comp.saveStatus()).toBe('error');
     expect(comp.errors().some((e) => e.code === 'missing_tax_category')).toBe(true);
     expect(dbState.bookings.size).toBe(0);
+  });
+
+  // --- Batch D Review (30.10.2026): P2 Save-Race, P2 Steuername, P3 Überlauf ---
+
+  it('Save-Race: während laufender Transaktion sind Eingaben und Entwurf-Laden blockiert; nach Commit exakt eine Buchung (Review P2)', async () => {
+    const { comp, dbState, fixture } = await createLoaded(testSnapshot());
+    const bookingsRepo = TestBed.inject(BookingsRepository);
+
+    // Repository-Save über ein Promise-Gate anhalten.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const originalSave = bookingsRepo.save.bind(bookingsRepo);
+    bookingsRepo.save = (async (input: LocalExpenseInput, now: Date) => {
+      await gate;
+      return originalSave(input, now);
+    }) as typeof bookingsRepo.save;
+
+    // Entwurf für den während-Save-Load-Versuch vorbereiten (5,00).
+    setValidForm(comp, { amount: '5,00', splits: [{ amount: '5,00' }] });
+    await comp.saveDraft();
+    expect(dbState.drafts.size).toBe(1);
+
+    // Formular auf den zu speichernden Stand setzen (10,00) und Save starten.
+    setValidForm(comp);
+    const savePromise = comp.save();
+    expect(comp.saving()).toBe(true);
+    // Zoneless: [disabled]-Bindungen erst bei Change Detection im DOM.
+    fixture.detectChanges();
+
+    // 1) UI-Sperre: alle formularverändernden Elemente sind disabled
+    //    (einschließlich Entwurf laden).
+    const el = (testid: string) =>
+      fixture.nativeElement.querySelector(
+        `[data-testid="${testid}"]`,
+      ) as HTMLInputElement | HTMLSelectElement | HTMLButtonElement | null;
+    expect(el('entry-note')?.disabled).toBe(true);
+    expect(el('entry-total')?.disabled).toBe(true);
+    expect(el('entry-account')?.disabled).toBe(true);
+    expect(el('entry-split-amount-1')?.disabled).toBe(true);
+    expect(el('entry-split-add')?.disabled).toBe(true);
+    expect(el('entry-quick-even')?.disabled).toBe(true);
+    expect(el('entry-draft-load')?.disabled).toBe(true);
+    expect(el('entry-draft-save')?.disabled).toBe(true);
+    expect(el('entry-draft-discard')?.disabled).toBe(true);
+
+    // 2) Methodenebene: Mutationen sind nachweislich blockiert (und
+    //    werden danach nicht still gelöscht — es findet kein Reset des
+    //    neuen Stands statt, weil gar kein neuer Stand existiert).
+    comp.updateField({ note: 'während Save geändert' });
+    expect(comp.form().note).toBe('');
+    comp.addSplit();
+    expect(comp.form().splits.length).toBe(1);
+
+    // 3) Entwurf laden während Save: blockiert, Entwurf bleibt gespeichert.
+    await comp.loadDraft();
+    expect(comp.form().amountInput).toBe('10,00'); // nicht der 5,00-Entwurf
+    expect(comp.saveMessage()).toBe(
+      'Speichern läuft gerade — Entwurf wird nicht geladen.',
+    );
+    expect(dbState.drafts.size).toBe(1);
+
+    // 4) Commit freigeben.
+    release!();
+    await savePromise;
+
+    expect(comp.saving()).toBe(false);
+    expect(comp.saveStatus()).toBe('saved');
+    // Formular zurückgesetzt (nichts wurde während Save geändert).
+    expect(comp.form().amountInput).toBe('');
+    expect(comp.form().note).toBe('');
+    expect(comp.form().accountId).toBe('acc-1');
+    // Exakt eine Buchung (Doppeltipp bleibt gewahrt).
+    expect(dbState.bookings.size).toBe(1);
+    expect(dbState.outbox.size).toBe(1);
+  });
+
+  it('Save-Race: in-flight Entwurf-Load, der während Save läuft, wird nicht angewendet; Entwurf bleibt gespeichert (Review P2)', async () => {
+    const { comp, dbState } = await createLoaded(testSnapshot());
+    const draftsRepo = TestBed.inject(DraftsRepository);
+    const bookingsRepo = TestBed.inject(BookingsRepository);
+
+    // Draft-Get und Repository-Save jeweils über ein Promise-Gate
+    // anhalten (beide asynchron in-flight).
+    let releaseGet: (() => void) | undefined;
+    let releaseSave: (() => void) | undefined;
+    const getGate = new Promise<void>((r) => {
+      releaseGet = r;
+    });
+    const saveGate = new Promise<void>((r) => {
+      releaseSave = r;
+    });
+    const originalGet = draftsRepo.get.bind(draftsRepo);
+    const originalSave = bookingsRepo.save.bind(bookingsRepo);
+    draftsRepo.get = (async (id: string) => {
+      await getGate;
+      return originalGet(id);
+    }) as typeof draftsRepo.get;
+    bookingsRepo.save = (async (input: LocalExpenseInput, now: Date) => {
+      await saveGate;
+      return originalSave(input, now);
+    }) as typeof bookingsRepo.save;
+
+    setValidForm(comp, { amount: '5,00', splits: [{ amount: '5,00' }] });
+    await comp.saveDraft(); // Entwurf 5,00
+
+    // Load starten (hängt am Gate), danach Save starten (hängt am Gate).
+    setValidForm(comp, { amount: '7,77', splits: [{ amount: '7,77' }] });
+    const loadPromise = comp.loadDraft();
+    const savePromise = comp.save();
+    expect(comp.saving()).toBe(true);
+
+    // Get auflösen, während der Save noch läuft → Load wird
+    // deterministisch blockiert (saving() ist zu diesem Zeitpunkt true).
+    releaseGet!();
+    releaseSave!();
+    await savePromise;
+    await loadPromise;
+
+    // Der Entwurf wurde nicht angewendet (Save lief noch);
+    // das Formular ist der nach Commit zurückgesetzte Stand, die
+    // Meldung die des erfolgreichen Saves.
+    expect(comp.saveStatus()).toBe('saved');
+    expect(comp.saveMessage()).toMatch(/^Ausgabe gespeichert \(Buchung bk-/);
+    expect(comp.form().amountInput).toBe('');
+    // Entwurf bleibt gespeichert (niemals still gelöscht) und kann
+    // nach dem Save neu geladen werden.
+    expect(dbState.drafts.size).toBe(1);
+    await comp.loadDraft();
+    expect(comp.form().amountInput).toBe('5,00');
+    expect(comp.saveMessage()).toBe('Entwurf geladen.');
+    // Exakt eine Buchung.
+    expect(dbState.bookings.size).toBe(1);
+    expect(dbState.outbox.size).toBe(1);
+  });
+
+  it('Steuerkategorie-Wechsel: Anzeigename aus Snapshot abgeleitet (Review P2)', async () => {
+    const { comp } = await createLoaded(testSnapshot());
+    setValidForm(comp);
+
+    // Schalter an, aber noch keine Kategorie gewählt.
+    comp.onSplitTaxRelevantChange('s1', true);
+    expect(comp.form().splits[0].tax.relevant).toBe(true);
+    expect(comp.form().splits[0].tax.taxCategoryId).toBeNull();
+    expect(comp.form().splits[0].tax.taxCategoryName).toBeNull();
+
+    // tx-1 wählen → Anzeigename aus dem Snapshot abgeleitet.
+    comp.onSplitTaxCategoryChange('s1', 'tx-1');
+    expect(comp.form().splits[0].tax.taxCategoryId).toBe('tx-1');
+    expect(comp.form().splits[0].tax.taxCategoryName).toBe('Sachbezug');
+
+    // Wechsel auf tx-2 → Name wird neu abgeleitet (ohne Ableitung
+    // bliebe der veraltete Name 'Sachbezug' erhalten).
+    comp.onSplitTaxCategoryChange('s1', 'tx-2');
+    const split = comp.form().splits[0];
+    expect(split.tax.taxCategoryId).toBe('tx-2');
+    expect(split.tax.taxCategoryName).toBe('Werbungskosten'); // aus Snapshot
+
+    // Leere Auswahl → beides null.
+    comp.onSplitTaxCategoryChange('s1', null);
+    expect(comp.form().splits[0].tax.taxCategoryId).toBeNull();
+    expect(comp.form().splits[0].tax.taxCategoryName).toBeNull();
+  });
+
+  it('Speichern: persistierter Steuername kommt aus dem Snapshot, nicht aus dem Formular (Review P2)', async () => {
+    const { comp, dbState } = await createLoaded(testSnapshot());
+    setValidForm(comp);
+
+    // Formular-Name bewusst veralten (z. B. nach Preset-Übernahme mit
+    // „Alt“ — hier direkt im Modell simuliert), dann speichern.
+    comp.onSplitTaxRelevantChange('s1', true);
+    comp.onSplitTaxCategoryChange('s1', 'tx-1');
+    const form = comp.form();
+    comp.form.set({
+      ...form,
+      splits: [
+        { ...form.splits[0], tax: { ...form.splits[0].tax, taxCategoryName: 'Alt' } },
+      ],
+    });
+
+    await comp.save();
+
+    expect(comp.saveStatus()).toBe('saved');
+    const splitRow = [...dbState.splits.values()][0];
+    expect(splitRow.tax_category_id).toBe('tx-1');
+    expect(splitRow.tax_category_name).toBe('Sachbezug'); // Snapshot, nicht „Alt"
+  });
+
+  it('Summen-Überlauf: 10 maximale Splitbeträge → stabile Fehlermeldung, keine Exception, kein Repository-Aufruf (Review P3)', async () => {
+    const { comp, dbState, fixture } = await createLoaded(testSnapshot());
+    const maxInput = '9999999999999,99'; // 13 Ziffern: parseAmount-Grenze
+
+    // 10 Splits mit maximalem parsebarem Betrag; Gesamt ist gültig.
+    const form = comp.form();
+    comp.form.set({
+      ...form,
+      date: '2026-10-28',
+      amountInput: '10,00',
+      accountId: 'acc-1',
+      splits: Array.from({ length: 10 }, (_, i) => ({
+        id: `s${i + 1}`,
+        key: `s${i + 1}`,
+        amountInput: maxInput,
+        poolId: 'pool-1',
+        categoryId: 'cat-1',
+        note: '',
+        tax: {
+          relevant: false,
+          taxCategoryId: null,
+          taxCategoryName: null,
+          markedAmountInput: '',
+          note: '',
+        },
+      })),
+    });
+    fixture.detectChanges();
+
+    // Validierung und Live-Anzeige dürfen nicht werfen:
+    expect(() => comp.errors()).not.toThrow();
+    expect(comp.errors().some((e) => e.code === 'split_sum_range')).toBe(true);
+    expect(() => comp.splitSum()).not.toThrow();
+    expect(comp.splitSum()).toBeNull();
+    expect(() => comp.deviationCents()).not.toThrow();
+
+    // Speichern: stabile Fehlermeldung, kein Repository-Aufruf.
+    await comp.save();
+    expect(comp.saveStatus()).toBe('error');
+    expect(dbState.bookings.size).toBe(0);
+    expect(dbState.splits.size).toBe(0);
+    expect(dbState.outbox.size).toBe(0);
   });
 });
