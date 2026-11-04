@@ -139,10 +139,13 @@ export class EntryComponent implements OnInit {
 
   /**
    * Generationszähler des Formularzustands (Batch D Review, P2):
-   * jede Mutation erhöht ihn. `save()` erfasst den Zähler vor dem
-   * Repository-Aufruf und setzt das Formular nach dem Commit nur
-   * zurück, wenn sich nichts geändert hat — eine zwischenzeitliche
-   * Änderung wird nie still gelöscht.
+   * jede Mutation erhöht ihn — einschließlich des erfolgreichen
+   * Formular-Reset nach dem Save (deshalb erkennt ein vor dem Save
+   * gestarteter Entwurf-Load mit verspäteter Antwort den abgeschlossenen
+   * Save). `save()` erfasst den Zähler vor dem Repository-Aufruf und
+   * setzt das Formular nach dem Commit nur zurück, wenn sich nichts
+   * geändert hat — eine zwischenzeitliche Änderung wird nie still
+   * gelöscht.
    */
   private formGeneration = 0;
 
@@ -332,6 +335,13 @@ export class EntryComponent implements OnInit {
       if (this.formGeneration === savedFormGeneration) {
         // Direktes `form.set` (nicht `setForm`): die eigene Reset-
         // Mutation muss die `saving`-Sperre umgehen dürfen.
+        // Der Generationszähler wird mitgezählt (Batch D Review, P2):
+        // ein vor dem Save gestartetes loadDraft() erkennt über die
+        // geänderte Generation, dass der Save inzwischen abgeschlossen
+        // ist, und wendet eine verspätete Entwurf-Antwort nicht an —
+        // der gespeicherte Entwurf bleibt erhalten und kann nach dem
+        // Save bewusst neu geladen werden.
+        this.formGeneration += 1;
         this.form.set({ ...createDefaultForm(todayInBerlin()), accountId });
       }
     } catch (e) {

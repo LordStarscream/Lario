@@ -636,6 +636,60 @@ describe('EntryComponent', () => {
     expect(dbState.outbox.size).toBe(1);
   });
 
+  it('Save-Race: verspätete Entwurf-Antwort NACH vollständigem Save überschreibt das zurückgesetzte Formular nicht (Review P2)', async () => {
+    const { comp, dbState } = await createLoaded(testSnapshot());
+    const draftsRepo = TestBed.inject(DraftsRepository);
+
+    // Nur die Draft-get() wird über ein Promise-Gate angehalten; der
+    // Repository-Save läuft unvermittelt durch. get() wird erst NACH
+    // `await savePromise` freigegeben — der Load-Return liegt also
+    // hinter Commit + Reset + `saving=false`.
+    let releaseGet: (() => void) | undefined;
+    const getGate = new Promise<void>((r) => {
+      releaseGet = r;
+    });
+    const originalGet = draftsRepo.get.bind(draftsRepo);
+    draftsRepo.get = (async (id: string) => {
+      await getGate;
+      return originalGet(id);
+    }) as typeof draftsRepo.get;
+
+    // Entwurf 5,00; das zu speichernde Formular: 10,00.
+    setValidForm(comp, { amount: '5,00', splits: [{ amount: '5,00' }] });
+    await comp.saveDraft();
+    expect(dbState.drafts.size).toBe(1);
+
+    setValidForm(comp);
+    const loadPromise = comp.loadDraft(); // hängt am Gate
+    const savePromise = comp.save();
+
+    // Save vollständig abwarten (Commit, Reset, saving=false).
+    await savePromise;
+    expect(comp.saving()).toBe(false);
+    expect(dbState.bookings.size).toBe(1);
+
+    // Erst jetzt die verspätete Entwurf-Antwort freigeben.
+    releaseGet!();
+    await loadPromise;
+
+    // Die alte Antwort wird nicht angewendet: das Formular bleibt
+    // zurückgesetzt, keine alte Eingabe wird automatisch wieder
+    expect(comp.form().amountInput).toBe('');
+    expect(comp.form().note).toBe('');
+    expect(comp.saveMessage()).toBe(
+      'Formular wurde in der Zwischenzeit geändert — Entwurf nicht geladen.',
+    );
+    // Der gespeicherte Entwurf bleibt erhalten; ein bewusst neu
+    // gestartetes Laden nach dem Save funktioniert weiter.
+    expect(dbState.drafts.size).toBe(1);
+    await comp.loadDraft();
+    expect(comp.form().amountInput).toBe('5,00');
+    expect(comp.saveMessage()).toBe('Entwurf geladen.');
+    // Repository-Save genau einmal — keine zweite Buchung.
+    expect(dbState.bookings.size).toBe(1);
+    expect(dbState.outbox.size).toBe(1);
+  });
+
   it('Steuerkategorie-Wechsel: Anzeigename aus Snapshot abgeleitet (Review P2)', async () => {
     const { comp } = await createLoaded(testSnapshot());
     setValidForm(comp);
