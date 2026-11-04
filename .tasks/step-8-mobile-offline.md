@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig (PR #16 offen), Batch C fertig inkl. Review-P2-Nachgang (`9f8319a`, gepushed) · Last updated: 28. Okt. 2026_
+_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig (PR #16 gemerged, Rescue #18), Batch C fertig inkl. Review-P2-Nachgang (`9f8319a`), **Batch D fertig inkl. Review R1+R2+R3-Nachgang (PR #19 offen, wartet auf Nutzer-Merge)** · Last updated: 01. Nov. 2026_
 
 **Branches:**
 - Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
@@ -369,15 +369,95 @@ _Design-Fakten (verifiziert 23.10., Host-Seite):_
 
 ## Batch D — Ausgabeformular (P4)
 
-- [ ] Erfassen-View (primäre Startansicht): Betrag/Konto/Datum/Notiz, Split-Liste
+**Status (30.10.2026):** Implementiert + 2 Review-Runden abgearbeitet, **PR #19 offen**
+(wartet auf Nutzer-Merge). Worker (Worktree `/tmp/lario-step8d`, Branch `step/8d-entry`
+ab `b15c9b9`; Spec `.tasks/worker-step8d-task.md`): Commits `0c3a6d4` (amount.ts:
+parseAmount 1:1 extrahiert + formatCents neu), `6eb62d4` (entry-form.model.ts + 38 Tests),
+`3c2d014` (entry.component.ts + entry.html + Component-Spec; `app.ts`/`app.spec.ts`
+minimal, Re-Export). 8 Dateien (+3208/−19).
+
+**Review R1 (30.10., Bericht im Review-Worktree `Lario-worktrees/step-8d-review/REVIEW-BATCH-D.md`):**
+kein P1; 1×P2 (4 spec-pflichtige Testgruppen fehlend); 7×P3. **P2-1 abgearbeitet
+(Commit `f28880a`):** +16 Tests (formatCents-Referenzfälle, todayInBerlin,
+parseDraft/serializeDraft-Guards inkl. 2× beschädigter Entwurf in der Component,
+fillLastSplit-Grenzfälle) + dabei gefundene ungedokumentete Spec-Abweichung in
+`formatCents` behoben (`1200` → `"12"` statt `"12,00"`, Spec-Konformität).
+
+**Review R2 (LordStarscream, 30.10., inline auf PR #19, Head `f28880a`):** „noch nicht
+zum Merge empfohlen" — 2×P2, 1×P3 (Reproduktionen inkl. Original-TS-Ausführung unter
+Node; Reviewer bestätigt: fehlende Shell-/App-Root-Einbindung gehört zu Batch E).
+**Abgearbeitet (Commit `f5f59bb`, gepusht 30.10., PR #19 aktualisiert + PR-Kommentar):**
+- **P2-1 Save-Race (Formulardatenverlust):** während `await save(...)` waren nur
+  weitere Saves gesperrt — Eingaben/Entwurf-Laden blieben bedienbar, der
+  bedingungslose Formular-Reset nach dem Commit löschte Zwischen-Eingaben still.
+  Fix: (a) alle formularverändernden Controls (inkl. Entwurf laden/speichern/verwerfen,
+  Quick-Actions, Split-Buttons) bei `saving()` disabled; (b) zentrale `setForm`/
+  `mutateForm` blockieren Mutationen während `saving` (Methodenebene); (c)
+  Generationszähler `formGeneration` — `save()` setzt das Formular nach dem Commit nur
+  zurück, wenn sich nichts geändert hat; (d) `loadDraft()` mit Start- + In-Flight-Check
+  (während Save laufender Load wird nicht angewendet, Entwurf bleibt gespeichert).
+- **P2-2 Steuername:** `toLocalInput` kopierte den Formularnamen unverändert — nach
+  Preset-Übernahme + manuellem Select-Wechsel persistierte ID mit veraltetem Namen.
+  Fix: persistierter Name aus `snapshot.taxCategories.get(id)` abgeleitet (maßgeblich,
+  korrigiert auch Entwürfe mit veraltetem Namen); `onSplitTaxCategoryChange` setzt den
+  Anzeigename beim Wechsel aus dem Snapshot.
+- **P3 Summen-Überlauf:** 10 Splits à max. 9999999999999,99 € → Summe über
+  MAX_SAFE_INTEGER → `formatCents(splitSum)` Exception brach die Validierung ab
+  (`save()` wertet `errors()` vor try/catch aus); Live-Anzeige `splitSum()` konnte
+  ebenso werfen. Fix: `sumCentsSafe` (Obergrenzenprüfung vor jeder Addition, `null`
+  bei Überschreitung) in `validateEntryForm` (neuer Code `split_sum_range`),
+  `fillLastSplit` (Rest negativ → letzter Split geleert), `applyHalfSplit`,
+  `splitSum`/`deviationCents` (null bei Überlauf).
+
+**Review R3 (LordStarscream, 01.11.2026, inline auf PR #19, Head `f5f59bb`):** 1×P2,
+1×P3 — „noch nicht zum Merge empfohlen".
+- **P2 Save-Race (Formulardatenverlust, Loch im R2-Fix):** das erfolgreiche
+  Formular-Reset in `save()` umgeht `setForm()` (direktes `form.set` wegen der
+  `saving`-Sperre) und zählte `formGeneration` nicht mit — ein vor dem Save
+  gestartetes `loadDraft()` mit verspäteter Antwort sah nach dem Commit
+  `saving=false` + dieselbe Generation und überschrieb das zurückgesetzte
+  Formular mit der alten Entwurfs-Eingabe (Reviewerscenario reproduziert).
+  **Abgearbeitet (Commit `3c7d9d3`, 01.11., gepusht, PR #19 aktualisiert +
+  PR-Kommentar):** Reset zählt `formGeneration` mit (einzige Mutation, die die
+  Sperre umgeht — jetzt konsistent). Spec: Save-Race-Test mit Gate auf
+  `DraftsRepository.get()` — Load-Return liegt hinter Commit + Reset +
+  `saving=false`; ohne Fix rot (5,00 statt leerem Formular).
+- **P3-2 Steuer-Teilbetrag 0 bei `!relevant`: False-Positive (verifiziert):** Host
+  akzeptiert `markedAmount=0` — `TaxMarkingDto.Validate` (C#) hat keine >0-Regel
+  (explizite 0 = gültige Daten; `Of` validiert 0), `BookingCommandMapper` mappt
+  `0L` → `TaxMarking.Of`, `ExpensePayload`/`validateExpense` akzeptieren 0,
+  `parseDraft` akzeptiert 0; Host-DTO ist `record : TaxMarking` (keine Override).
+  Mobile + Host teilen die Domain-Regel — kein Fix nötig.
+
+**Prüfungen (01.11., nach R3-Nachgang):** lint host+mobile grün, **237 mobile +
+Domain 214 + Infrastructure 200 Tests grün** (Suite 12-fach wiederholt, stabil;
+Lario.Api.Tests läuft im Environment nicht — ASP.NET-Core-Shared-Framework
+fehlt, vorbestehender Constraint), build:mobile grün.
+
+**P3-R1-Befunde (dokumentiert/optional, offen):** applyHalfSplit Produktions-toter
+Code (nicht in D8/UI — entfernen oder Batch E), `EntrySplitModel.id` nie konsumiert,
+Entwurfs-`v:1`-Versionsfeld entfernt (Greenfield, JSDoc), Fehler-Codes umbenannt +
+kein form-level `no_snapshot` (UX abgedeckt: Template-Hinweis + Repository-
+`BookingValidationError('no_snapshot')` bei Save), letzter Split entfernbar (Spec:
+disabled; `missing_split` meldet), Snapshot-Hinweis blinkt während Load, Kosmetik
+(Labels/Namen).
+
+**Prüfungen (30.10., nach R2-Nachgang):** lint host+mobile grün, **236 mobile +
+130 host Tests grün** (mobile-Suite 18-fach wiederholt, stabil), build host+mobile
+grün, keine Dependency-Änderung.
+
+**Aufgabenzettel (implementiert, Abnahme mit Batch E/9):**
+- [x] Erfassen-View (primäre Startansicht): Betrag/Konto/Datum/Notiz, Split-Liste
       (Betrag/Pool/Kategorie/Steuer je Split), Quick-Actions, live Summen-Abgleich,
       Validierungs-UX gemäß D7
-- [ ] Steuerkennzeichnung: Schalter pro Split + Kategorie-`taxPreset`-Übernahme,
+- [x] Steuerkennzeichnung: Schalter pro Split + Kategorie-`taxPreset`-Übernahme,
       markedAmount-Input (Standard = Splitbetrag, Obergrenze = Splitbetrag)
-- [ ] Speichern (eine Transaktion, erst nach Commit Bestätigung, `saving`-Sperre),
-      Entwurf speichern/laden/verwerfen
-- [ ] Zoneless-DOM-Tests: gültige Ausgabe (2 Splits + Steuer) wird gespeichert;
-      ungültig (Summenabweichung) nicht; Doppeltippen → 1 Buchung; Entwurf-Flow
+- [x] Speichern (eine Transaktion, erst nach Commit Bestätigung, `saving`-Sperre
+      inkl. Eingabe-/Entwurf-Blockade), Entwurf speichern/laden/verwerfen
+- [x] Zoneless-DOM-Tests: gültige Ausgabe (2 Splits + Steuer) wird gespeichert;
+      ungültig (Summenabweichung) nicht; Doppeltippen → 1 Buchung; Entwurf-Flow;
+      Save-Race (Eingaben blockiert/in-flight Load verworfen); Steuername aus
+      Snapshot; Summen-Überlauf (stabile Meldung statt Exception)
 
 ## Batch E — Eingaben-View + Shell + Integration (P5)
 
