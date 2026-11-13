@@ -23,6 +23,7 @@ import type {
   LocalSplitInput,
   LocalTaxInput,
 } from '../db/expense-payload';
+import type { LocalBookingDetail } from '../db/bookings.repository';
 import type { TaxPresetDto } from '../../generated';
 
 /**
@@ -615,6 +616,55 @@ export function setTaxRelevant(
         },
       };
     }),
+  };
+}
+
+/**
+ * Baut ein Formularmodell aus einer gespeicherten, in der Outbox
+ * wartenden Buchung (Batch E, Design D10):
+ *
+ * - Split-Keys sind Positions-Keys `s<i+1>`; `id` = `s<i+1>` (die
+ *   Repository-Kanonicalisierung ersetzt sie beim Speichern).
+ * - Beträge werden per `formatCents` formatiert (immer gültig —
+ *   gespeicherte Werte sind validiert).
+ * - `tax` ist `null` oder Objekt (Repository-Typ); `null` wird als
+ *   "nicht relevant" abgebildet; leerer `markedAmountInput` bedeutet
+ *   Standard "= Splitbetrag".
+ * - Referenz-IDs (Konto, Pools, Kategorien, Steuerkategorie) werden
+ *   1:1 übernommen — auch wenn die Referenz im Snapshot archiviert
+ *   oder fehlend ist (der Snapshot-Check markiert sie; der Nutzer
+ *   muss sie bei „Änderungen speichern" korrigieren).
+ * - `taxCategoryName` kommt aus der Buchung, nicht aus dem Snapshot
+ *   (Steuername-Entkopplung, D11).
+ * - `note` = `?? ''` (das Formular erwartet Strings).
+ */
+export function fromBookingDetail(
+  detail: LocalBookingDetail,
+): EntryFormModel {
+  const splits: EntrySplitModel[] = detail.splits.map((s, i) => ({
+    id: `s${i + 1}`,
+    key: `s${i + 1}`,
+    amountInput: formatCents(s.amountCents),
+    poolId: s.poolId,
+    categoryId: s.categoryId,
+    note: s.note ?? '',
+    tax: {
+      relevant: s.tax?.relevant ?? false,
+      taxCategoryId: s.tax?.taxCategoryId ?? null,
+      taxCategoryName: s.tax?.taxCategoryName ?? null,
+      markedAmountInput:
+        s.tax?.markedAmountCents === null || s.tax?.markedAmountCents === undefined
+          ? ''
+          : formatCents(s.tax?.markedAmountCents ?? 0),
+      note: s.tax?.note ?? '',
+    },
+  }));
+  return {
+    date: detail.date,
+    amountInput: formatCents(detail.totalAmountCents),
+    accountId: detail.accountId,
+    note: detail.note ?? '',
+    splits,
   };
 }
 

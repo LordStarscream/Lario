@@ -1,5 +1,19 @@
 <h2>Erfassen</h2>
 
+@if (editingBookingId() !== null) {
+  <div class="entry-edit-banner" data-testid="entry-edit-banner">
+    <p data-testid="entry-edit-banner-text">{{ editBannerText() }}</p>
+    <button
+      type="button"
+      data-testid="entry-edit-cancel"
+      [disabled]="saving()"
+      (click)="cancelEdit()"
+    >
+      Abbrechen
+    </button>
+  </div>
+}
+
 @if (snapshotError(); as snapshotErr) {
   <p class="entry-error" data-testid="snapshot-error">{{ snapshotErr }}</p>
 }
@@ -230,6 +244,8 @@
   >
     @if (saving()) {
       Speichern …
+    } @else if (editingBookingId() !== null) {
+      Änderungen speichern
     } @else {
       Speichern
     }
@@ -238,19 +254,35 @@
     <p
       [class.entry-error]="saveStatus() === 'error'"
       [class.entry-saved]="saveStatus() === 'saved'"
+      [class.entry-info]="saveStatus() === 'info'"
       data-testid="entry-save-status"
     >
       {{ saveMessage() }}
     </p>
   }
   <div class="entry-draft-actions">
-    <button type="button" data-testid="entry-draft-save" [disabled]="saving()" (click)="saveDraft()">
+    <button
+      type="button"
+      data-testid="entry-draft-save"
+      [disabled]="saving() || editingBookingId() !== null"
+      (click)="saveDraft()"
+    >
       Entwurf speichern
     </button>
-    <button type="button" data-testid="entry-draft-load" [disabled]="saving()" (click)="loadDraft()">
+    <button
+      type="button"
+      data-testid="entry-draft-load"
+      [disabled]="saving() || editingBookingId() !== null"
+      (click)="loadDraft()"
+    >
       Entwurf laden
     </button>
-    <button type="button" data-testid="entry-draft-discard" [disabled]="saving()" (click)="discardDraft()">
+    <button
+      type="button"
+      data-testid="entry-draft-discard"
+      [disabled]="saving() || editingBookingId() !== null"
+      (click)="discardDraft()"
+    >
       Entwurf verwerfen
     </button>
   </div>

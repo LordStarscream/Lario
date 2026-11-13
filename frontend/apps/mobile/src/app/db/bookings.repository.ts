@@ -131,6 +131,14 @@ export interface LocalBookingListItem {
   note: string | null;
   /** `queued`/`confirmed` aus der Outbox; `unknown` ohne Outbox-Zeile. */
   status: 'queued' | 'confirmed' | 'unknown';
+  /** Technischer UTC-Zeitpunkt der Anlage (Liste-Sortierung, P5). */
+  createdAtUtc: string;
+  /**
+   * Pool-IDs der Splits, dedupliziert (Batch E, P5; aus
+   * `GROUP_CONCAT(DISTINCT pool_id)` — Nur-Anzeige, Reihenfolge
+   * nicht garantiert).
+   */
+  poolIds: string[];
 }
 
 /** Steuerkennzeichnung eines Split (Design D2; null = keine Kennzeichnung). */
@@ -264,6 +272,14 @@ function validateSplitTax(split: LocalSplitInput): void {
       );
     }
   }
+}
+
+/** `pool_ids`-Zeile (Kommakollation) → Array; `null`/leer → `[]`. */
+function parsePoolIds(value: unknown): string[] {
+  if (typeof value !== 'string' || value === '') {
+    return [];
+  }
+  return value.split(',').map((p) => p.trim()).filter((p) => p !== '');
 }
 
 /** Outbox-Status aus der Join-Zeile (null → unknown). */
@@ -465,10 +481,11 @@ export class BookingsRepository {
   }
 
   /**
-   * Eingaben-Liste, neuestes Fachdatum zuerst (mit Outbox-Status;
-   * keine Outbox-Zeile → `unknown`).
+   * Eingaben-Liste (Batch E, P5): alle lokalen Ausgaben mit
+   * Outbox-Status (keine Outbox-Zeile → `unknown`), sortiert nach
+   * `createdAtUtc` aufsteigend, dann `bookingId` aufsteigend.
    */
-  async list(): Promise<LocalBookingListItem[]> {
+  async listPending(): Promise<LocalBookingListItem[]> {
     const rows = await this.db.query<Record<string, unknown>>(SELECT_BOOKING_LIST, []);
     return rows.map((row) => ({
       bookingId: String(row['id']),
@@ -477,6 +494,10 @@ export class BookingsRepository {
       accountId: String(row['account_id']),
       note: (row['note'] as string | null) ?? null,
       status: mapOutboxStatus(row['outbox_status']),
+      createdAtUtc: String(row['created_at_utc']),
+      // `GROUP_CONCAT` liefert `null` ohne Splits; sonst
+      // Kommakollation (SQLite-Standardtrenner).
+      poolIds: parsePoolIds(row['pool_ids']),
     }));
   }
 
