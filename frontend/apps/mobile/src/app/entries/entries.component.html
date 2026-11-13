@@ -1,0 +1,48 @@
+<!-- Batch E (P5) — Eingaben-Liste. Zoneless: keine manuelle
+     Change-Detection; Signale + OnPush. Built-in Control Flow. -->
+@if (notice()) {
+  <div class="entries-notice" role="status">
+    <span>{{ notice() }}</span>
+    <button type="button" (click)="dismissNotice()" aria-label="Hinweis schließen">
+      ✕
+    </button>
+  </div>
+}
+
+@if (loadError()) {
+  <p class="entries-error" role="alert">{{ loadError() }}</p>
+}
+
+@if (!loadError() && items() !== null && items()!.length === 0) {
+  <p class="entries-empty">Keine lokalen Eingaben.</p>
+}
+
+@if (items() !== null && items()!.length > 0) {
+  <ul class="entries-list">
+    @for (item of items(); track item.bookingId) {
+      <li class="entries-item" data-testid="entry-row">
+        <div class="entries-item-main">
+          <div class="entries-item-date">{{ item.date }}</div>
+          <div class="entries-item-amount">{{ formatAmount(item.totalAmountCents) }} €</div>
+          <div class="entries-item-meta">{{ accountLabel(item.accountId) }}</div>
+          @if (item.poolIds.length > 0) {
+            <div class="entries-item-meta">{{ poolLabel(item.poolIds) }}</div>
+          }
+        </div>
+        <div class="entries-item-status" [class.sent]="item.status !== 'queued'">
+          {{ statusLabel(item.status) }}
+        </div>
+        <div class="entries-item-actions">
+          <a
+            [routerLink]="['/erfassen', item.bookingId]"
+            data-testid="entry-edit"
+            >Ändern</a
+          >
+          <a [routerLink]="['/eingaben', item.bookingId]" data-testid="entry-discard"
+            >Verwerfen</a
+          >
+        </div>
+      </li>
+    }
+  </ul>
+}

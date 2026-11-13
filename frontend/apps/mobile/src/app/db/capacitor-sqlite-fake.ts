@@ -529,10 +529,15 @@ function applySet(
     if (!row) {
       return; // SQLite: 0 Zeilen, kein Fehler
     }
-    row.date = String(date);
-    row.total_amount_cents = Number(totalAmountCents);
-    row.account_id = String(accountId);
-    row.note = note === null || note === undefined ? null : String(note);
+    // Row-Objekt ersetzen (Copy-Semantik wie echtes SQLite: früher
+    // gelesene Row-Referenzen bleiben unverändert).
+    state.bookings.set(String(id), {
+      ...row,
+      date: String(date),
+      total_amount_cents: Number(totalAmountCents),
+      account_id: String(accountId),
+      note: note === null || note === undefined ? null : String(note),
+    });
     return;
   }
   if (stmt === normalize(DELETE_BOOKING)) {
@@ -674,9 +679,14 @@ function applySet(
     if (!row || row.status !== String(status)) {
       return;
     }
-    row.payload = String(payload);
-    row.payload_hash = String(payloadHash);
-    row.updated_at_utc = String(updatedAtUtc);
+    // Row-Objekt ersetzen (Copy-Semantik wie echtes SQLite: früher
+    // gelesene Row-Referenzen bleiben unverändert).
+    state.outbox.set(String(operationId), {
+      ...row,
+      payload: String(payload),
+      payload_hash: String(payloadHash),
+      updated_at_utc: String(updatedAtUtc),
+    });
     return;
   }
   if (stmt === normalize(DELETE_OUTBOX)) {
@@ -689,10 +699,14 @@ function applySet(
       values as (string | null)[];
     const existing = state.drafts.get(String(id));
     if (existing) {
-      // Upsert: created_at_utc bleibt erhalten.
-      existing.name = String(name);
-      existing.data = String(data);
-      existing.updated_at_utc = String(updatedAtUtc);
+      // Upsert: created_at_utc bleibt erhalten. Row-Objekt ersetzen
+      // (Copy-Semantik wie echtes SQLite).
+      state.drafts.set(String(id), {
+        ...existing,
+        name: String(name),
+        data: String(data),
+        updated_at_utc: String(updatedAtUtc),
+      });
     } else {
       state.drafts.set(String(id), {
         id: String(id),
@@ -856,13 +870,11 @@ function runQuery(state: StateTables, statement: string, values: unknown[]): unk
   }
   // ── Batch B: Buchungen/Splits ─────────────────────────────────────────
   if (stmt === normalize(SELECT_BOOKING_LIST)) {
-    // ORDER BY date DESC, created_at_utc DESC — created_at_utc stammt
-    // aus der Quellzeile (im JOIN-Ziel nicht selektiert).
+    // ORDER BY created_at_utc ASC, id ASC (Batch E, P5).
     const sourceRows = [...state.bookings.values()].sort(
       (a, b) =>
-        b.date.localeCompare(a.date) ||
-        b.created_at_utc.localeCompare(a.created_at_utc) ||
-        b.id.localeCompare(a.id),
+        a.created_at_utc.localeCompare(b.created_at_utc) ||
+        a.id.localeCompare(b.id),
     );
     return sourceRows.map((b) => {
       let outboxStatus: string | null = null;
@@ -872,13 +884,26 @@ function runQuery(state: StateTables, statement: string, values: unknown[]): unk
           break;
         }
       }
+      // `pool_ids`: `GROUP_CONCAT(DISTINCT pool_id)` — dedupliziert,
+      // Kommakollation; ohne Splits → null (wie SQLite). Reihenfolge
+      // nicht garantiert (Nur-Anzeige, wie in statements.ts).
+      const pools: string[] = [];
+      for (const s of [...state.splits.values()]
+        .filter((s) => s.booking_id === b.id)
+        .sort((a, z) => a.id.localeCompare(z.id))) {
+        if (!pools.includes(s.pool_id)) {
+          pools.push(s.pool_id);
+        }
+      }
       return {
         id: b.id,
         date: b.date,
         total_amount_cents: b.total_amount_cents,
         account_id: b.account_id,
         note: b.note,
+        created_at_utc: b.created_at_utc,
         outbox_status: outboxStatus,
+        pool_ids: pools.length > 0 ? pools.join(',') : null,
       };
     });
   }

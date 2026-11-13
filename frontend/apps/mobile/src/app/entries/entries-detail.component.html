@@ -1,0 +1,111 @@
+<h2>Eingabe</h2>
+<a routerLink="/eingaben" data-testid="entries-detail-back-top">Zurück</a>
+
+@if (loading()) {
+  <p class="entries-detail-hint" data-testid="entries-detail-loading">
+    Wird geladen …
+  </p>
+} @else if (detail() === null) {
+  <p class="entries-detail-notfound" data-testid="entries-detail-notfound">
+    Keine Buchung mit dieser ID gefunden.
+  </p>
+  <a routerLink="/eingaben" data-testid="entries-detail-back">
+    Zurück zur Liste
+  </a>
+} @else {
+  @if (detail(); as d) {
+    <dl class="entries-detail-fields">
+      <dt data-testid="entries-detail-date">Datum</dt>
+      <dd>{{ d.date }}</dd>
+      <dt data-testid="entries-detail-amount">Betrag</dt>
+      <dd>{{ formatAmount(d.totalAmountCents) }} €</dd>
+      <dt>Konto</dt>
+      <dd data-testid="entries-detail-account">{{ accountLabel(d.accountId) }}</dd>
+      <dt data-testid="entries-detail-note">Notiz</dt>
+      <dd>{{ d.note ?? '—' }}</dd>
+      <dt data-testid="entries-detail-created">Erstellt</dt>
+      <dd>{{ d.createdAtUtc }}</dd>
+      <dt data-testid="entries-detail-status">Status</dt>
+      <dd>{{ statusLabel(d.status) }}</dd>
+    </dl>
+
+    <h3>Splits</h3>
+    <ul class="entries-detail-splits">
+      @for (split of d.splits; track split.id) {
+        <li class="entries-detail-split" [attr.data-testid]="'entries-split-' + split.id">
+          <span
+            class="entries-split-amount"
+            [attr.data-testid]="'entries-split-amount-' + split.id"
+          >
+            {{ formatAmount(split.amountCents) }} €
+          </span>
+          <span class="entries-split-pool">{{ poolLabel(split.poolId) }}</span>
+          <span class="entries-split-category">{{ categoryLabel(split.categoryId) }}</span>
+          @if (split.note !== null) {
+            <span class="entries-split-note">{{ split.note }}</span>
+          }
+          @if (split.tax !== null && split.tax.relevant) {
+            <div class="entries-split-tax" [attr.data-testid]="'entries-split-tax-' + split.id">
+              <span>Steuerkategorie: {{ split.tax.taxCategoryName ?? '—' }}</span>
+              @if (split.tax.markedAmountCents === null) {
+                <span>(voller Betrag)</span>
+              } @else {
+                <span>({{ formatAmount(split.tax.markedAmountCents) }} €)</span>
+              }
+              @if (split.tax.note !== null) {
+                <span class="entries-split-tax-note">{{ split.tax.note }}</span>
+              }
+            </div>
+          }
+        </li>
+      }
+    </ul>
+
+    <div class="entries-detail-actions">
+      @if (d.status === 'queued') {
+        <a
+          [routerLink]="['/erfassen', d.bookingId]"
+          data-testid="entries-detail-edit"
+        >
+          Ändern
+        </a>
+        @if (!confirmingDiscard()) {
+          <button
+            type="button"
+            data-testid="entries-detail-discard"
+            [disabled]="discarding()"
+            (click)="onDiscard()"
+          >
+            Verwerfen
+          </button>
+        } @else {
+          <div class="entries-discard-confirm" data-testid="entries-detail-discard-confirm">
+            <span>Wirklich verwerfen?</span>
+            <button
+              type="button"
+              data-testid="entries-detail-discard-confirm-yes"
+              [disabled]="discarding()"
+              (click)="onDiscard()"
+            >
+              Ja
+            </button>
+            <button
+              type="button"
+              data-testid="entries-detail-discard-cancel"
+              [disabled]="discarding()"
+              (click)="cancelDiscard()"
+            >
+              Nein
+            </button>
+          </div>
+        }
+      }
+    </div>
+
+    @if (actionMessage(); as actionMsg) {
+      <p class="entries-action-message" data-testid="entries-action-message">
+        {{ actionMsg }}
+      </p>
+    }
+  }
+}

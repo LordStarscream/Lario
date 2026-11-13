@@ -11,6 +11,7 @@ import {
   applyTaxPreset,
   createDefaultSplit,
   fillLastSplit,
+  fromBookingDetail,
   parseDraft,
   serializeDraft,
   toLocalInput,
@@ -19,6 +20,7 @@ import {
   type EntryFormModel,
   type EntrySplitModel,
 } from './entry-form.model';
+import type { LocalBookingDetail } from '../db/bookings.repository';
 
 /** Snapshot: je ein aktives Konto/Pool/Kategorie/Steuerkategorie. */
 function snapshot(): MasterDataSnapshot {
@@ -629,5 +631,150 @@ describe('fillLastSplit (Batch D, P4)', () => {
   it('ungültiges Total → unverändert (dasselbe Objekt)', () => {
     const model = { ...validForm(), amountInput: 'abc' };
     expect(fillLastSplit(model)).toBe(model);
+  });
+});
+
+describe('fromBookingDetail (Batch E, Design D10)', () => {
+  function detail(
+    overrides: Partial<LocalBookingDetail> = {},
+  ): LocalBookingDetail {
+    return {
+      bookingId: 'b-1',
+      date: '2026-10-30',
+      type: 'expense',
+      accountId: 'acc-1',
+      totalAmountCents: 1250,
+      note: null,
+      createdAtUtc: '2026-10-30T12:00:00Z',
+      status: 'queued',
+      splits: [
+        {
+          id: 's-uuid-1',
+          amountCents: 800,
+          poolId: 'pool-1',
+          categoryId: 'cat-1',
+          note: 'Split-Notiz',
+          tax: null,
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  it('mappt Grunddaten: Datum, formatierter Betrag, Konto, Notiz (null → \'\')', () => {
+    const model = fromBookingDetail(detail());
+    expect(model.date).toBe('2026-10-30');
+    expect(model.amountInput).toBe('12,50');
+    expect(model.accountId).toBe('acc-1');
+    expect(model.note).toBe('');
+  });
+
+  it('Rundreise: parseAmount(amountInput) === totalAmountCents', () => {
+    for (const total of [1, 1250, 1200, 9999999999999]) {
+      const model = fromBookingDetail(detail({ totalAmountCents: total }));
+      expect(parseAmount(model.amountInput)).toBe(total);
+    }
+  });
+
+  it('Split-Keys sind Positions-Keys s1/s2; Form-ID = s<N>', () => {
+    const model = fromBookingDetail(
+      detail({
+        splits: [
+          {
+            id: 'u-1',
+            amountCents: 800,
+            poolId: 'pool-1',
+            categoryId: 'cat-1',
+            note: null,
+            tax: null,
+          },
+          {
+            id: 'u-2',
+            amountCents: 450,
+            poolId: 'pool-1',
+            categoryId: 'cat-1',
+            note: null,
+            tax: null,
+          },
+        ],
+      }),
+    );
+    expect(model.splits[0].key).toBe('s1');
+    expect(model.splits[0].id).toBe('s1');
+    expect(model.splits[1].key).toBe('s2');
+    expect(model.splits[1].id).toBe('s2');
+  });
+
+  it('tax: null → nicht relevant, leere Felder', () => {
+    const model = fromBookingDetail(detail());
+    expect(model.splits[0].tax).toEqual({
+      relevant: false,
+      taxCategoryId: null,
+      taxCategoryName: null,
+      markedAmountInput: '',
+      note: '',
+    });
+  });
+
+  it('tax relevant mit markiertem Betrag → formatiert; Notizen übernommen', () => {
+    const model = fromBookingDetail(
+      detail({
+        note: 'Buchungs-Notiz',
+        splits: [
+          {
+            id: 'u-1',
+            amountCents: 800,
+            poolId: 'pool-1',
+            categoryId: 'cat-1',
+            note: 'Split-Notiz',
+            tax: {
+              relevant: true,
+              taxCategoryId: 'tax-1',
+              taxCategoryName: 'USt',
+              markedAmountCents: 200,
+              note: 'Steuer-Notiz',
+            },
+          },
+        ],
+      }),
+    );
+    expect(model.note).toBe('Buchungs-Notiz');
+    expect(model.splits[0].note).toBe('Split-Notiz');
+    expect(model.splits[0].tax).toEqual({
+      relevant: true,
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt',
+      markedAmountInput: '2',
+      note: 'Steuer-Notiz',
+    });
+  });
+
+  it('tax relevant mit markedAmountCents null → leerer Input (Standard = Splitbetrag)', () => {
+    const model = fromBookingDetail(
+      detail({
+        splits: [
+          {
+            id: 'u-1',
+            amountCents: 800,
+            poolId: 'pool-1',
+            categoryId: 'cat-1',
+            note: null,
+            tax: {
+              relevant: true,
+              taxCategoryId: null,
+              taxCategoryName: null,
+              markedAmountCents: null,
+              note: null,
+            },
+          },
+        ],
+      }),
+    );
+    expect(model.splits[0].tax.markedAmountInput).toBe('');
+  });
+
+  it('ganzes Total ohne Cent-Anteil → „12“ (formatCents-Konformität)', () => {
+    const model = fromBookingDetail(detail({ totalAmountCents: 1200 }));
+    expect(model.amountInput).toBe('12');
   });
 });
