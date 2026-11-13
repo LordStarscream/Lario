@@ -1,5 +1,5 @@
 # Aufgabe: Schritt 8 — Produktive mobile Offline-Erfassung
-_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig (PR #16 gemerged, Rescue #18), Batch C fertig inkl. Review-P2-Nachgang (`9f8319a`), **Batch D fertig inkl. Review R1+R2+R3-Nachgang (PR #19 offen, wartet auf Nutzer-Merge)** · Last updated: 01. Nov. 2026_
+_Status: aktiv — Batch A fertig (PR #15 gemerged), Batch B fertig (PR #16 gemerged, Rescue #18), Batch C fertig inkl. Review-P2-Nachgang (`9f8319a`), **Batch D fertig (PR #19 offen, wartet auf Nutzer-Merge)**, **Batch E Code fertig (`f17a70f` auf `step/8e-ui`, wartet auf Nutzer-Merge) — offene Pflichtabnahme: Geräte-Test (APK installiert, Flugmodus, Neustart)** · Last updated: 13. Nov. 2026_
 
 **Branches:**
 - Lario → `step/8-mobile-offline`  (Worktree: `/tmp/lario-head-check`)
@@ -461,13 +461,46 @@ grün, keine Dependency-Änderung.
 
 ## Batch E — Eingaben-View + Shell + Integration (P5)
 
-- [ ] Tab-Shell (Erfassen/Eingaben/Einrichtung), Routing, Browser-Fallback-Meldung
-- [ ] Eingaben-View: Liste (Datum, Total, Konto, Pools, Status), Detail mit
+- [x] Tab-Shell (Erfassen/Eingaben/Einrichtung), Routing, Browser-Fallback-Meldung
+- [x] Eingaben-View: Liste (Datum, Total, Konto, Pools, Status), Detail mit
       Ändern (über Formular) und Verwerfen (mit Bestätigung)
-- [ ] README-Abschnitt (mobile Offline-Erfassung, DBs, Grenzen: kein Senden in 8),
+- [x] README-Abschnitt (mobile Offline-Erfassung, DBs, Grenzen: kein Senden in 8),
       `npm run lint`/`test`/`build:mobile` grün, Debug-APK bauen (`cap sync && build`)
 - [ ] Geräte-Abnahme: APK installieren, Setup gegen LAN-Host, Flugmodus 20 Ausgaben,
       hartes Beenden/Neustart, Doppeltippen
+
+**Batch E — fertig (13.11.2026, Code; PR offen):**
+- Implementierung: Worker gemäß `BATCH_E_SPEC.md` (Worktree-Kopie, Commit
+  `f17a70f`), Review + Tests + README + APK: Controller. Ein Session-Zwischenfall
+  (fälschlich gemeldete Nutzer-Abbrechung) blieb ohne Auswirkung auf den
+  Arbeitszustand — der Worktree war die alleinige Quelle.
+- Tab-Shell (D8): `app.ts`/`app.html` + `app.config.ts` (Lazy-Loading, `**` →
+  `/erfassen`); Browser ohne natives Plugin: Fallback-Meldung, keine Tabs/Outlet.
+  Schritt-2-Prototyp (`sqlite.service`, `host.service`, alte `app.spec.ts`)
+  gelöscht; Produktions-DB `lario` bleibt die einzige DB.
+- Eingaben-View (P5): `entries/`-Ordner — Liste (chronologisch aufsteigend,
+  Datum/Total/Konto/Pools/Status „ausstehend“, fehlende Snapshot-Referenzen
+  als rohe IDs), Detail (Splits inkl. Steuer-Teilbetrag, „voller Betrag“ bei
+  `markedAmountCents = null`), „Ändern“ (nur `queued`) → `/erfassen/{id}`,
+  „Verwerfen“ mit Zwei-Schritt-Bestätigung (Buchung+Splits+Outbox in einer
+  Transaktion, Navigation erst nach Commit).
+- Ändern-Modus im Erfassen-Formular: `fromBookingDetail` (Steuername aus
+  Buchung, D11; Referenz-IDs 1:1 auch bei archivierten Referenzen),
+  `update`-Pfad (Operation-ID bleibt, Payload/Hash ersetzt), Drafts blockiert
+  während Änderung, formGeneration-Guard (R3) bleibt wirksam.
+- Repository: `LocalBookingListItem.poolIds` (`GROUP_CONCAT(DISTINCT …)`,
+  Ein-Argument-Form für ältere SQLite), `list()` → `listPending()` benannt.
+- Prüfungen (13.11., Worktree): lint host+mobile grün, **248 mobile + 130 host
+  Tests grün** (inkl. neuer `app.spec.ts`, `entries`-Specs, `fromBookingDetail`-
+  Roundtrips, Ändern-/Verwerfen-Flows), `build:mobile` grün, `cap sync` +
+  `gradlew assembleDebug` grün (`app-debug.apk`, 13 MB).
+- Abweichungen von der Spec: `listPending()` statt `list()`; Liste aufsteigend
+  (SQL-Entwurf in der Spec war DESC); README-Abschnitt vom Controller ergänzt.
+- Offene Pflichtabnahme (Schritt 8): Geräte-Test — APK installiert, Setup gegen
+  LAN-Host, Flugmodus 20 Ausgaben, hartes Beenden/Neustart, Doppeltippen.
+  **Kein Gerät verfügbar** (adb ohne Geräte); Browser-/Emulator-Ersatz ist kein
+  Ersatz für die Geräte-Abnahme (AGENTS.md). Kein Senden in Schritt 8 — Outbox
+  bleibt `queued` (Synchronisation = Schritt 9).
 
 ## Abnahmekriterien (konkret übersetzt)
 
