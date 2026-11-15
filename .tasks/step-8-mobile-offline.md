@@ -502,6 +502,52 @@ grün, keine Dependency-Änderung.
   Ersatz für die Geräte-Abnahme (AGENTS.md). Kein Senden in Schritt 8 — Outbox
   bleibt `queued` (Synchronisation = Schritt 9).
 
+## Review-Nachgang — R3 P2 (stiller Moduswechsel) + R4 P2 (Split-ID-Wiederverwendung) — fertig (15. Nov. 2026)
+
+Commit `307f115` auf `step/8e-ui`, gepusht (PR #20, Head jetzt `307f115`, wartet
+auf Nutzer-Merge). Betroffen: 6 Files (entry-form.model + spec, entry.component
++ spec, entry.html, app.spec).
+
+**R3 P2 — `/erfassen/:id` mit fehlgeschlagenem Edit-Load:**
+- `ngOnInit` erfasst die Routenabsicht **synchron vor dem ersten await**:
+  `editLoading` true — Formular, Entwürfe und Save sind sofort gesperrt
+  (`formLocked()` = `saving | editLoading | editLoadFailed`); eine Eingabe
+  während des Ladens wechselt den fachlichen Speichermodus nicht still.
+- `enterEdit`: try/catch um `get()`; DB-Fehler oder fehlende Buchung →
+  `editLoadFailed` true, sichtbarer Fehler, **Save bleibt gesperrt** (kein
+  stiller Moduswechsel auf Neuerfassung). `goToNewEntry()` navigiert bewusst
+  zu `/erfassen` (frische Komponente ohne Routen-Parameter).
+- Template: Lade-Hinweis (`entry-edit-loading`) + Fehlerblock
+  (`entry-edit-load-failed`) mit Button „Zur Neuerfassung wechseln“;
+  alle Eingaben/Split-Aktionen/Entwürfe nutzen jetzt `formLocked()`.
+- Tests: Promise-Gate auf `BookingsRepository.get` (echtes Repository,
+  echte Buchung A mit echter Operation-ID): synchrones `editLoading`,
+  Eingabe/Save/Draft-Load während des Ladens blockiert, danach `update(A)`
+  mit **derselben Operation-ID**; Rejection → klarer Fehler, Save gesperrt,
+  Fehlerblock im DOM; Navigation nach Load-Fehlschlag (app.spec, echter
+  Router).
+
+**R4 P2 — Split-ID-Wiederverwendung nach Löschen:**
+- `createDefaultSplit(key, id)`: `id` (unveränderliche interne Identität)
+  getrennt von `key` (Positions-Key); `toLocalInput` ordnet Metadaten über
+  `id` zu (besteht schon aus Batch E/D11).
+- `maxSplitIdNumber()` + Hochwasser-Zähler in der Komponente: `addSplit`
+  vergibt `s<hochwasser+1>`, monoton steigend — gelöschte IDs werden nicht
+  wiederverwendet; `commitForm()` führt alle form-Schreibzugriffe (auch
+  Resets) und aktualisiert das Hochwasser.
+- Test: add/add/remove/add → IDs `s2/s3/s4`, Keys `s1/s2/s3` (`s1` nicht
+  wiederverwendet).
+
+Prüfungen (15.11.): Red/Green (neue Spec gegen PR-Head `06ed974` →
+Compile-Fehler; mit Fix → grün), lint mobile grün, **265 mobile Tests grün**
+(256 → 265; +9 neue Tests: 3× R3 P2 [2× Komponente, 1× app.spec mit echtem
+Router], 6× R4 P2 [5× `toLocalInput`-Namen-Zuordnung, 1× ID-Hochwasser];
+alles Bestehende unverändert grün), `build:mobile` grün, Nachlauf mit leerem
+Build-Cache grün.
+
+Offen (unverändert): Geräte-Abnahme Schritt 8 (kein Gerät verfügbar); kein
+Senden in Schritt 8 (Schritt 9). PR #20 wartet auf Nutzer-Merge.
+
 ## Abnahmekriterien (konkret übersetzt)
 
 - (a) 20 Ausgaben inkl. Splits (2+ Splits, mit/ohne Steuerkennzeichnung) offline
