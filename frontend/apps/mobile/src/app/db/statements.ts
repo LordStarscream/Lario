@@ -153,9 +153,17 @@ export const INSERT_SPLIT =
 /** Alle Splits einer Buchung löschen (vor UPDATE/DELETE der Buchung). */
 export const DELETE_SPLITS = 'DELETE FROM splits WHERE booking_id = ?';
 
-/** Eingaben-Liste mit Outbox-Status (kein Outbox-Zeile → null/unknown). */
+/** Eingaben-Liste mit Outbox-Status (keine Outbox-Zeile → null)
+ * und Pool-Liste (Batch E, P5):
+ * - `pool_ids`: kommagetrennte, deduplizierte Pool-IDs (Nur-Anzeige;
+ *   Reihenfolge nicht garantiert — `GROUP_CONCAT(DISTINCT …)` ohne
+ *   Reihenhaltungs-Garantie). EIN-argumentige Form (Standard-Trenner
+ *   „,“): die Zwei-Argument-Form mit DISTINCT braucht SQLite ≥ 3.44
+ *   und ist auf älteren Android-Geräten nicht verfügbar.
+ * - Sortierung: createdAtUtc aufsteigend (neueste unten), dann bookingId.
+ */
 export const SELECT_BOOKING_LIST =
-  'SELECT b.id, b.date, b.total_amount_cents, b.account_id, b.note, o.status AS outbox_status FROM bookings b LEFT JOIN outbox o ON o.booking_id = b.id ORDER BY b.date DESC, b.created_at_utc DESC';
+  'SELECT b.id, b.date, b.total_amount_cents, b.account_id, b.note, b.created_at_utc, o.status AS outbox_status, (SELECT GROUP_CONCAT(DISTINCT s2.pool_id) FROM splits s2 WHERE s2.booking_id = b.id) AS pool_ids FROM bookings b LEFT JOIN outbox o ON o.booking_id = b.id ORDER BY b.created_at_utc ASC, b.id ASC';
 
 /** Buchung laden (alle Spalten). */
 export const SELECT_BOOKING_BY_ID =

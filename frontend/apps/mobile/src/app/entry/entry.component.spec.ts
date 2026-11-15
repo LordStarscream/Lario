@@ -9,7 +9,11 @@ import {
   Component,
   provideZonelessChangeDetection,
 } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
+import {
+  ComponentFixture,
+  TestBed,
+} from '@angular/core/testing';
+import { ActivatedRoute, provideRouter } from '@angular/router';
 import {
   capacitorSqliteMockFactory,
   dbState,
@@ -91,7 +95,13 @@ async function createLoaded(snapshot: SnapshotInput | null) {
   // `providedIn: 'root'` => dieselben Instanzen für Setup und Komponente.
   TestBed.configureTestingModule({
     imports: [TestHostComponent],
-    providers: [provideZonelessChangeDetection()],
+    providers: [
+      provideZonelessChangeDetection(),
+      // Die Komponente liest den Routen-Parameter `bookingId`
+      // (Batch E, P5) aus dem ActivatedRoute — ohne Parameter
+      // startet sie im Erfassen-Modus.
+      provideRouter([]),
+    ],
   });
   const db = TestBed.inject(LocalDatabase);
   await db.init(); // App-Start: Schema-Init.
@@ -114,6 +124,11 @@ async function createLoaded(snapshot: SnapshotInput | null) {
     .componentInstance as EntryComponent;
   await comp.ngOnInit();
   fixture.detectChanges();
+  // Die fire-and-forget-Entwurfsprüfung aus `ngOnInit` (`checkDraftOnStart`,
+  // Batch D, Design D8) muss deterministisch abgearbeitet sein, bevor der
+  // Test Entwürfe schreibt/lädt — sonst rennt sie mit Test-Operationen
+  // (Macrotask-Flush räumt die komplette Microtask-Kette ab).
+  await new Promise((resolve) => setTimeout(resolve, 0));
   return { comp, dbState, fixture };
 }
 
@@ -431,6 +446,36 @@ describe('EntryComponent', () => {
     ]);
   });
 
+  it('Split-IDs: monoton steigend, keine Wiederverwendung nach Löschen (Review R4, P2)', async () => {
+    const { comp } = await createLoaded(testSnapshot());
+    expect(comp.form().splits.map((s) => s.id)).toEqual(['s1']);
+
+    comp.addSplit();
+    comp.addSplit();
+    expect(comp.form().splits.map((s) => [s.id, s.key])).toEqual([
+      ['s1', 's1'],
+      ['s2', 's2'],
+      ['s3', 's3'],
+    ]);
+
+    // Löschen: Positions-Keys werden neu nummeriert, IDs bleiben.
+    comp.removeSplit('s1');
+    expect(comp.form().splits.map((s) => [s.id, s.key])).toEqual([
+      ['s2', 's1'],
+      ['s3', 's2'],
+    ]);
+
+    // Neuer Split: frische ID s4 — NICHT s1 (gelöschte ID wird nicht
+    // wiederverwendet), Positions-Key s3.
+    comp.addSplit();
+    const splits = comp.form().splits;
+    expect(splits.map((s) => [s.id, s.key])).toEqual([
+      ['s2', 's1'],
+      ['s3', 's2'],
+      ['s4', 's3'],
+    ]);
+  });
+
   it('ohne Snapshot: Speichern schlägt fehl (Fehler sichtbar, nichts gespeichert)', async () => {
     const { comp, dbState } = await createLoaded(null);
 
@@ -623,7 +668,7 @@ describe('EntryComponent', () => {
     // das Formular ist der nach Commit zurückgesetzte Stand, die
     // Meldung die des erfolgreichen Saves.
     expect(comp.saveStatus()).toBe('saved');
-    expect(comp.saveMessage()).toMatch(/^Ausgabe gespeichert \(Buchung bk-/);
+    expect(comp.saveMessage()).toBe('Gespeichert in der Outbox.');
     expect(comp.form().amountInput).toBe('');
     // Entwurf bleibt gespeichert (niemals still gelöscht) und kann
     // nach dem Save neu geladen werden.
@@ -784,5 +829,524 @@ describe('EntryComponent', () => {
     expect(dbState.bookings.size).toBe(0);
     expect(dbState.splits.size).toBe(0);
     expect(dbState.outbox.size).toBe(0);
+  });
+});
+
+describe('EntryComponent — Edit-Mode (Batch E, Design D10)', () => {
+  /** Speichert eine einfache Ausgabe und gibt die ID zurück. */
+  async function saveBooking(input: object): Promise<string> {
+    const repo = TestBed.inject(BookingsRepository);
+    const result = await repo.save(input as never, new Date());
+    return result.bookingId;
+  }
+
+  const baseInput = {
+    date: '2026-10-28',
+    totalAmountCents: 3000,
+    accountId: 'acc-1',
+    note: null,
+    splits: [
+      {
+        id: 's1',
+        amountCents: 1000,
+        poolId: 'pool-1',
+        categoryId: 'cat-1',
+        note: null,
+        tax: null,
+      },
+      {
+        id: 's2',
+        amountCents: 2000,
+        poolId: 'pool-1',
+        categoryId: 'cat-2',
+        note: 'Split-Notiz',
+        tax: null,
+      },
+    ],
+  };
+
+  it('enterEdit lädt die Warteschlangen-Buchung in das Formular (Banner sichtbar)', async () => {
+    const { comp, fixture } = await createLoaded(testSnapshot());
+    const bookingId = await saveBooking(baseInput);
+
+    await comp.enterEdit(bookingId);
+
+    expect(comp.editMode()).not.toBeNull();
+    expect(comp.editMode()!.bookingId).toBe(bookingId);
+    const form = comp.form();
+    expect(form.date).toBe('2026-10-28');
+    expect(form.amountInput).toBe('30');
+    expect(form.splits).toHaveLength(2);
+    expect(form.splits[1].amountInput).toBe('20');
+    expect(form.splits[1].note).toBe('Split-Notiz');
+    // Das Formular arbeitet mit lokalen IDs (s1/s2 —
+    // `fromBookingDetail` trägt die persistierten IDs bewusst nicht
+    // über); die kanonisierten Split-IDs (Buchungs-ID + Position,
+    // `normalizeSplitIds`) liegen in der Datenbank:
+    expect(form.splits[1].id).toBe('s2');
+    expect(dbState.splits.has(`${bookingId}-s2`)).toBe(true);
+    // Banner im DOM (Zoneless: Signal-Änderung erst nach CD sichtbar):
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('[data-testid=entry-edit-banner]'),
+    ).not.toBeNull();
+  });
+
+  it('Speichern im Edit-Mode aktualisiert die Buchung (gleiche IDs, neuer Payload-Hash)', async () => {
+    const { comp, dbState } = await createLoaded(testSnapshot());
+    const bookingId = await saveBooking(baseInput);
+    const [outboxBefore] = [...dbState.outbox.values()];
+    const bookingBefore = dbState.bookings.get(bookingId);
+
+    await comp.enterEdit(bookingId);
+    // Betrag auf 40,00 ändern (Split 2 trägt den Rest).
+    comp.form.set({
+      ...comp.form(),
+      amountInput: '40,00',
+      splits: [
+        { ...comp.form().splits[0], amountInput: '10,00' },
+        { ...comp.form().splits[1], amountInput: '30,00' },
+      ],
+    });
+
+    await comp.save();
+
+    expect(comp.saveStatus()).toBe('saved');
+    expect(comp.editMode()).toBeNull(); // Edit-Mode nach Update beendet (Banner weg)
+    // Gleiche Booking- und Operation-ID, geänderter Payload:
+    const bookingAfter = dbState.bookings.get(bookingId);
+    expect(bookingAfter).not.toBeUndefined();
+    expect(bookingAfter!.total_amount_cents).toBe(4000);
+    expect([...dbState.outbox.values()]).toHaveLength(1);
+    const outboxAfter = [...dbState.outbox.values()][0];
+    expect(outboxAfter.operation_id).toBe(outboxBefore.operation_id);
+    expect(outboxAfter.booking_id).toBe(bookingBefore!.id);
+    expect(outboxAfter.payload_hash).not.toBe(outboxBefore.payload_hash);
+  });
+
+  /** Snapshot mit umbenannter Steuerkategorie (tx-1 = „Sachbezug (2027)“) —
+   *  simuliert: die Stammdaten wurden nach dem Buchungsspeichern geändert.
+   */
+  function renamedTaxSnapshot(): SnapshotInput {
+    const s = testSnapshot();
+    s.taxCategories[0] = { ...s.taxCategories[0], name: 'Sachbezug (2027)' };
+    return s;
+  }
+
+  /** Booking-Input mit einem steuerrelevanten Split; der persistierte
+   *  Steuername ist der Name zum Speicherpunkt („Sachbezug").
+   */
+  const savedTaxInput = {
+    date: '2026-10-28',
+    totalAmountCents: 1000,
+    accountId: 'acc-1',
+    note: null,
+    splits: [
+      {
+        id: 's1',
+        amountCents: 1000,
+        poolId: 'pool-1',
+        categoryId: 'cat-1',
+        note: null,
+        tax: {
+          relevant: true,
+          taxCategoryId: 'tx-1',
+          taxCategoryName: 'Sachbezug',
+          markedAmountCents: null,
+          note: null,
+        },
+      },
+    ],
+  };
+
+  it('Edit-Mode: fachlich unbeteiligte Korrektur (Notiz) erhält den gespeicherten Steuername (Review R3, P2)', async () => {
+    const { comp, dbState } = await createLoaded(renamedTaxSnapshot());
+    const bookingId = await saveBooking(savedTaxInput);
+
+    await comp.enterEdit(bookingId);
+    // Originalname wird geladen (D11: entkoppelt vom Snapshot):
+    expect(comp.form().splits[0].tax.taxCategoryId).toBe('tx-1');
+    expect(comp.form().splits[0].tax.taxCategoryName).toBe('Sachbezug');
+
+    // Nur die Notiz geändert — Steuerkategorie bleibt unberührt:
+    comp.form.set({ ...comp.form(), note: 'korrigiert' });
+
+    await comp.save();
+
+    expect(comp.saveStatus()).toBe('saved');
+    const row = [...dbState.splits.values()][0];
+    expect(row.tax_category_id).toBe('tx-1');
+    expect(row.tax_category_name).toBe('Sachbezug'); // NICHT „Sachbezug (2027)"
+    expect(row.note).toBeNull();
+    expect(dbState.bookings.get(bookingId)?.note).toBe('korrigiert');
+  });
+
+  it('Edit-Mode: expliziter Steuerkategorie-Wechsel → Name aus dem aktuellen Snapshot (Review R3, P2, Gegenprobe)', async () => {
+    const { comp, dbState } = await createLoaded(renamedTaxSnapshot());
+    const bookingId = await saveBooking(savedTaxInput);
+
+    await comp.enterEdit(bookingId);
+    // Nutzer wechselt die Steuerkategorie bewusst auf tx-2:
+    comp.onSplitTaxCategoryChange('s1', 'tx-2');
+    expect(comp.form().splits[0].tax.taxCategoryId).toBe('tx-2');
+    expect(comp.form().splits[0].tax.taxCategoryName).toBe('Werbungskosten');
+
+    await comp.save();
+
+    expect(comp.saveStatus()).toBe('saved');
+    const row = [...dbState.splits.values()][0];
+    expect(row.tax_category_id).toBe('tx-2');
+    expect(row.tax_category_name).toBe('Werbungskosten'); // Snapshot-Name
+  });
+
+  it('Edit-Mode: gemischt — unveränderter Split erhält den gespeicherten Namen, geänderter den Snapshot-Namen (Review R3, P2)', async () => {
+    const { comp, dbState } = await createLoaded(renamedTaxSnapshot());
+    const bookingId = await saveBooking({
+      date: '2026-10-28',
+      totalAmountCents: 2000,
+      accountId: 'acc-1',
+      note: null,
+      splits: [
+        {
+          id: 's1',
+          amountCents: 1200,
+          poolId: 'pool-1',
+          categoryId: 'cat-1',
+          note: null,
+          tax: {
+            relevant: true,
+            taxCategoryId: 'tx-1',
+            taxCategoryName: 'Sachbezug',
+            markedAmountCents: null,
+            note: null,
+          },
+        },
+        {
+          id: 's2',
+          amountCents: 800,
+          poolId: 'pool-1',
+          categoryId: 'cat-1',
+          note: null,
+          tax: {
+            relevant: true,
+            taxCategoryId: 'tx-1',
+            taxCategoryName: 'Sachbezug',
+            markedAmountCents: null,
+            note: null,
+          },
+        },
+      ],
+    });
+
+    await comp.enterEdit(bookingId);
+    // Nur der zweite Split (800 Ct) wechselt die Steuerkategorie:
+    comp.onSplitTaxCategoryChange('s2', 'tx-2');
+
+    await comp.save();
+
+    expect(comp.saveStatus()).toBe('saved');
+    const rows = [...dbState.splits.values()];
+    const unchanged = rows.find((r) => r.amount_cents === 1200)!;
+    const changed = rows.find((r) => r.amount_cents === 800)!;
+    expect(unchanged.tax_category_id).toBe('tx-1');
+    expect(unchanged.tax_category_name).toBe('Sachbezug'); // gespeichert
+    expect(changed.tax_category_id).toBe('tx-2');
+    expect(changed.tax_category_name).toBe('Werbungskosten'); // Snapshot
+  });
+
+  it('Update-Fehler → Edit-Mode und Formular bleiben erhalten', async () => {
+    const { comp } = await createLoaded(testSnapshot());
+    const bookingId = await saveBooking(baseInput);
+
+    await comp.enterEdit(bookingId);
+    // Summen-Abgleich brechen lassen (Split 2 auf 0,00 → 10 ≠ 30).
+    comp.form.set({
+      ...comp.form(),
+      splits: [
+        { ...comp.form().splits[0], amountInput: '10,00' },
+        { ...comp.form().splits[1], amountInput: '0,00' },
+      ],
+    });
+
+    await comp.save();
+
+    expect(comp.saveStatus()).toBe('error');
+    expect(comp.editMode()).not.toBeNull();
+    expect(comp.form().amountInput).toBe('30');
+  });
+
+  it('cancelEdit verwirft die Änderungen (Buchung unverändert)', async () => {
+    const { comp, dbState } = await createLoaded(testSnapshot());
+    const bookingId = await saveBooking(baseInput);
+    const [outboxBefore] = [...dbState.outbox.values()];
+
+    await comp.enterEdit(bookingId);
+    comp.form.set({ ...comp.form(), amountInput: '40,00' });
+
+    comp.cancelEdit();
+
+    expect(comp.editMode()).toBeNull();
+    expect(comp.form().amountInput).toBe(''); // Formular zurückgesetzt
+    expect(comp.saveMessage()).toBeNull();
+    expect([...dbState.outbox.values()][0].payload_hash).toBe(
+      outboxBefore.payload_hash,
+    );
+  });
+
+  it('enterEdit mit unbekannter ID → Hinweis, Formular unverändert', async () => {
+    const { comp } = await createLoaded(testSnapshot());
+
+    await comp.enterEdit('b-unknown');
+
+    expect(comp.editMode()).toBeNull();
+    expect(comp.saveStatus()).toBe('error');
+    expect(comp.saveMessage()).toMatch(/nicht gefunden/i);
+    expect(comp.form().amountInput).toBe('');
+  });
+
+  it('enterEdit während laufenden Edit-Modus → abgelehnt', async () => {
+    const { comp } = await createLoaded(testSnapshot());
+    const b1 = await saveBooking(baseInput);
+    const b2 = await saveBooking({
+      ...baseInput,
+      date: '2026-10-29',
+    });
+
+    await comp.enterEdit(b1);
+
+    await comp.enterEdit(b2);
+
+    expect(comp.editMode()!.bookingId).toBe(b1);
+    expect(comp.saveMessage()).toMatch(/bereits bearbeitet/i);
+  });
+
+  /**
+   * Review R3, P2 — Regression-Setup: startet `/erfassen/:bookingId`
+   * mit der echten `ngOnInit`-Reihenfolge, aber einer angehaltenen
+   * `BookingsRepository.get()`-Antwort (Promise-Gate). Die Komponente
+   * sieht nur den proxied Repository; `release()` lässt die Antwort
+   * eintreffen (`getBehavior` steuert Resolve/Reject).
+   */
+  async function createGatedEditLoad(
+    getBehavior: 'resolve' | 'reject',
+  ): Promise<{
+    comp: EntryComponent;
+    fixture: ComponentFixture<TestHostComponent>;
+    bookingId: string;
+    operationId: string;
+    release: () => void;
+  }> {
+    dbState.reset();
+    // Mutabler Routen-Parameter: die Buchung wird erst nach dem
+    // Modul-Setup gesamt, dann wird die ID in die Route geschrieben.
+    let routeBookingId: string | null = null;
+    let releaseGate: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    TestBed.configureTestingModule({
+      imports: [TestHostComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: {
+              paramMap: {
+                get: (name: string) =>
+                  name === 'bookingId' ? routeBookingId : null,
+              },
+            },
+          },
+        },
+        // Repository-Umschreibung: dieselbe echte Implementierung,
+        // aber `get` von einem Promise-Gate angehalten (Review R3,
+        // P2). Die Factory läuft im Injection-Kontext — die
+        // `inject()`-Field-Initialisatoren des Repositories auflösen
+        // sich wie üblich.
+        {
+          provide: BookingsRepository,
+          useFactory: () => {
+            const real = new BookingsRepository();
+            return new Proxy(real, {
+              get(target, prop) {
+                if (prop === 'get') {
+                  return (id: string) =>
+                    gate.then(() => {
+                      if (getBehavior === 'reject') {
+                        throw new Error('SQLite offline');
+                      }
+                      return (target as BookingsRepository).get(id);
+                    });
+                }
+                const value = (
+                  target as unknown as Record<string | symbol, unknown>
+                )[prop];
+                return typeof value === 'function'
+                  ? value.bind(target)
+                  : value;
+              },
+            });
+          },
+        },
+      ],
+    });
+    const db = TestBed.inject(LocalDatabase);
+    await db.init();
+    const snapshot = testSnapshot();
+    await TestBed.inject(SnapshotRepository).replace(
+      {
+        accounts: new Map(snapshot.accounts.map((a) => [a.id, a])),
+        pools: new Map(snapshot.pools.map((p) => [p.id, p])),
+        categories: new Map(snapshot.categories.map((c) => [c.id, c])),
+        taxCategories: new Map(
+          snapshot.taxCategories.map((t) => [t.id, t]),
+        ),
+      },
+      '2026-10-01T00:00:00Z',
+    );
+
+    // Wartende Buchung anlegen (über den Proxy — `save` ist nicht
+    // angehalten):
+    const repo = TestBed.inject(BookingsRepository);
+    const saved = await repo.save(baseInput as never, new Date());
+    routeBookingId = saved.bookingId;
+    const operationId = [...dbState.outbox.values()][0].operation_id;
+
+    const fixture = TestBed.createComponent(TestHostComponent);
+    const comp = fixture.debugElement.children[0]
+      .componentInstance as EntryComponent;
+    return {
+      comp,
+      fixture,
+      bookingId: saved.bookingId,
+      operationId,
+      release: () => releaseGate!(),
+    };
+  }
+
+  it('Review R3, P2: Eingabe/Save/Draft-Load während Edit-Load blockiert — danach update(A) mit gleicher Operation-ID', async () => {
+    const { comp, bookingId, operationId, release } =
+      await createGatedEditLoad('resolve');
+
+    // Echte ngOnInit-Pfad starten (nicht awaiten: get(A) angehalten).
+    const init = comp.ngOnInit();
+    // Routenabsicht synchron erfasst — vor dem ersten await:
+    expect(comp.editLoading()).toBe(true);
+    expect(comp.editMode()).toBeNull();
+
+    // Eingabe während des Ladens: blockiert (Formular unverändert).
+    comp.updateSplit('s1', { amountInput: '5' });
+    expect(comp.form().splits[0].amountInput).toBe('');
+
+    // Save während des Ladens: blockiert (keine neue Operation).
+    await comp.save();
+    expect(comp.saveStatus()).toBe('idle');
+    expect([...dbState.outbox.values()]).toHaveLength(1);
+
+    // Draft-Load während des Ladens: blockiert.
+    await comp.loadDraft();
+    expect(comp.saveMessage()).toMatch(/Aktion gesperrt/i);
+    expect(comp.form().splits[0].amountInput).toBe('');
+
+    // Antwort freigeben → Ändern-Modus aktiv, Formular befüllt:
+    release();
+    await init;
+    expect(comp.editLoading()).toBe(false);
+    expect(comp.editMode()!.bookingId).toBe(bookingId);
+    expect(comp.form().amountInput).toBe('30');
+    // (DOM-Prüfung der Lade-Hinweise entfällt: mit Zoneless-CD + OnPush
+    // sind negative `@if`-DOM-Übergänge im Test unsicher; der Zustand
+    // ist über die Signale oben verifiziert.)
+
+    // Jetzt: fachlich unbeteiligte Korrektur + Save → `update(A)` mit
+    // derselben Operation-ID (keine Neueingabe/keine zweite Outbox-Zeile):
+    comp.updateField({ note: 'Korrektur' });
+    await comp.save();
+    expect(comp.saveStatus()).toBe('saved');
+    expect(comp.saveMessage()).toBe('Änderungen gespeichert.');
+    expect(comp.editMode()).toBeNull();
+    const rows = [...dbState.outbox.values()];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].operation_id).toBe(operationId);
+    expect(rows[0].booking_id).toBe(bookingId);
+  });
+
+  it('Review R3, P2: get()-Fehler beim Edit-Load → klarer Fehler, kein Save, keine unbehandelte Rejection', async () => {
+    const { comp, fixture, release } = await createGatedEditLoad('reject');
+
+    const init = comp.ngOnInit();
+    expect(comp.editLoading()).toBe(true);
+
+    // Die Rejection wird behandelt — `init` löst auf (keine
+    // unbehandelte Promise-Rejection):
+    release();
+    await init;
+
+    expect(comp.editLoading()).toBe(false);
+    expect(comp.editMode()).toBeNull();
+    expect(comp.saveStatus()).toBe('error');
+    expect(comp.saveMessage()).toMatch(/nicht geladen/i);
+    expect(comp.saveMessage()).toContain('SQLite offline');
+
+    // Save bleibt gesperrt, bis der Nutzer bewusst zur Neuerfassung
+    // wechselt (frische Komponente ohne Routen-Parameter):
+    await comp.save();
+    expect(comp.saveStatus()).toBe('error');
+    expect(comp.saveMessage()).toMatch(/Neuerfassung/i);
+    expect([...dbState.outbox.values()]).toHaveLength(1);
+
+    // Der Fehlerblock ist im DOM sichtbar:
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid=entry-edit-load-failed]',
+      ),
+    ).not.toBeNull();
+  });
+
+  it('App-Start mit vorhandenem Entwurf → Hinweis, laden mit loadDraft', async () => {
+    const { comp } = await createLoaded(testSnapshot());
+    expect(comp.draftLoaded()).toBe(false);
+
+    // Entwurf anlegen (wie saveDraft).
+    comp.form.set({
+      date: '2026-10-28',
+      amountInput: '5,00',
+      accountId: 'acc-1',
+      note: '',
+      splits: [
+        {
+          id: 's1',
+          key: 's1',
+          amountInput: '5,00',
+          poolId: 'pool-1',
+          categoryId: 'cat-1',
+          note: '',
+          tax: {
+            relevant: false,
+            taxCategoryId: null,
+            taxCategoryName: null,
+            markedAmountInput: '',
+            note: '',
+          },
+        },
+      ],
+    });
+    await comp.saveDraft();
+    expect(comp.saveStatus()).toBe('saved');
+
+    // Zweite Instanz = „App-Start": ngOnInit prüft den vorhandenen Entwurf.
+    const secondFixture = TestBed.createComponent(TestHostComponent);
+    const second = secondFixture.debugElement.children[0]
+      .componentInstance as EntryComponent;
+    await second.ngOnInit();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(second.draftLoaded()).toBe(true);
+    await second.loadDraft();
+    expect(second.draftLoaded()).toBe(false);
+    expect(second.form().amountInput).toBe('5,00');
   });
 });

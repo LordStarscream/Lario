@@ -23,6 +23,7 @@ import type {
   LocalSplitInput,
   LocalTaxInput,
 } from '../db/expense-payload';
+import type { LocalBookingDetail } from '../db/bookings.repository';
 import type { TaxPresetDto } from '../../generated';
 
 /**
@@ -63,9 +64,17 @@ export interface EntryTaxModel {
 
 /** Ein Split im Formular (Formular-ID `id`, kein Fach-UUID). */
 export interface EntrySplitModel {
-  /** Formular-interne ID (z. B. "s1"); wird beim Speichern ersetzt. */
+  /**
+   * Unveränderliche, eindeutige interne Identität (Review R4, P2):
+   * innerhalb einer Bearbeitung nie wieder verworfen und keine
+   * wiederverwendete ID. `toLocalInput` ordnet die Original-
+   * Metadaten (gespeicherter Steuername) über diese ID zu — nicht
+   * über die Array-Position. Wird beim Speichern durch
+   * `normalizeSplitIds` ersetzt.
+   */
   id: string;
-  /** Stabile Position im Split-Array (Sortierung, Zuordnung). */
+  /** Positions-Key für Anzeige/Sortierung (s1, s2, …); unabhängig
+   *  von `id` neu nummeriert, wenn Splits gelöscht werden. */
   key: string;
   amountInput: string;
   poolId: string;
@@ -84,14 +93,15 @@ export interface EntryFormModel {
 }
 
 /**
- * Baut ein neues, leeres Split-Modell. `key` ist die stabile Position
- * im Split-Array (Sortierung, Zuordnung); `id` ist die
- * formular-interne ID (beim Speichern durch `normalizeSplitIds`
- * ersetzt).
+ * Baut ein neues, leeres Split-Modell. `key` ist der Positions-Key
+ * für Anzeige/Sortierung; `id` ist die unveränderliche interne
+ * Identität (Review R4, P2) — sie muss innerhalb der Bearbeitung
+ * eindeutig sein und nie wiederverwendet werden (die Komponente
+ * vergibt sie monoton steigend, s. `addSplit`).
  */
-export function createDefaultSplit(key: string): EntrySplitModel {
+export function createDefaultSplit(key: string, id: string): EntrySplitModel {
   return {
-    id: key,
+    id,
     key,
     amountInput: '',
     poolId: '',
@@ -121,6 +131,26 @@ export function todayInBerlin(): string {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Höchste Split-ID-Nummer (Review R4, P2): die Komponente vergibt
+ * neue IDs `s<nummern+1>` monoton steigend über `commitForm` —
+ * gelöschte IDs werden nicht wiederverwendet. IDs ohne `s<nummer>`-
+ * Muster werden ignoriert (eigene Entwürfe tragen immer `sN`).
+ */
+export function maxSplitIdNumber(splits: EntrySplitModel[]): number {
+  let max = 0;
+  for (const split of splits) {
+    const match = /^s(\d+)$/.exec(split.id);
+    if (match !== null) {
+      const n = Number(match[1]);
+      if (n > max) {
+        max = n;
+      }
+    }
+  }
+  return max;
+}
+
 /** Neues, leeres Formular (Standard: heute, 1 Split). */
 export function createDefaultForm(date: string): EntryFormModel {
   return {
@@ -128,7 +158,7 @@ export function createDefaultForm(date: string): EntryFormModel {
     amountInput: '',
     accountId: '',
     note: '',
-    splits: [createDefaultSplit('s1')],
+    splits: [createDefaultSplit('s1', 's1')],
   };
 }
 
@@ -333,13 +363,33 @@ export function validateEntryForm(
  *   `{ relevant: false, ... }` (nicht `null` — das Repository
  *   speichert dann `tax_relevant = 0`).
  * - `markedAmountInput`: leer → `null`; sonst `parseAmount`.
+ * - Steuer-Name (Batch D Review, P2): aus dem Snapshot abgeleitet,
+ *   nie aus dem Formular. Ausnahme — Ändern-Modus (Review R3, P2):
+ *   mit `originalModel` (dem per `fromBookingDetail` geladenen
+ *   Original) bleibt für eine Steuerkategorie, die der Nutzer NICHT
+ *   geändert hat (gleiche ID an gleicher Split-Position), der
+ *   ursprünglich gespeicherte Name erhalten — die D11-Entkopplung
+ *   wirkt damit auch über fachlich unbeteiligte Korrekturen (z. B.
+ *   Notiz-/Betragänderung) hinaus. Explizit geänderte oder neue
+ *   Steuerkategorien werden weiterhin aus dem aktuellen Snapshot
+ *   abgeleitet.
  *
+ * @param originalModel Ändern-Modus: ursprünglich geladenes Formular
+ *   (`fromBookingDetail`); `null` (Standard) = neue Eingabe/Entwurf.
+ *   Die Original-Metadaten werden über die unveränderliche Split-ID
+ *   `s.id` zugeordnet (Review R4, P2) — nicht über die Array-Position:
+ *   die verschiebt sich, wenn Splits gelöscht werden, und bei
+ *   „Löschen + Neu-Anlegen" würde ein neuer Split sonst den
+ *   gespeicherten Steuername eines gelöschten Splits erben. Für Splits
+ *   ohne Original (frische ID) wird (sicher) aus dem Snapshot
+ *   abgeleitet.
  * @returns `null`, wenn das Formular oder der Snapshot ungültig sind
  *   (der Aufrufer prüft vorab per `validateEntryForm`).
  */
 export function toLocalInput(
   model: EntryFormModel,
   snapshot: MasterDataSnapshot | null,
+  originalModel: EntryFormModel | null = null,
 ): LocalExpenseInput | null {
   if (snapshot === null) {
     return null;
@@ -357,19 +407,32 @@ export function toLocalInput(
     if (cents === null || cents === undefined) {
       return null;
     }
+    // Steuer-Name: Standard (neue Eingabe/Entwurf) = immer Snapshot —
+    // der Formularname ist nur Anzeige und nicht maßgeblich (Batch D
+    // Review, P2). Ändern-Modus: unveränderte Steuerkategorie (gleiche
+    // ID wie im Original, Zuordnung über die stabile Split-ID,
+    // Review R4, P2) → ursprünglich gespeicherter Name (Review R3,
+    // P2); geänderte/neue Kategorie → Snapshot.
+    const originalSplit =
+      originalModel !== null
+        ? originalModel.splits.find((os) => os.id === s.id)
+        : undefined;
+    const taxCategoryId = s.tax.relevant ? s.tax.taxCategoryId : null;
+    let taxCategoryName: string | null = null;
+    if (taxCategoryId !== null) {
+      const preservedName =
+        originalSplit !== undefined &&
+        originalSplit.tax.taxCategoryId === taxCategoryId
+          ? originalSplit.tax.taxCategoryName
+          : null;
+      taxCategoryName =
+        preservedName ?? snapshot.taxCategories.get(taxCategoryId)?.name ?? null;
+    }
     const tax: LocalTaxInput = s.tax.relevant
       ? {
           relevant: true,
           taxCategoryId: s.tax.taxCategoryId,
-          // Name aus dem (vorab validierten) Snapshot abgeleitet —
-          // der Formularname ist nur Anzeige und nicht maßgeblich
-          // (Batch D Review, P2): eine manuelle Auswahl ohne Preset
-          // oder ein Entwurf mit veraltetem Namen würde sonst einen
-          // inkonsistenten Anzeigewert persistieren.
-          taxCategoryName:
-            s.tax.taxCategoryId !== null
-              ? snapshot.taxCategories.get(s.tax.taxCategoryId)?.name ?? null
-              : null,
+          taxCategoryName,
           markedAmountCents:
             s.tax.markedAmountInput === ''
               ? null
@@ -615,6 +678,55 @@ export function setTaxRelevant(
         },
       };
     }),
+  };
+}
+
+/**
+ * Baut ein Formularmodell aus einer gespeicherten, in der Outbox
+ * wartenden Buchung (Batch E, Design D10):
+ *
+ * - Split-Keys sind Positions-Keys `s<i+1>`; `id` = `s<i+1>` (die
+ *   Repository-Kanonicalisierung ersetzt sie beim Speichern).
+ * - Beträge werden per `formatCents` formatiert (immer gültig —
+ *   gespeicherte Werte sind validiert).
+ * - `tax` ist `null` oder Objekt (Repository-Typ); `null` wird als
+ *   "nicht relevant" abgebildet; leerer `markedAmountInput` bedeutet
+ *   Standard "= Splitbetrag".
+ * - Referenz-IDs (Konto, Pools, Kategorien, Steuerkategorie) werden
+ *   1:1 übernommen — auch wenn die Referenz im Snapshot archiviert
+ *   oder fehlend ist (der Snapshot-Check markiert sie; der Nutzer
+ *   muss sie bei „Änderungen speichern" korrigieren).
+ * - `taxCategoryName` kommt aus der Buchung, nicht aus dem Snapshot
+ *   (Steuername-Entkopplung, D11).
+ * - `note` = `?? ''` (das Formular erwartet Strings).
+ */
+export function fromBookingDetail(
+  detail: LocalBookingDetail,
+): EntryFormModel {
+  const splits: EntrySplitModel[] = detail.splits.map((s, i) => ({
+    id: `s${i + 1}`,
+    key: `s${i + 1}`,
+    amountInput: formatCents(s.amountCents),
+    poolId: s.poolId,
+    categoryId: s.categoryId,
+    note: s.note ?? '',
+    tax: {
+      relevant: s.tax?.relevant ?? false,
+      taxCategoryId: s.tax?.taxCategoryId ?? null,
+      taxCategoryName: s.tax?.taxCategoryName ?? null,
+      markedAmountInput:
+        s.tax?.markedAmountCents === null || s.tax?.markedAmountCents === undefined
+          ? ''
+          : formatCents(s.tax?.markedAmountCents ?? 0),
+      note: s.tax?.note ?? '',
+    },
+  }));
+  return {
+    date: detail.date,
+    amountInput: formatCents(detail.totalAmountCents),
+    accountId: detail.accountId,
+    note: detail.note ?? '',
+    splits,
   };
 }
 

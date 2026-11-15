@@ -11,6 +11,7 @@ import {
   applyTaxPreset,
   createDefaultSplit,
   fillLastSplit,
+  fromBookingDetail,
   parseDraft,
   serializeDraft,
   toLocalInput,
@@ -19,6 +20,7 @@ import {
   type EntryFormModel,
   type EntrySplitModel,
 } from './entry-form.model';
+import type { LocalBookingDetail } from '../db/bookings.repository';
 
 /** Snapshot: je ein aktives Konto/Pool/Kategorie/Steuerkategorie. */
 function snapshot(): MasterDataSnapshot {
@@ -70,7 +72,7 @@ function validForm(): EntryFormModel {
  */
 function withSplit(overrides: Partial<EntrySplitModel>): EntrySplitModel {
   return {
-    ...createDefaultSplit('s1'),
+    ...createDefaultSplit('s1', 's1'),
     amountInput: '10,00',
     poolId: 'pool-1',
     categoryId: 'cat-1',
@@ -319,7 +321,225 @@ describe('toLocalInput (Batch D, P4)', () => {
     expect(input.splits[0].tax!.relevant).toBe(true);
     expect(input.splits[0].tax!.markedAmountCents).toBeNull();
   });
+
+  it('ohne originalModel (Default): Formularname nicht maßgeblich → Snapshot-Name (Batch D P2 bleibt erhalten)', () => {
+    const form = validFormWithTax('tax-1', 'veralteter Name');
+    const input = toLocalInput(form, snapshot())!;
+    expect(input.splits[0].tax!.taxCategoryName).toBe('USt');
+  });
 });
+
+describe('toLocalInput — Ändern-Modus: Steuername erhalten (Review R3, P2)', () => {
+  /** Snapshot mit zweiter Steuerkategorie (Wechsel-Gegenprobe). */
+  function snapshotWithSecondTax(): MasterDataSnapshot {
+    const snap = snapshot();
+    snap.taxCategories.set('tax-2', {
+      id: 'tax-2',
+      name: 'Vorsteuer',
+      parentId: null,
+      status: 'active',
+      baseRevision: 1,
+    });
+    return snap;
+  }
+
+  it('unveränderte Steuerkategorie → ursprünglich gespeicherter Name (aktuelles Snapshot-Name ignoriert)', () => {
+    // Gespeicherte Buchung trägt den damaligen Namen „USt (2025)";
+    // das Snapshot heißt inzwischen „USt". Fachlich unbeteiligte
+    // Korrektur: nur die Notiz geändert.
+    const original = validFormWithTax('tax-1', 'USt (2025)');
+    const form = { ...original, note: 'korrigiert' };
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.note).toBe('korrigiert');
+    expect(input.splits[0].tax).toMatchObject({
+      relevant: true,
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt (2025)', // NICHT „USt" aus dem Snapshot
+    });
+  });
+
+  it('expliziter Steuerkategorie-Wechsel → Name aus dem aktuellen Snapshot (Gegenprobe)', () => {
+    const snap = snapshotWithSecondTax();
+    const original = validFormWithTax('tax-1', 'USt (2025)');
+    // Nutzer wechselt bewusst auf tax-2 (Anzeigename aus Snapshot).
+    const form = {
+      ...original,
+      splits: [
+        {
+          ...original.splits[0],
+          tax: {
+            ...original.splits[0].tax,
+            taxCategoryId: 'tax-2',
+            taxCategoryName: 'Vorsteuer',
+          },
+        },
+      ],
+    };
+    const input = toLocalInput(form, snap, original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-2',
+      taxCategoryName: 'Vorsteuer', // Snapshot-Name, nicht „USt (2025)"
+    });
+  });
+
+  it('neuer Split (frische ID, keine im Original) → Snapshot-Name', () => {
+    const original = validFormWithTax('tax-1', 'USt (2025)');
+    const form = {
+      ...original,
+      amountInput: '20,00',
+      splits: [
+        { ...original.splits[0], amountInput: '10,00' },
+        {
+          ...original.splits[0],
+          id: 's2',
+          key: 's2',
+          amountInput: '10,00',
+        },
+      ],
+    };
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.splits[0].tax!.taxCategoryName).toBe('USt (2025)');
+    expect(input.splits[1].tax!.taxCategoryName).toBe('USt'); // frische ID ohne Original → Snapshot
+  });
+
+  it('gelöschter Split: verbleibender Split behält SEINEN gespeicherten Namen (Review R4, P2)', () => {
+    const snap = snapshotWithSecondTax();
+    const original: EntryFormModel = {
+      ...validForm(),
+      amountInput: '20,00',
+      splits: [
+        {
+          ...withSplit({ amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt (2025)', markedAmountInput: '', note: '' },
+        },
+        {
+          ...withSplit({ key: 's2', id: 's2', amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-2', taxCategoryName: 'Vorsteuer (2025)', markedAmountInput: '', note: '' },
+        },
+      ],
+    };
+    // Nutzer löst den ersten Split → der verbleibende Split (ID s2)
+    // behält über seine stabile Identität SEINEN gespeicherten Namen,
+    // auch wenn er jetzt an Position 0 steht.
+    const form = { ...original, amountInput: '10,00', splits: [original.splits[1]] };
+    const input = toLocalInput(form, snap, original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-2',
+      taxCategoryName: 'Vorsteuer (2025)', // eigener Name — NICHT der des gelöschten Splits
+    });
+  });
+
+  it('gleiche Steuerkategorie, verschiedene gespeicherte Namen: erster gelöscht → verbleibender behält seinen Namen (Review R4, P2)', () => {
+    // Review-Reproduktion: s1 und s2 tragen beide tax-1, aber
+    // verschiedene gespeicherte Namen. s1 gelöscht → s2 muss
+    // „Historisch B“ behalten (nicht „Historisch A“ des gelöschten
+    // Splits, der an gleicher Position im Original saß).
+    const original: EntryFormModel = {
+      ...validForm(),
+      amountInput: '20,00',
+      splits: [
+        {
+          ...withSplit({ amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'Historisch A', markedAmountInput: '', note: '' },
+        },
+        {
+          ...withSplit({ key: 's2', id: 's2', amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'Historisch B', markedAmountInput: '', note: '' },
+        },
+      ],
+    };
+    const form = { ...original, amountInput: '10,00', splits: [original.splits[1]] };
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'Historisch B',
+    });
+  });
+
+  it('mittlerer Split gelöscht (unterschiedliche Steuerkategorien) → verbleibende behalten ihre Namen (Review R4, P2)', () => {
+    const snap = snapshotWithSecondTax();
+    const original: EntryFormModel = {
+      ...validForm(),
+      amountInput: '30,00',
+      splits: [
+        {
+          ...withSplit({ amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt (2025)', markedAmountInput: '', note: '' },
+        },
+        {
+          ...withSplit({ key: 's2', id: 's2', amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-2', taxCategoryName: 'Vorsteuer (2025)', markedAmountInput: '', note: '' },
+        },
+        {
+          ...withSplit({ key: 's3', id: 's3', amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt (2024)', markedAmountInput: '', note: '' },
+        },
+      ],
+    };
+    const form = {
+      ...original,
+      amountInput: '20,00',
+      splits: [original.splits[0], original.splits[2]],
+    };
+    const input = toLocalInput(form, snap, original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt (2025)',
+    });
+    expect(input.splits[1].tax).toMatchObject({
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt (2024)', // NICHT „USt (2025)" des vorderen Splits
+    });
+  });
+
+  it('gelöscht + neu angelegt (frische ID, keine Wiederverwendung) → Snapshot-Name (Review R4, P2)', () => {
+    // Original s1 (tax-1, „USt (2025)") gelöscht; der neu angelegte
+    // Split erhält eine frische ID (s2, wie `addSplit` sie nach dem
+    // Hochwasser vergibt) und dieselbe Steuerkategorie → er wird aus
+    // dem Snapshot normalisiert und erbt NICHT den Namen des
+    // gelöschten Splits.
+    const original = validFormWithTax('tax-1', 'USt (2025)');
+    const fresh = withSplit({
+      key: 's1',
+      id: 's2',
+      tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt', markedAmountInput: '', note: '' },
+    });
+    const form = { ...original, splits: [fresh] };
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt', // Snapshot-Name, nicht „USt (2025)"
+    });
+  });
+
+  it('Steuer neu aktiviert (Original !relevant) → Snapshot-Name', () => {
+    const original = validForm(); // steuer-neutral
+    const form = validFormWithTax('tax-1', 'USt (2025)'); // Schalter an, Name veraltet
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.splits[0].tax!.taxCategoryName).toBe('USt');
+  });
+});
+
+/** Formular mit einem steuerrelevanten Split (Steuername übergeben). */
+function validFormWithTax(
+  taxCategoryId: string,
+  taxCategoryName: string,
+): EntryFormModel {
+  return {
+    ...validForm(),
+    splits: [
+      withSplit({
+        tax: {
+          relevant: true,
+          taxCategoryId,
+          taxCategoryName,
+          markedAmountInput: '',
+          note: '',
+        },
+      }),
+    ],
+  };
+}
 
 describe('Quick-Actions (Batch D, P4)', () => {
   it('applyHalfSplit: Gesamt 100,00, zwei Splits 60/40 → Gesamt 50,00; Split-Summe exakt 5000', () => {
@@ -629,5 +849,150 @@ describe('fillLastSplit (Batch D, P4)', () => {
   it('ungültiges Total → unverändert (dasselbe Objekt)', () => {
     const model = { ...validForm(), amountInput: 'abc' };
     expect(fillLastSplit(model)).toBe(model);
+  });
+});
+
+describe('fromBookingDetail (Batch E, Design D10)', () => {
+  function detail(
+    overrides: Partial<LocalBookingDetail> = {},
+  ): LocalBookingDetail {
+    return {
+      bookingId: 'b-1',
+      date: '2026-10-30',
+      type: 'expense',
+      accountId: 'acc-1',
+      totalAmountCents: 1250,
+      note: null,
+      createdAtUtc: '2026-10-30T12:00:00Z',
+      status: 'queued',
+      splits: [
+        {
+          id: 's-uuid-1',
+          amountCents: 800,
+          poolId: 'pool-1',
+          categoryId: 'cat-1',
+          note: 'Split-Notiz',
+          tax: null,
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  it('mappt Grunddaten: Datum, formatierter Betrag, Konto, Notiz (null → \'\')', () => {
+    const model = fromBookingDetail(detail());
+    expect(model.date).toBe('2026-10-30');
+    expect(model.amountInput).toBe('12,50');
+    expect(model.accountId).toBe('acc-1');
+    expect(model.note).toBe('');
+  });
+
+  it('Rundreise: parseAmount(amountInput) === totalAmountCents', () => {
+    for (const total of [1, 1250, 1200, 9999999999999]) {
+      const model = fromBookingDetail(detail({ totalAmountCents: total }));
+      expect(parseAmount(model.amountInput)).toBe(total);
+    }
+  });
+
+  it('Split-Keys sind Positions-Keys s1/s2; Form-ID = s<N>', () => {
+    const model = fromBookingDetail(
+      detail({
+        splits: [
+          {
+            id: 'u-1',
+            amountCents: 800,
+            poolId: 'pool-1',
+            categoryId: 'cat-1',
+            note: null,
+            tax: null,
+          },
+          {
+            id: 'u-2',
+            amountCents: 450,
+            poolId: 'pool-1',
+            categoryId: 'cat-1',
+            note: null,
+            tax: null,
+          },
+        ],
+      }),
+    );
+    expect(model.splits[0].key).toBe('s1');
+    expect(model.splits[0].id).toBe('s1');
+    expect(model.splits[1].key).toBe('s2');
+    expect(model.splits[1].id).toBe('s2');
+  });
+
+  it('tax: null → nicht relevant, leere Felder', () => {
+    const model = fromBookingDetail(detail());
+    expect(model.splits[0].tax).toEqual({
+      relevant: false,
+      taxCategoryId: null,
+      taxCategoryName: null,
+      markedAmountInput: '',
+      note: '',
+    });
+  });
+
+  it('tax relevant mit markiertem Betrag → formatiert; Notizen übernommen', () => {
+    const model = fromBookingDetail(
+      detail({
+        note: 'Buchungs-Notiz',
+        splits: [
+          {
+            id: 'u-1',
+            amountCents: 800,
+            poolId: 'pool-1',
+            categoryId: 'cat-1',
+            note: 'Split-Notiz',
+            tax: {
+              relevant: true,
+              taxCategoryId: 'tax-1',
+              taxCategoryName: 'USt',
+              markedAmountCents: 200,
+              note: 'Steuer-Notiz',
+            },
+          },
+        ],
+      }),
+    );
+    expect(model.note).toBe('Buchungs-Notiz');
+    expect(model.splits[0].note).toBe('Split-Notiz');
+    expect(model.splits[0].tax).toEqual({
+      relevant: true,
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt',
+      markedAmountInput: '2',
+      note: 'Steuer-Notiz',
+    });
+  });
+
+  it('tax relevant mit markedAmountCents null → leerer Input (Standard = Splitbetrag)', () => {
+    const model = fromBookingDetail(
+      detail({
+        splits: [
+          {
+            id: 'u-1',
+            amountCents: 800,
+            poolId: 'pool-1',
+            categoryId: 'cat-1',
+            note: null,
+            tax: {
+              relevant: true,
+              taxCategoryId: null,
+              taxCategoryName: null,
+              markedAmountCents: null,
+              note: null,
+            },
+          },
+        ],
+      }),
+    );
+    expect(model.splits[0].tax.markedAmountInput).toBe('');
+  });
+
+  it('ganzes Total ohne Cent-Anteil → „12“ (formatCents-Konformität)', () => {
+    const model = fromBookingDetail(detail({ totalAmountCents: 1200 }));
+    expect(model.amountInput).toBe('12');
   });
 });

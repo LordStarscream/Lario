@@ -433,7 +433,7 @@ describe('BookingsRepository.save (Batch B, Design D7)', () => {
       const repo2 = env2.get(BookingsRepository);
       await db2.init();
 
-      const list = await repo2.list();
+      const list = await repo2.listPending();
       expect(list).toHaveLength(20);
       expect(dbState.bookings.size).toBe(20);
       expect(dbState.splits.size).toBe(20);
@@ -975,5 +975,95 @@ describe('BookingsRepository — Batch C (Referenzvalidierung)', () => {
     expect(await meta.get(DEVICE_ID_META_KEY)).toBe(id1);
     const id2 = await repo.getDeviceId();
     expect(id2).toBe(id1);
+  });
+});
+
+/**
+ * `BookingsRepository.list` — Eingaben-Liste (Batch E, P5):
+ * neuestes Fachdatum zuerst, Outbox-Status, `poolIds` aus den
+ * Splits (dedupliziert, Split-Reihenfolge — `GROUP_CONCAT(DISTINCT …)`
+ * im SQL, im Fake nachgespiegelt).
+ */
+describe('BookingsRepository.list (Batch E, P5)', () => {
+  let repo: BookingsRepository;
+  let snapshotRepository: SnapshotRepository;
+
+  beforeEach(async () => {
+    dbState.reset();
+    const env = createEnvironmentInjector(
+      [LocalDatabase, MetaService, SnapshotRepository, BookingsRepository],
+      TestBed.inject(EnvironmentInjector),
+    );
+    snapshotRepository = env.get(SnapshotRepository);
+    repo = env.get(BookingsRepository);
+    await env.get(LocalDatabase).init();
+    await loadStandardSnapshot(snapshotRepository);
+  });
+
+  it('list() liefert poolIds (Splits Pool A + B + A → ["A","B"])', async () => {
+    const result = await repo.save(
+      {
+        date: '2026-11-01',
+        totalAmountCents: 6000,
+        accountId: 'acc-1',
+        note: null,
+        splits: [
+          {
+            id: 'fa',
+            amountCents: 2000,
+            poolId: 'pool-1',
+            categoryId: 'cat-1',
+            note: null,
+            tax: null,
+          },
+          {
+            id: 'fb',
+            amountCents: 2000,
+            poolId: 'pool-2',
+            categoryId: 'cat-1',
+            note: null,
+            tax: null,
+          },
+          {
+            id: 'fc',
+            amountCents: 2000,
+            poolId: 'pool-1',
+            categoryId: 'cat-2',
+            note: null,
+            tax: null,
+          },
+        ],
+      },
+      new Date(2026, 10, 1, 9, 0, 0),
+    );
+
+    const list = await repo.listPending();
+    expect(list).toHaveLength(1);
+    expect(list[0]!.bookingId).toBe(result.bookingId);
+    // Dedupliziert, Reihenfolge der Splits:
+    expect(list[0]!.poolIds).toEqual(['pool-1', 'pool-2']);
+    // createdAtUtc = Zeitpunkt des `save`-Aufrufs (P5-Sortierung):
+    expect(list[0]!.createdAtUtc).toBe(new Date(2026, 10, 1, 9, 0, 0).toISOString());
+  });
+
+  it('Sortierung nach createdAtUtc aufsteigend, dann bookingId (P5), Outbox-Status', async () => {
+    const older = await repo.save(SAMPLE_INPUT, new Date(2026, 10, 1, 9, 0, 0));
+    const newer = await repo.save(
+      { ...SAMPLE_INPUT, date: '2026-11-15' },
+      new Date(2026, 10, 20, 9, 0, 0),
+    );
+
+    const list = await repo.listPending();
+    expect(list.map((i) => i.bookingId)).toEqual([
+      older.bookingId,
+      newer.bookingId,
+    ]);
+    for (const item of list) {
+      expect(item.status).toBe('queued');
+    }
+  });
+
+  it('leere Datenbank → leere Liste', async () => {
+    expect(await repo.listPending()).toEqual([]);
   });
 });

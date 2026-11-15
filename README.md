@@ -207,6 +207,52 @@ in Schritt 18 (dort auch der eigene, nicht committete Signierschlüssel).
   **Nutzer-Truststore** installieren (Einstellungen → Sicherheit →
   Vertrauenswürdige Zertifikate), dann Host-URL auf `https://…:8443` setzen.
 
+## Mobile Offline-Erfassung (Schritt 8)
+
+Die App ist eine Tab-Shell mit drei Views — **Erfassen** (Startansicht),
+**Eingaben** (lokale Buchungen anzeigen/ändern/verwerfen), **Einrichtung**
+(Host-Verbindung + Stammdaten-Snapshot). Im Browser ohne natives Plugin
+zeigt die Shell eine klare Fallback-Meldung (kein lokaler Speicher;
+die Erfassung läuft nur im Android-Paket).
+
+**Lokale Datenbank** (Capacitor-SQLite, DB-Name `lario`; der
+Schritt-2-Prototyp-Speicher ist ersetzt): `meta`, `bookings`, `splits`,
+`outbox`, `drafts` sowie die vier Snapshot-Tabellen `accounts`, `pools`,
+`categories`, `tax_categories`. Alle EUR-Beträge sind ganzzahlige
+Centwerte (SQLite `INTEGER`); keine float/double.
+
+**Speichern einer Ausgabe** ist eine einzige atomare `executeSet`-
+Transaktion (Buchung + Splits + Outbox-Zeile + Zähler); eine
+Doppeltipp-Sperre blockt zweites Speichern, bis die erste Transaktion
+committed ist. Splits müssen sich exakt zum Gesamtbetrag summieren;
+Referenzen (Konto, Pools, Kategorien, Steuerkategorien) werden vor der
+Transaktion gegen den lokalen Snapshot validiert.
+
+**Outbox:** Jede Ausgabe erzeugt genau eine Outbox-Zeile mit
+Operations-ID `op-<JJJJ>-<MMDD>-<seq>` (JJJJ/MMDD aus der
+Geräteluftzeit, `seq` = persistierter monotoner Geräte-Zähler, niemals
+zurückgesetzt) und dem Payload-Hash `sha256:<64-hex>` (SHA-256,
+reine TS-Implementierung; NIST-Referenzwerte in den Tests).
+
+**Einrichtung:** Login am Host, dann Laden der vier Stammdaten-Listen
+und atomares Snapshot-Replace in EINER lokalen Transaktion zusammen mit
+den Zugangsdaten (inkl. Sitzungstoken). Abmelden widerruft den Token
+best-effort und löscht die auth-Meta; der Snapshot bleibt verfügbar,
+damit die Offline-Erfassung ohne Host weitergeht.
+
+**Grenzen in Schritt 8:** Die Outbox wird nur lokal angelegt und
+gepflegt — **gesendet wird nichts** (Senden, Idempotenz am Host und
+Abstimmung sind Schritt 9). Keine Kamera/Dateiimport/OCR und keine
+Portfolios/Aktien (spätere Erweiterungen).
+
+**Tests:** Die Unit-/UI-Tests nutzen eine Fake-DB, die den Vertrag des
+`@capacitor-community/sqlite`-Plugins 8.1.1 spiegelt (gegen die
+Android-Quelle verifiziert: `executeSet`/`run`-Transaktionsdefault,
+`values`-Pflichtfeld, native Transaktions-Methoden); die
+Schema-Statements laufen zusätzlich gegen echte SQLite (`node:sqlite`).
+Die UI-Tests fahren die echten Routen über `RouterTestingHarness`.
+Der endgültige Nachweis bleibt die Geräte-Abnahme.
+
 ## Entwicklungszustand
 
 **Schritt 2 (Android-/LAN-Prototyp): abgeschlossen, abgenommen** (11. Okt. 2026)
@@ -262,5 +308,5 @@ Branch `step/3-stammdaten` — wartet auf Nutzerabnahme/Push/Merge
 - **Tests:** `dotnet test Lario.slnx` → 58/58 grün (Domain 34, Infrastructure 24,
   davon 16 echte-SQLite-Integrationstests).
 
-Nächster Schritt: 4 — Einnahmen und Ausgaben.
-Details: `.tasks/_index.md`.
+Nächster Schritt: 8 — Produktive mobile Offline-Erfassung (in Arbeit,
+Details: `.tasks/_index.md`).

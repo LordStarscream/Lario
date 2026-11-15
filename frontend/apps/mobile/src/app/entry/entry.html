@@ -1,5 +1,45 @@
 <h2>Erfassen</h2>
 
+@if (editingBookingId() !== null) {
+  <div class="entry-edit-banner" data-testid="entry-edit-banner">
+    <p data-testid="entry-edit-banner-text">{{ editBannerText() }}</p>
+    <button
+      type="button"
+      data-testid="entry-edit-cancel"
+      [disabled]="formLocked()"
+      (click)="cancelEdit()"
+    >
+      Abbrechen
+    </button>
+  </div>
+}
+
+@if (editLoading()) {
+  <!-- Edit-Load in Fluge (Review R3, P2): Formular, Entwürfe und
+       Save sind gesperrt, bis die Antwort eintrifft. -->
+  <p class="entry-hint" role="status" data-testid="entry-edit-loading">
+    Buchung wird geladen …
+  </p>
+}
+
+@if (editLoadFailed()) {
+  <!-- Edit-Load fehlgeschlagen oder Buchung fehlt (Review R3, P2):
+       Save bleibt gesperrt; „Zur Neuerfassung wechseln“ ist die
+       bewusste Rückkehr (frische Komponente ohne Routen-Parameter). -->
+  <div class="entry-error" role="alert" data-testid="entry-edit-load-failed">
+    <p data-testid="entry-edit-load-failed-text">
+      Die Buchung konnte nicht geladen werden.
+    </p>
+    <button
+      type="button"
+      data-testid="entry-edit-load-failed-back"
+      (click)="goToNewEntry()"
+    >
+      Zur Neuerfassung wechseln
+    </button>
+  </div>
+}
+
 @if (snapshotError(); as snapshotErr) {
   <p class="entry-error" data-testid="snapshot-error">{{ snapshotErr }}</p>
 }
@@ -17,7 +57,7 @@
     <input
       type="date"
       data-testid="entry-date"
-      [attr.disabled]="saving() ? '' : null"
+      [attr.disabled]="formLocked() ? '' : null"
       [ngModel]="form().date"
       (ngModelChange)="updateField({ date: $event })"
     />
@@ -29,7 +69,7 @@
       inputmode="decimal"
       placeholder="0,00"
       data-testid="entry-total"
-      [attr.disabled]="saving() ? '' : null"
+      [attr.disabled]="formLocked() ? '' : null"
       [ngModel]="form().amountInput"
       (ngModelChange)="updateField({ amountInput: $event })"
     />
@@ -38,7 +78,7 @@
     Konto
     <select
       data-testid="entry-account"
-      [attr.disabled]="saving() ? '' : null"
+      [attr.disabled]="formLocked() ? '' : null"
       [ngModel]="form().accountId"
       (ngModelChange)="updateField({ accountId: $event })"
     >
@@ -53,7 +93,7 @@
     <input
       type="text"
       data-testid="entry-note"
-      [attr.disabled]="saving() ? '' : null"
+      [attr.disabled]="formLocked() ? '' : null"
       [ngModel]="form().note"
       (ngModelChange)="updateField({ note: $event })"
     />
@@ -72,7 +112,7 @@
             inputmode="decimal"
             placeholder="0,00"
             [attr.data-testid]="'entry-split-amount-' + (i + 1)"
-            [attr.disabled]="saving() ? '' : null"
+            [attr.disabled]="formLocked() ? '' : null"
             [ngModel]="split.amountInput"
             (ngModelChange)="updateSplit(split.key, { amountInput: $event })"
           />
@@ -81,7 +121,7 @@
           Pool
           <select
             [attr.data-testid]="'entry-split-pool-' + (i + 1)"
-            [attr.disabled]="saving() ? '' : null"
+            [attr.disabled]="formLocked() ? '' : null"
             [ngModel]="split.poolId"
             (ngModelChange)="onSplitPoolChange(split.key, $event)"
           >
@@ -95,7 +135,7 @@
           Kategorie
           <select
             [attr.data-testid]="'entry-split-category-' + (i + 1)"
-            [attr.disabled]="saving() ? '' : null"
+            [attr.disabled]="formLocked() ? '' : null"
             [ngModel]="split.categoryId"
             (ngModelChange)="onSplitCategoryChange(split.key, $event)"
           >
@@ -109,7 +149,7 @@
           type="button"
           class="entry-split-remove"
           [attr.data-testid]="'entry-split-remove-' + (i + 1)"
-          [disabled]="saving()"
+          [disabled]="formLocked()"
           (click)="removeSplit(split.key)"
         >
           Entfernen
@@ -120,7 +160,7 @@
         <input
           type="text"
           [attr.data-testid]="'entry-split-note-' + (i + 1)"
-          [attr.disabled]="saving() ? '' : null"
+          [attr.disabled]="formLocked() ? '' : null"
           [ngModel]="split.note"
           (ngModelChange)="updateSplit(split.key, { note: $event })"
         />
@@ -131,7 +171,7 @@
           <input
             type="checkbox"
             [attr.data-testid]="'entry-tax-' + (i + 1)"
-            [attr.disabled]="saving() ? '' : null"
+            [attr.disabled]="formLocked() ? '' : null"
             [ngModel]="split.tax.relevant"
             (ngModelChange)="onSplitTaxRelevantChange(split.key, $event)"
           />
@@ -142,7 +182,7 @@
             Steuerkategorie
             <select
               [attr.data-testid]="'entry-tax-category-' + (i + 1)"
-              [attr.disabled]="saving() ? '' : null"
+              [attr.disabled]="formLocked() ? '' : null"
               [ngModel]="split.tax.taxCategoryId ?? ''"
               (ngModelChange)="onSplitTaxCategoryChange(split.key, $event === '' ? null : $event)"
             >
@@ -159,7 +199,7 @@
               inputmode="decimal"
               [placeholder]="markedAmountPlaceholder(split)"
               [attr.data-testid]="'entry-marked-' + (i + 1)"
-              [attr.disabled]="saving() ? '' : null"
+              [attr.disabled]="formLocked() ? '' : null"
               [ngModel]="split.tax.markedAmountInput"
               (ngModelChange)="updateSplitTax(split.key, { markedAmountInput: $event })"
             />
@@ -169,7 +209,7 @@
             <input
               type="text"
               [attr.data-testid]="'entry-tax-note-' + (i + 1)"
-              [attr.disabled]="saving() ? '' : null"
+              [attr.disabled]="formLocked() ? '' : null"
               [ngModel]="split.tax.note"
               (ngModelChange)="updateSplitTax(split.key, { note: $event })"
             />
@@ -178,7 +218,7 @@
       </div>
     </div>
   }
-  <button type="button" data-testid="entry-split-add" [disabled]="saving()" (click)="addSplit()">
+  <button type="button" data-testid="entry-split-add" [disabled]="formLocked()" (click)="addSplit()">
     Split hinzufügen
   </button>
 </section>
@@ -197,7 +237,7 @@
     <button
       type="button"
       data-testid="entry-quick-even"
-      [disabled]="!quickActionsEnabled() || saving()"
+      [disabled]="!quickActionsEnabled() || formLocked()"
       (click)="quickEvenly()"
     >
       Gleichmäßig
@@ -205,7 +245,7 @@
     <button
       type="button"
       data-testid="entry-quick-fill-last"
-      [disabled]="!quickActionsEnabled() || saving()"
+      [disabled]="!quickActionsEnabled() || formLocked()"
       (click)="quickFillLast()"
     >
       Rest in letzten Split
@@ -230,6 +270,8 @@
   >
     @if (saving()) {
       Speichern …
+    } @else if (editingBookingId() !== null) {
+      Änderungen speichern
     } @else {
       Speichern
     }
@@ -238,19 +280,35 @@
     <p
       [class.entry-error]="saveStatus() === 'error'"
       [class.entry-saved]="saveStatus() === 'saved'"
+      [class.entry-info]="saveStatus() === 'info'"
       data-testid="entry-save-status"
     >
       {{ saveMessage() }}
     </p>
   }
   <div class="entry-draft-actions">
-    <button type="button" data-testid="entry-draft-save" [disabled]="saving()" (click)="saveDraft()">
+    <button
+      type="button"
+      data-testid="entry-draft-save"
+      [disabled]="formLocked() || editingBookingId() !== null"
+      (click)="saveDraft()"
+    >
       Entwurf speichern
     </button>
-    <button type="button" data-testid="entry-draft-load" [disabled]="saving()" (click)="loadDraft()">
+    <button
+      type="button"
+      data-testid="entry-draft-load"
+      [disabled]="formLocked() || editingBookingId() !== null"
+      (click)="loadDraft()"
+    >
       Entwurf laden
     </button>
-    <button type="button" data-testid="entry-draft-discard" [disabled]="saving()" (click)="discardDraft()">
+    <button
+      type="button"
+      data-testid="entry-draft-discard"
+      [disabled]="formLocked() || editingBookingId() !== null"
+      (click)="discardDraft()"
+    >
       Entwurf verwerfen
     </button>
   </div>
