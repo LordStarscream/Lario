@@ -334,13 +334,29 @@ export function validateEntryForm(
  *   `{ relevant: false, ... }` (nicht `null` — das Repository
  *   speichert dann `tax_relevant = 0`).
  * - `markedAmountInput`: leer → `null`; sonst `parseAmount`.
+ * - Steuer-Name (Batch D Review, P2): aus dem Snapshot abgeleitet,
+ *   nie aus dem Formular. Ausnahme — Ändern-Modus (Review R3, P2):
+ *   mit `originalModel` (dem per `fromBookingDetail` geladenen
+ *   Original) bleibt für eine Steuerkategorie, die der Nutzer NICHT
+ *   geändert hat (gleiche ID an gleicher Split-Position), der
+ *   ursprünglich gespeicherte Name erhalten — die D11-Entkopplung
+ *   wirkt damit auch über fachlich unbeteiligte Korrekturen (z. B.
+ *   Notiz-/Betragänderung) hinaus. Explizit geänderte oder neue
+ *   Steuerkategorien werden weiterhin aus dem aktuellen Snapshot
+ *   abgeleitet.
  *
+ * @param originalModel Ändern-Modus: ursprünglich geladenes Formular
+ *   (`fromBookingDetail`); `null` (Standard) = neue Eingabe/Entwurf.
+ *   Die Zuordnung ist positionsbasiert — wird ein Split gelöscht,
+ *   verschiebt sich die Position und die betroffenen Namen werden
+ *   (sicher) aus dem Snapshot abgeleitet.
  * @returns `null`, wenn das Formular oder der Snapshot ungültig sind
  *   (der Aufrufer prüft vorab per `validateEntryForm`).
  */
 export function toLocalInput(
   model: EntryFormModel,
   snapshot: MasterDataSnapshot | null,
+  originalModel: EntryFormModel | null = null,
 ): LocalExpenseInput | null {
   if (snapshot === null) {
     return null;
@@ -353,24 +369,36 @@ export function toLocalInput(
     return null;
   }
   const splits: LocalSplitInput[] = [];
-  for (const s of model.splits) {
+  for (let index = 0; index < model.splits.length; index++) {
+    const s = model.splits[index];
     const cents = parseAmount(s.amountInput);
     if (cents === null || cents === undefined) {
       return null;
+    }
+    // Steuer-Name: Standard (neue Eingabe/Entwurf) = immer Snapshot —
+    // der Formularname ist nur Anzeige und nicht maßgeblich (Batch D
+    // Review, P2). Ändern-Modus: unveränderte Steuerkategorie (gleiche
+    // ID an gleicher Position wie im Original) → ursprünglich
+    // gespeicherter Name (Review R3, P2); geänderte/neue Kategorie →
+    // Snapshot.
+    const originalSplit =
+      originalModel !== null ? originalModel.splits[index] : undefined;
+    const taxCategoryId = s.tax.relevant ? s.tax.taxCategoryId : null;
+    let taxCategoryName: string | null = null;
+    if (taxCategoryId !== null) {
+      const preservedName =
+        originalSplit !== undefined &&
+        originalSplit.tax.taxCategoryId === taxCategoryId
+          ? originalSplit.tax.taxCategoryName
+          : null;
+      taxCategoryName =
+        preservedName ?? snapshot.taxCategories.get(taxCategoryId)?.name ?? null;
     }
     const tax: LocalTaxInput = s.tax.relevant
       ? {
           relevant: true,
           taxCategoryId: s.tax.taxCategoryId,
-          // Name aus dem (vorab validierten) Snapshot abgeleitet —
-          // der Formularname ist nur Anzeige und nicht maßgeblich
-          // (Batch D Review, P2): eine manuelle Auswahl ohne Preset
-          // oder ein Entwurf mit veraltetem Namen würde sonst einen
-          // inkonsistenten Anzeigewert persistieren.
-          taxCategoryName:
-            s.tax.taxCategoryId !== null
-              ? snapshot.taxCategories.get(s.tax.taxCategoryId)?.name ?? null
-              : null,
+          taxCategoryName,
           markedAmountCents:
             s.tax.markedAmountInput === ''
               ? null

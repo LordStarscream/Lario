@@ -319,6 +319,50 @@ describe('EntriesDetailComponent (Batch E, P5)', () => {
       el.querySelector('[data-testid="entries-detail-notfound"]'),
     ).not.toBeNull();
   });
+
+  it('Lade-Fehler → Fehlerblock mit Retry und Liste-Link, nicht „nicht gefunden“ (Review R3, P3)', async () => {
+    const harness = await createHarness();
+    await seedSnapshot();
+    // Einmaliger DB-Fehler beim Buchung-Read (Fehlerinjection; die
+    // echten Repository-/DB-Verträge bleiben in den übrigen Tests
+    // wirksam).
+    const bookings = TestBed.inject(BookingsRepository);
+    vi.spyOn(bookings, 'get').mockRejectedValueOnce(
+      new Error('DB-Fehler (simuliert)'),
+    );
+    await harness.navigateByUrl('/eingaben/b-unknown');
+    await flush();
+    harness.detectChanges();
+    const el = harness.fixture.nativeElement as HTMLElement;
+
+    // Fehlerzweig statt Not-Found:
+    expect(
+      el.querySelector('[data-testid="entries-detail-load-error"]'),
+    ).not.toBeNull();
+    expect(el.textContent).toContain('Buchung konnte nicht geladen werden: DB-Fehler (simuliert)');
+    expect(
+      el.querySelector('[data-testid="entries-detail-notfound"]'),
+    ).toBeNull();
+    // Liste-Link vorhanden:
+    expect(
+      el.querySelector('[data-testid="entries-detail-back-error"]'),
+    ).not.toBeNull();
+
+    // Retry: neu laden (diesmal echtes `get` → keine Buchung → Not-Found).
+    const retry = el.querySelector(
+      '[data-testid="entries-detail-retry"]',
+    ) as HTMLButtonElement;
+    expect(retry).not.toBeNull();
+    retry.click();
+    await flush();
+    harness.detectChanges();
+    expect(
+      el.querySelector('[data-testid="entries-detail-load-error"]'),
+    ).toBeNull();
+    expect(
+      el.querySelector('[data-testid="entries-detail-notfound"]'),
+    ).not.toBeNull();
+  });
 });
 
 async function createHarness(): Promise<RouterTestingHarness> {

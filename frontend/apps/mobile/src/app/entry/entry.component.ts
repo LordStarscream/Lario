@@ -85,6 +85,17 @@ export class EntryComponent implements OnInit {
    */
   readonly editBannerText = signal<string | null>(null);
 
+  /**
+   * Ursprünglich geladene Buchungsform im Ändern-Modus (Review R3,
+   * P2): Ergebnis von `fromBookingDetail` — trägt die ursprünglich
+   * gespeicherten Steuerkategorie-Namen. `toLocalInput` erhält es im
+   * Ändern-Modus und bewahrt damit den gespeicherten Namen für
+   * Steuerkategorien, die der Nutzer nicht geändert hat (D11-
+   * Entkopplung bleibt über fachlich unbeteiligte Korrekturen
+   * erhalten). Getragen in `enterEdit`, geleert in `clearEditMode`.
+   */
+  private readonly originalForm = signal<EntryFormModel | null>(null);
+
   private readonly route = inject(ActivatedRoute);
 
   /**
@@ -369,7 +380,15 @@ export class EntryComponent implements OnInit {
       this.saveMessage.set('Bitte Eingaben korrigieren (Fehler unten).');
       return;
     }
-    const input = toLocalInput(this.form(), this.snapshot());
+    // Ändern-Modus: das ursprünglich geladene Formular wird an
+    // `toLocalInput` übergeben (Review R3, P2) — unveränderte
+    // Steuerkategorie-Namen bleiben erhalten; neue Eingaben und
+    // Entwürfe erhalten `null` (Name immer aus dem Snapshot).
+    const input = toLocalInput(
+      this.form(),
+      this.snapshot(),
+      this.editingBookingId() !== null ? this.originalForm() : null,
+    );
     if (input === null) {
       this.saveStatus.set('error');
       this.saveMessage.set('Formular konnte nicht verarbeitet werden.');
@@ -466,7 +485,14 @@ export class EntryComponent implements OnInit {
     this.editBannerText.set(
       `Buchung vom ${booking.date} · ${formatCents(booking.totalAmountCents)} € wird bearbeitet.`,
     );
-    this.setForm(fromBookingDetail(booking));
+    // Das ursprünglich geladene Formular wird parallel zum Bearbeiten-
+    // Formular aufbewahrt (Review R3, P2): `toLocalInput` leitet beim
+    // Speichern den Steuername für unveränderte Steuerkategorien aus
+    // diesem Original ab, nicht aus dem (möglicherweise umbenannten)
+    // aktuellen Snapshot.
+    const loaded = fromBookingDetail(booking);
+    this.originalForm.set(loaded);
+    this.setForm(loaded);
     this.saveStatus.set('idle');
     this.saveMessage.set(null);
   }
@@ -501,10 +527,11 @@ export class EntryComponent implements OnInit {
     return bookingId === null ? null : { bookingId };
   }
 
-  /** Leert den Ändern-Modus (ID + Banner). */
+  /** Leert den Ändern-Modus (ID, Banner, ursprüngliches Formular). */
   private clearEditMode(): void {
     this.editingBookingId.set(null);
     this.editBannerText.set(null);
+    this.originalForm.set(null);
   }
 
   // --- Entwurf (Design D8) --------------------------------------------------

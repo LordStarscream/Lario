@@ -5,6 +5,25 @@
   <p class="entries-detail-hint" data-testid="entries-detail-loading">
     Wird geladen …
   </p>
+} @else if (loadError(); as loadErr) {
+  <!-- Lade-Fehler (Review R3, P3): nicht mit „nicht gefunden" verwechseln — die Buchung existiert wahrscheinlich, der Read ist fehlgeschlagen. "Erneut laden" lädt neu, die Liste ist immer erreichbar. -->
+  <div
+    class="entries-detail-error"
+    role="alert"
+    data-testid="entries-detail-load-error"
+  >
+    <p data-testid="entries-detail-load-error-message">{{ loadErr }}</p>
+    <button
+      type="button"
+      data-testid="entries-detail-retry"
+      (click)="load()"
+    >
+      Erneut laden
+    </button>
+    <a routerLink="/eingaben" data-testid="entries-detail-back-error">
+      Zurück zur Liste
+    </a>
+  </div>
 } @else if (detail() === null) {
   <p class="entries-detail-notfound" data-testid="entries-detail-notfound">
     Keine Buchung mit dieser ID gefunden.

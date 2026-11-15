@@ -891,6 +891,136 @@ describe('EntryComponent — Edit-Mode (Batch E, Design D10)', () => {
     expect(outboxAfter.payload_hash).not.toBe(outboxBefore.payload_hash);
   });
 
+  /** Snapshot mit umbenannter Steuerkategorie (tx-1 = „Sachbezug (2027)“) —
+   *  simuliert: die Stammdaten wurden nach dem Buchungsspeichern geändert.
+   */
+  function renamedTaxSnapshot(): SnapshotInput {
+    const s = testSnapshot();
+    s.taxCategories[0] = { ...s.taxCategories[0], name: 'Sachbezug (2027)' };
+    return s;
+  }
+
+  /** Booking-Input mit einem steuerrelevanten Split; der persistierte
+   *  Steuername ist der Name zum Speicherpunkt („Sachbezug").
+   */
+  const savedTaxInput = {
+    date: '2026-10-28',
+    totalAmountCents: 1000,
+    accountId: 'acc-1',
+    note: null,
+    splits: [
+      {
+        id: 's1',
+        amountCents: 1000,
+        poolId: 'pool-1',
+        categoryId: 'cat-1',
+        note: null,
+        tax: {
+          relevant: true,
+          taxCategoryId: 'tx-1',
+          taxCategoryName: 'Sachbezug',
+          markedAmountCents: null,
+          note: null,
+        },
+      },
+    ],
+  };
+
+  it('Edit-Mode: fachlich unbeteiligte Korrektur (Notiz) erhält den gespeicherten Steuername (Review R3, P2)', async () => {
+    const { comp, dbState } = await createLoaded(renamedTaxSnapshot());
+    const bookingId = await saveBooking(savedTaxInput);
+
+    await comp.enterEdit(bookingId);
+    // Originalname wird geladen (D11: entkoppelt vom Snapshot):
+    expect(comp.form().splits[0].tax.taxCategoryId).toBe('tx-1');
+    expect(comp.form().splits[0].tax.taxCategoryName).toBe('Sachbezug');
+
+    // Nur die Notiz geändert — Steuerkategorie bleibt unberührt:
+    comp.form.set({ ...comp.form(), note: 'korrigiert' });
+
+    await comp.save();
+
+    expect(comp.saveStatus()).toBe('saved');
+    const row = [...dbState.splits.values()][0];
+    expect(row.tax_category_id).toBe('tx-1');
+    expect(row.tax_category_name).toBe('Sachbezug'); // NICHT „Sachbezug (2027)"
+    expect(row.note).toBeNull();
+    expect(dbState.bookings.get(bookingId)?.note).toBe('korrigiert');
+  });
+
+  it('Edit-Mode: expliziter Steuerkategorie-Wechsel → Name aus dem aktuellen Snapshot (Review R3, P2, Gegenprobe)', async () => {
+    const { comp, dbState } = await createLoaded(renamedTaxSnapshot());
+    const bookingId = await saveBooking(savedTaxInput);
+
+    await comp.enterEdit(bookingId);
+    // Nutzer wechselt die Steuerkategorie bewusst auf tx-2:
+    comp.onSplitTaxCategoryChange('s1', 'tx-2');
+    expect(comp.form().splits[0].tax.taxCategoryId).toBe('tx-2');
+    expect(comp.form().splits[0].tax.taxCategoryName).toBe('Werbungskosten');
+
+    await comp.save();
+
+    expect(comp.saveStatus()).toBe('saved');
+    const row = [...dbState.splits.values()][0];
+    expect(row.tax_category_id).toBe('tx-2');
+    expect(row.tax_category_name).toBe('Werbungskosten'); // Snapshot-Name
+  });
+
+  it('Edit-Mode: gemischt — unveränderter Split erhält den gespeicherten Namen, geänderter den Snapshot-Namen (Review R3, P2)', async () => {
+    const { comp, dbState } = await createLoaded(renamedTaxSnapshot());
+    const bookingId = await saveBooking({
+      date: '2026-10-28',
+      totalAmountCents: 2000,
+      accountId: 'acc-1',
+      note: null,
+      splits: [
+        {
+          id: 's1',
+          amountCents: 1200,
+          poolId: 'pool-1',
+          categoryId: 'cat-1',
+          note: null,
+          tax: {
+            relevant: true,
+            taxCategoryId: 'tx-1',
+            taxCategoryName: 'Sachbezug',
+            markedAmountCents: null,
+            note: null,
+          },
+        },
+        {
+          id: 's2',
+          amountCents: 800,
+          poolId: 'pool-1',
+          categoryId: 'cat-1',
+          note: null,
+          tax: {
+            relevant: true,
+            taxCategoryId: 'tx-1',
+            taxCategoryName: 'Sachbezug',
+            markedAmountCents: null,
+            note: null,
+          },
+        },
+      ],
+    });
+
+    await comp.enterEdit(bookingId);
+    // Nur der zweite Split (800 Ct) wechselt die Steuerkategorie:
+    comp.onSplitTaxCategoryChange('s2', 'tx-2');
+
+    await comp.save();
+
+    expect(comp.saveStatus()).toBe('saved');
+    const rows = [...dbState.splits.values()];
+    const unchanged = rows.find((r) => r.amount_cents === 1200)!;
+    const changed = rows.find((r) => r.amount_cents === 800)!;
+    expect(unchanged.tax_category_id).toBe('tx-1');
+    expect(unchanged.tax_category_name).toBe('Sachbezug'); // gespeichert
+    expect(changed.tax_category_id).toBe('tx-2');
+    expect(changed.tax_category_name).toBe('Werbungskosten'); // Snapshot
+  });
+
   it('Update-Fehler → Edit-Mode und Formular bleiben erhalten', async () => {
     const { comp } = await createLoaded(testSnapshot());
     const bookingId = await saveBooking(baseInput);

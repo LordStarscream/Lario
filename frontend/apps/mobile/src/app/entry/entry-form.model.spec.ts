@@ -321,7 +321,141 @@ describe('toLocalInput (Batch D, P4)', () => {
     expect(input.splits[0].tax!.relevant).toBe(true);
     expect(input.splits[0].tax!.markedAmountCents).toBeNull();
   });
+
+  it('ohne originalModel (Default): Formularname nicht maßgeblich → Snapshot-Name (Batch D P2 bleibt erhalten)', () => {
+    const form = validFormWithTax('tax-1', 'veralteter Name');
+    const input = toLocalInput(form, snapshot())!;
+    expect(input.splits[0].tax!.taxCategoryName).toBe('USt');
+  });
 });
+
+describe('toLocalInput — Ändern-Modus: Steuername erhalten (Review R3, P2)', () => {
+  /** Snapshot mit zweiter Steuerkategorie (Wechsel-Gegenprobe). */
+  function snapshotWithSecondTax(): MasterDataSnapshot {
+    const snap = snapshot();
+    snap.taxCategories.set('tax-2', {
+      id: 'tax-2',
+      name: 'Vorsteuer',
+      parentId: null,
+      status: 'active',
+      baseRevision: 1,
+    });
+    return snap;
+  }
+
+  it('unveränderte Steuerkategorie → ursprünglich gespeicherter Name (aktuelles Snapshot-Name ignoriert)', () => {
+    // Gespeicherte Buchung trägt den damaligen Namen „USt (2025)";
+    // das Snapshot heißt inzwischen „USt". Fachlich unbeteiligte
+    // Korrektur: nur die Notiz geändert.
+    const original = validFormWithTax('tax-1', 'USt (2025)');
+    const form = { ...original, note: 'korrigiert' };
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.note).toBe('korrigiert');
+    expect(input.splits[0].tax).toMatchObject({
+      relevant: true,
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt (2025)', // NICHT „USt" aus dem Snapshot
+    });
+  });
+
+  it('expliziter Steuerkategorie-Wechsel → Name aus dem aktuellen Snapshot (Gegenprobe)', () => {
+    const snap = snapshotWithSecondTax();
+    const original = validFormWithTax('tax-1', 'USt (2025)');
+    // Nutzer wechselt bewusst auf tax-2 (Anzeigename aus Snapshot).
+    const form = {
+      ...original,
+      splits: [
+        {
+          ...original.splits[0],
+          tax: {
+            ...original.splits[0].tax,
+            taxCategoryId: 'tax-2',
+            taxCategoryName: 'Vorsteuer',
+          },
+        },
+      ],
+    };
+    const input = toLocalInput(form, snap, original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-2',
+      taxCategoryName: 'Vorsteuer', // Snapshot-Name, nicht „USt (2025)"
+    });
+  });
+
+  it('neuer Split (mehr Splits als im Original) → Snapshot-Name an der neuen Position', () => {
+    const original = validFormWithTax('tax-1', 'USt (2025)');
+    const form = {
+      ...original,
+      amountInput: '20,00',
+      splits: [
+        { ...original.splits[0], amountInput: '10,00' },
+        {
+          ...original.splits[0],
+          id: 's2',
+          key: 's2',
+          amountInput: '10,00',
+        },
+      ],
+    };
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.splits[0].tax!.taxCategoryName).toBe('USt (2025)');
+    expect(input.splits[1].tax!.taxCategoryName).toBe('USt'); // Position ohne Original → Snapshot
+  });
+
+  it('gelöschter Split verschiebt die Position → Snapshot-Name (dokumentierter Fallback)', () => {
+    const snap = snapshotWithSecondTax();
+    const original: EntryFormModel = {
+      ...validForm(),
+      amountInput: '20,00',
+      splits: [
+        {
+          ...withSplit({ amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt (2025)', markedAmountInput: '', note: '' },
+        },
+        {
+          ...withSplit({ key: 's2', amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-2', taxCategoryName: 'Vorsteuer (2025)', markedAmountInput: '', note: '' },
+        },
+      ],
+    };
+    // Nutzer löst den ersten Split → der verbleibende Split steht an
+    // Position 0, wo im Original tax-1 saß (Kategorie-Wechsel).
+    const form = { ...original, amountInput: '10,00', splits: [original.splits[1]] };
+    const input = toLocalInput(form, snap, original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-2',
+      taxCategoryName: 'Vorsteuer', // Position-Abgleich verfehlt → Snapshot
+    });
+  });
+
+  it('Steuer neu aktiviert (Original !relevant) → Snapshot-Name', () => {
+    const original = validForm(); // steuer-neutral
+    const form = validFormWithTax('tax-1', 'USt (2025)'); // Schalter an, Name veraltet
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.splits[0].tax!.taxCategoryName).toBe('USt');
+  });
+});
+
+/** Formular mit einem steuerrelevanten Split (Steuername übergeben). */
+function validFormWithTax(
+  taxCategoryId: string,
+  taxCategoryName: string,
+): EntryFormModel {
+  return {
+    ...validForm(),
+    splits: [
+      withSplit({
+        tax: {
+          relevant: true,
+          taxCategoryId,
+          taxCategoryName,
+          markedAmountInput: '',
+          note: '',
+        },
+      }),
+    ],
+  };
+}
 
 describe('Quick-Actions (Batch D, P4)', () => {
   it('applyHalfSplit: Gesamt 100,00, zwei Splits 60/40 → Gesamt 50,00; Split-Summe exakt 5000', () => {
