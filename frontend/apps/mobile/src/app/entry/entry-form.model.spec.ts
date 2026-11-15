@@ -72,7 +72,7 @@ function validForm(): EntryFormModel {
  */
 function withSplit(overrides: Partial<EntrySplitModel>): EntrySplitModel {
   return {
-    ...createDefaultSplit('s1'),
+    ...createDefaultSplit('s1', 's1'),
     amountInput: '10,00',
     poolId: 'pool-1',
     categoryId: 'cat-1',
@@ -382,7 +382,7 @@ describe('toLocalInput — Ändern-Modus: Steuername erhalten (Review R3, P2)', 
     });
   });
 
-  it('neuer Split (mehr Splits als im Original) → Snapshot-Name an der neuen Position', () => {
+  it('neuer Split (frische ID, keine im Original) → Snapshot-Name', () => {
     const original = validFormWithTax('tax-1', 'USt (2025)');
     const form = {
       ...original,
@@ -399,10 +399,10 @@ describe('toLocalInput — Ändern-Modus: Steuername erhalten (Review R3, P2)', 
     };
     const input = toLocalInput(form, snapshot(), original)!;
     expect(input.splits[0].tax!.taxCategoryName).toBe('USt (2025)');
-    expect(input.splits[1].tax!.taxCategoryName).toBe('USt'); // Position ohne Original → Snapshot
+    expect(input.splits[1].tax!.taxCategoryName).toBe('USt'); // frische ID ohne Original → Snapshot
   });
 
-  it('gelöschter Split verschiebt die Position → Snapshot-Name (dokumentierter Fallback)', () => {
+  it('gelöschter Split: verbleibender Split behält SEINEN gespeicherten Namen (Review R4, P2)', () => {
     const snap = snapshotWithSecondTax();
     const original: EntryFormModel = {
       ...validForm(),
@@ -413,18 +413,102 @@ describe('toLocalInput — Ändern-Modus: Steuername erhalten (Review R3, P2)', 
           tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt (2025)', markedAmountInput: '', note: '' },
         },
         {
-          ...withSplit({ key: 's2', amountInput: '10,00' }),
+          ...withSplit({ key: 's2', id: 's2', amountInput: '10,00' }),
           tax: { relevant: true, taxCategoryId: 'tax-2', taxCategoryName: 'Vorsteuer (2025)', markedAmountInput: '', note: '' },
         },
       ],
     };
-    // Nutzer löst den ersten Split → der verbleibende Split steht an
-    // Position 0, wo im Original tax-1 saß (Kategorie-Wechsel).
+    // Nutzer löst den ersten Split → der verbleibende Split (ID s2)
+    // behält über seine stabile Identität SEINEN gespeicherten Namen,
+    // auch wenn er jetzt an Position 0 steht.
     const form = { ...original, amountInput: '10,00', splits: [original.splits[1]] };
     const input = toLocalInput(form, snap, original)!;
     expect(input.splits[0].tax).toMatchObject({
       taxCategoryId: 'tax-2',
-      taxCategoryName: 'Vorsteuer', // Position-Abgleich verfehlt → Snapshot
+      taxCategoryName: 'Vorsteuer (2025)', // eigener Name — NICHT der des gelöschten Splits
+    });
+  });
+
+  it('gleiche Steuerkategorie, verschiedene gespeicherte Namen: erster gelöscht → verbleibender behält seinen Namen (Review R4, P2)', () => {
+    // Review-Reproduktion: s1 und s2 tragen beide tax-1, aber
+    // verschiedene gespeicherte Namen. s1 gelöscht → s2 muss
+    // „Historisch B“ behalten (nicht „Historisch A“ des gelöschten
+    // Splits, der an gleicher Position im Original saß).
+    const original: EntryFormModel = {
+      ...validForm(),
+      amountInput: '20,00',
+      splits: [
+        {
+          ...withSplit({ amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'Historisch A', markedAmountInput: '', note: '' },
+        },
+        {
+          ...withSplit({ key: 's2', id: 's2', amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'Historisch B', markedAmountInput: '', note: '' },
+        },
+      ],
+    };
+    const form = { ...original, amountInput: '10,00', splits: [original.splits[1]] };
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'Historisch B',
+    });
+  });
+
+  it('mittlerer Split gelöscht (unterschiedliche Steuerkategorien) → verbleibende behalten ihre Namen (Review R4, P2)', () => {
+    const snap = snapshotWithSecondTax();
+    const original: EntryFormModel = {
+      ...validForm(),
+      amountInput: '30,00',
+      splits: [
+        {
+          ...withSplit({ amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt (2025)', markedAmountInput: '', note: '' },
+        },
+        {
+          ...withSplit({ key: 's2', id: 's2', amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-2', taxCategoryName: 'Vorsteuer (2025)', markedAmountInput: '', note: '' },
+        },
+        {
+          ...withSplit({ key: 's3', id: 's3', amountInput: '10,00' }),
+          tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt (2024)', markedAmountInput: '', note: '' },
+        },
+      ],
+    };
+    const form = {
+      ...original,
+      amountInput: '20,00',
+      splits: [original.splits[0], original.splits[2]],
+    };
+    const input = toLocalInput(form, snap, original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt (2025)',
+    });
+    expect(input.splits[1].tax).toMatchObject({
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt (2024)', // NICHT „USt (2025)" des vorderen Splits
+    });
+  });
+
+  it('gelöscht + neu angelegt (frische ID, keine Wiederverwendung) → Snapshot-Name (Review R4, P2)', () => {
+    // Original s1 (tax-1, „USt (2025)") gelöscht; der neu angelegte
+    // Split erhält eine frische ID (s2, wie `addSplit` sie nach dem
+    // Hochwasser vergibt) und dieselbe Steuerkategorie → er wird aus
+    // dem Snapshot normalisiert und erbt NICHT den Namen des
+    // gelöschten Splits.
+    const original = validFormWithTax('tax-1', 'USt (2025)');
+    const fresh = withSplit({
+      key: 's1',
+      id: 's2',
+      tax: { relevant: true, taxCategoryId: 'tax-1', taxCategoryName: 'USt', markedAmountInput: '', note: '' },
+    });
+    const form = { ...original, splits: [fresh] };
+    const input = toLocalInput(form, snapshot(), original)!;
+    expect(input.splits[0].tax).toMatchObject({
+      taxCategoryId: 'tax-1',
+      taxCategoryName: 'USt', // Snapshot-Name, nicht „USt (2025)"
     });
   });
 

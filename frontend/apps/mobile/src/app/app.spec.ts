@@ -276,6 +276,41 @@ describe('App-Routing (Batch E, P6)', () => {
     expect(status.textContent).toContain('nicht gefunden');
   });
 
+  it('Review R3, P2: /erfassen/<unbekannt> → „Zur Neuerfassung wechseln“ → frische Komponente unter /erfassen', async () => {
+    const harness = await createHarness();
+    await harness.navigateByUrl('/erfassen/b-unknown');
+    await flush();
+    harness.detectChanges();
+    const el = harness.fixture.nativeElement as HTMLElement;
+    // Fehlerblock mit bewusster Rückkehr-Aktion (kein stiller
+    // Moduswechsel, kein Banner):
+    const failed = el.querySelector(
+      '[data-testid="entry-edit-load-failed"]',
+    ) as HTMLElement;
+    expect(failed).not.toBeNull();
+    const button = failed.querySelector(
+      '[data-testid="entry-edit-load-failed-back"]',
+    ) as HTMLButtonElement;
+    expect(button.textContent).toContain('Zur Neuerfassung wechseln');
+
+    // Bewusste Nutzeraktion → Route ohne `bookingId`:
+    button.click();
+    await flush();
+    harness.detectChanges();
+    expect(TestBed.inject(Router).url).toBe('/erfassen');
+    const el2 = harness.fixture.nativeElement as HTMLElement;
+    // Frische Komponente: kein Fehlerblock, kein Banner, normaler
+    // Speichern-Button:
+    expect(
+      el2.querySelector('[data-testid="entry-edit-load-failed"]'),
+    ).toBeNull();
+    expect(
+      el2.querySelector('[data-testid="entry-edit-banner"]'),
+    ).toBeNull();
+    const save = el2.querySelector('[data-testid="entry-save"]') as HTMLButtonElement;
+    expect(save.textContent).toContain('Speichern');
+  });
+
   it('App-Shell rendert Tabs (RouterLink) und Router-Outlet', () => {
     // Kein Harness: die Shell selbst wird direkt gerendert — der
     // Router muss konfiguriert sein, damit die Tabs (RouterLink)

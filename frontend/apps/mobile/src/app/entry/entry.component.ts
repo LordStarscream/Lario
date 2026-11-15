@@ -15,7 +15,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { formatCents, parseAmount } from '../amount';
 import { BookingsRepository, BookingValidationError } from '../db/bookings.repository';
 import { DraftsRepository } from '../db/drafts.repository';
@@ -29,6 +29,7 @@ import {
   createDefaultForm,
   createDefaultSplit,
   fillLastSplit,
+  maxSplitIdNumber,
   parseDraft,
   serializeDraft,
   setTaxRelevant,
@@ -55,7 +56,12 @@ export class EntryComponent implements OnInit {
   private readonly snapshotRepository = inject(SnapshotRepository);
 
   /** Formularzustand (Signal). */
-  readonly form = signal<EntryFormModel>(createDefaultForm(todayInBerlin()));
+  /** Standardformular bei Komponentenerstellung (dient auch der
+   *  Initialisierung des Split-ID-Hochwassers, Review R4, P2). */
+  private readonly initialForm: EntryFormModel =
+    createDefaultForm(todayInBerlin());
+
+  readonly form = signal<EntryFormModel>(this.initialForm);
   /** Stammdaten-Snapshot (null = noch nicht geladen). */
   readonly snapshot = signal<MasterDataSnapshot | null>(null);
   /** Fehlermeldung des Snapshot-Loads. */
@@ -97,6 +103,7 @@ export class EntryComponent implements OnInit {
   private readonly originalForm = signal<EntryFormModel | null>(null);
 
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   /**
    * Nicht übernahmener Entwurf vorhanden (Design D8): `true` beim
@@ -173,8 +180,33 @@ export class EntryComponent implements OnInit {
 
   /** Speichern-Sperre: während Transaktion oder ohne Snapshot. */
   readonly saveEnabled = computed(
-    () => !this.saving() && this.snapshot() !== null,
+    () => !this.formLocked() && this.snapshot() !== null,
   );
+
+  /**
+   * Formular-Sperre (Review R3, P2): während Save-Transaktion,
+   * Edit-Load oder nach fehlgeschlagenem Edit-Load sind alle
+   * formularverändernden Eingaben und die Entwürfe gesperrt.
+   */
+  readonly formLocked = computed(
+    () => this.saving() || this.editLoading() || this.editLoadFailed(),
+  );
+
+  /**
+   * Edit-Load läuft (Review R3, P2): `true` von der synchronen
+   * Routenentscheidung in `ngOnInit` bis `enterEdit` die Antwort
+   * verarbeitet hat. Währenddessen sind Formular, Entwürfe und
+   * Save gesperrt (`formLocked`).
+   */
+  readonly editLoading = signal(false);
+
+  /**
+   * Edit-Load fehlgeschlagen oder Buchung fehlt (Review R3, P2):
+   * der Edit-Modus bleibt abgebrochen — Formular-Eingaben und Save
+   * bleiben gesperrt, der Nutzer sieht die Fehlermeldung und kann
+   * bewusst zur Neuerfassung wechseln (`goToNewEntry`).
+   */
+  readonly editLoadFailed = signal(false);
 
   /**
    * Generationszähler des Formularzustands (Batch D Review, P2):
@@ -188,6 +220,16 @@ export class EntryComponent implements OnInit {
    */
   private formGeneration = 0;
 
+  /**
+   * Höchste Split-ID-Nummer, die jemals vergeben wurde (Review R4, P2):
+   * `addSplit` vergibt `s<highWater+1>` — monoton steigend über die
+   * gesamte Bearbeitungs-Session, auch wenn Splits gelöscht werden.
+   * So kann keine ID erneut vergeben werden und die stabile
+   * Split-Identität (Metadaten-Zuordnung in `toLocalInput`) bleibt
+   * eindeutig. Initialisiert aus dem Standardformular (`s1`).
+   */
+  private splitIdHighWater = maxSplitIdNumber(this.initialForm.splits);
+
   /** Lädt den Stammdaten-Snapshot (Design D9; Fehlfall → Hinweis, das
    *  Formular bleibt bedienbar, Speichern ist gesperrt) und aktiviert
    *  den Ändern-Modus, wenn die Route ein `bookingId`-Parameter trägt
@@ -195,6 +237,15 @@ export class EntryComponent implements OnInit {
    *  Back-Button funktionieren über den Router).
    */
   async ngOnInit(): Promise<void> {
+    // Routenabsicht synchron erfassen (Review R3, P2): bevor der
+    // erste await beginnt, sperrt der Edit-Ladezustand Formular,
+    // Entwürfe und Save — eine Eingabe während des Ladens darf den
+    // fachlichen Speichermodus nicht still von „Ändern“ auf „Neu“
+    // wechseln.
+    const bookingId = this.route.snapshot.paramMap.get('bookingId');
+    if (bookingId !== null) {
+      this.editLoading.set(true);
+    }
     try {
       this.snapshot.set(await this.snapshotRepository.loadSnapshot());
     } catch (e) {
@@ -218,7 +269,6 @@ export class EntryComponent implements OnInit {
     } catch {
       this.draftLoaded.set(false);
     }
-    const bookingId = this.route.snapshot.paramMap.get('bookingId');
     if (bookingId !== null) {
       await this.enterEdit(bookingId);
     }
@@ -233,10 +283,25 @@ export class EntryComponent implements OnInit {
    * erhöht den Generationszähler.
    */
   private setForm(model: EntryFormModel): void {
-    if (this.saving()) {
+    if (this.formLocked()) {
       return;
     }
     this.formGeneration += 1;
+    this.commitForm(model);
+  }
+
+  /**
+   * Schreibt den Formularzustand und aktualisiert das Split-ID-
+   * Hochwasser (Review R4, P2): der Zähler sinkt nie — gelöschte
+   * IDs werden nicht wiederverwendet. Alle `form`-Schreibzugriffe
+   * laufen durch diese Methode (auch direkte Resets, die die
+   * `formLocked`-Sperre von `setForm` umgehen müssen).
+   */
+  private commitForm(model: EntryFormModel): void {
+    this.splitIdHighWater = Math.max(
+      this.splitIdHighWater,
+      maxSplitIdNumber(model.splits),
+    );
     this.form.set(model);
   }
 
@@ -328,7 +393,14 @@ export class EntryComponent implements OnInit {
   addSplit(): void {
     this.mutateForm((f) => {
       const nextKey = `s${f.splits.length + 1}`;
-      return { ...f, splits: [...f.splits, createDefaultSplit(nextKey)] };
+      // Frische, nie wiederverwendete ID (Review R4, P2): das
+      // Hochwasser steigt monoton, auch wenn Splits gelöscht
+      // werden — die stabile Identität bleibt eindeutig.
+      const nextId = `s${++this.splitIdHighWater}`;
+      return {
+        ...f,
+        splits: [...f.splits, createDefaultSplit(nextKey, nextId)],
+      };
     });
   }
 
@@ -373,6 +445,22 @@ export class EntryComponent implements OnInit {
    */
   async save(): Promise<void> {
     if (this.saving()) {
+      return;
+    }
+    // Edit-Modus (Review R3, P2): während Edit-Load darf nicht
+    // gespeichert werden (das fachliche Ziel ist noch unklar);
+    // nach fehlgeschlagenem Edit-Load bleibt Save gesperrt, bis
+    // der Nutzer bewusst zur Neuerfassung wechselt.
+    // Während Edit-Load: stumm ignorieren (das fachliche Ziel ist
+    // noch unklar); der Status wird vom Ladevorgang gepflegt.
+    if (this.editLoading()) {
+      return;
+    }
+    if (this.editLoadFailed()) {
+      this.saveStatus.set('error');
+      this.saveMessage.set(
+        'Änderungsmodus abgebrochen — Buchung nicht geladen. „Zur Neuerfassung wechseln“, um weiterzuarbeiten.',
+      );
       return;
     }
     if (this.errors().length > 0) {
@@ -429,7 +517,7 @@ export class EntryComponent implements OnInit {
         // der gespeicherte Entwurf bleibt erhalten und kann nach dem
         // Save bewusst neu geladen werden.
         this.formGeneration += 1;
-        this.form.set({ ...createDefaultForm(todayInBerlin()), accountId });
+        this.commitForm({ ...createDefaultForm(todayInBerlin()), accountId });
       }
     } catch (e) {
       this.saveStatus.set('error');
@@ -459,7 +547,11 @@ export class EntryComponent implements OnInit {
    * UND die Specs den Ändern-Modus direkt aktivieren (P5).
    */
   async enterEdit(bookingId: string): Promise<void> {
-    if (this.saving()) {
+    // Hinweis: `editLoading` gehört bewusst NICHT in diesen Guard —
+    // der App-Start setzt es synchron in `ngOnInit` (bevor der erste
+    // await kommt), und `enterEdit` läuft in genau diesem Zustand
+    // fort. `editLoadFailed` blockiert dagegen jede neue Ladung.
+    if (this.saving() || this.editLoadFailed()) {
       return;
     }
     if (this.editingBookingId() !== null) {
@@ -467,34 +559,69 @@ export class EntryComponent implements OnInit {
       this.saveMessage.set('Buchung wird bereits bearbeitet.');
       return;
     }
+    this.editLoading.set(true);
     const generationAtStart = this.formGeneration;
-    const booking = await this.bookingsRepository.get(bookingId);
-    if (booking === null) {
-      // Buchung nicht gefunden oder nicht in der Outbox (z. B.
-      // bereits versendet): Hinweis, Formular unverändert.
+    try {
+      const booking = await this.bookingsRepository.get(bookingId);
+      if (booking === null) {
+        // Buchung nicht gefunden oder nicht in der Outbox (z. B.
+        // bereits versendet): Edit-Modus abgebrochen, Save bleibt
+        // gesperrt (Review R3, P2).
+        this.editLoading.set(false);
+        this.editLoadFailed.set(true);
+        this.saveStatus.set('error');
+        this.saveMessage.set(
+          `Buchung mit ID ${bookingId} konnte nicht geladen werden: nicht gefunden oder nicht in der Outbox.`,
+        );
+        return;
+      }
+      // In-Flight-Check: ein Save läuft inzwischen — die Buchung wird
+      // nicht geladen. (Formularänderung ist während `editLoading`
+      // blockiert, s. `setForm`.)
+      if (this.saving() || this.formGeneration !== generationAtStart) {
+        this.editLoading.set(false);
+        this.saveStatus.set('info');
+        this.saveMessage.set(
+          'Buchung konnte nicht geladen werden, weil sich der Zustand geändert hat. Nochmal versuchen.',
+        );
+        return;
+      }
+      this.editLoading.set(false);
+      this.editingBookingId.set(bookingId);
+      this.editBannerText.set(
+        `Buchung vom ${booking.date} · ${formatCents(booking.totalAmountCents)} € wird bearbeitet.`,
+      );
+      // Das ursprünglich geladene Formular wird parallel zum
+      // Bearbeiten-Formular aufbewahrt (Review R3, P2): `toLocalInput`
+      // leitet beim Speichern den Steuername für unveränderte
+      // Steuerkategorien aus diesem Original ab, nicht aus dem
+      // (möglicherweise umbenannten) aktuellen Snapshot.
+      const loaded = fromBookingDetail(booking);
+      this.originalForm.set(loaded);
+      this.commitForm(loaded);
+      this.saveStatus.set('idle');
+      this.saveMessage.set(null);
+    } catch (e) {
+      // DB-/Ladefehler (Review R3, P2): Edit-Modus abgebrochen,
+      // Fehler sichtbar, Save bleibt gesperrt — kein stiller
+      // Moduswechsel auf Neuerfassung.
+      this.editLoading.set(false);
+      this.editLoadFailed.set(true);
       this.saveStatus.set('error');
-      this.saveMessage.set('Buchung nicht gefunden oder nicht in der Outbox.');
-      return;
+      this.saveMessage.set(
+        `Buchung mit ID ${bookingId} konnte nicht geladen werden: ${describeError(e)}`,
+      );
     }
-    // In-Flight-Check: Formular wurde zwischen Start und Lade-Antwort
-    // geändert oder ein Save läuft — die Buchung wird nicht geladen.
-    if (this.saving() || this.formGeneration !== generationAtStart) {
-      return;
-    }
-    this.editingBookingId.set(bookingId);
-    this.editBannerText.set(
-      `Buchung vom ${booking.date} · ${formatCents(booking.totalAmountCents)} € wird bearbeitet.`,
-    );
-    // Das ursprünglich geladene Formular wird parallel zum Bearbeiten-
-    // Formular aufbewahrt (Review R3, P2): `toLocalInput` leitet beim
-    // Speichern den Steuername für unveränderte Steuerkategorien aus
-    // diesem Original ab, nicht aus dem (möglicherweise umbenannten)
-    // aktuellen Snapshot.
-    const loaded = fromBookingDetail(booking);
-    this.originalForm.set(loaded);
-    this.setForm(loaded);
-    this.saveStatus.set('idle');
-    this.saveMessage.set(null);
+  }
+
+  /**
+   * Bewusste Rückkehr zur Neuerfassung nach fehlgeschlagenem
+   * Edit-Load (Review R3, P2): die Route ohne `bookingId` erzeugt
+   * eine frische Komponente — der abgebrochene Edit-Zustand (und
+   * die Fehlermeldung) verschwindet.
+   */
+  goToNewEntry(): void {
+    this.router.navigate(['/erfassen']);
   }
 
   /**
@@ -513,7 +640,7 @@ export class EntryComponent implements OnInit {
     // dem Speichern — eine zwischenzeitlich gestartete asynchrone
     // Operation erkennt die geänderte Generation.
     this.formGeneration += 1;
-    this.form.set({ ...createDefaultForm(todayInBerlin()), accountId });
+    this.commitForm({ ...createDefaultForm(todayInBerlin()), accountId });
     this.saveStatus.set('idle');
     this.saveMessage.set(null);
   }
@@ -574,6 +701,14 @@ export class EntryComponent implements OnInit {
     if (this.saving()) {
       this.saveStatus.set('error');
       this.saveMessage.set('Speichern läuft gerade — Entwurf wird nicht geladen.');
+      return;
+    }
+    // Edit-Modus (Review R3, P2): während Edit-Load bzw. nach
+    // fehlgeschlagenem Edit-Load gehört das Formular zur Buchung —
+    // Entwürfe sind gesperrt.
+    if (this.editLoading() || this.editLoadFailed()) {
+      this.saveStatus.set('info');
+      this.saveMessage.set('Aktion gesperrt — Ändern-Modus ist aktiv.');
       return;
     }
     // Batch E (Design D10): während einer Bearbeitung gehört das

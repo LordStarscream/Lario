@@ -64,9 +64,17 @@ export interface EntryTaxModel {
 
 /** Ein Split im Formular (Formular-ID `id`, kein Fach-UUID). */
 export interface EntrySplitModel {
-  /** Formular-interne ID (z. B. "s1"); wird beim Speichern ersetzt. */
+  /**
+   * Unveränderliche, eindeutige interne Identität (Review R4, P2):
+   * innerhalb einer Bearbeitung nie wieder verworfen und keine
+   * wiederverwendete ID. `toLocalInput` ordnet die Original-
+   * Metadaten (gespeicherter Steuername) über diese ID zu — nicht
+   * über die Array-Position. Wird beim Speichern durch
+   * `normalizeSplitIds` ersetzt.
+   */
   id: string;
-  /** Stabile Position im Split-Array (Sortierung, Zuordnung). */
+  /** Positions-Key für Anzeige/Sortierung (s1, s2, …); unabhängig
+   *  von `id` neu nummeriert, wenn Splits gelöscht werden. */
   key: string;
   amountInput: string;
   poolId: string;
@@ -85,14 +93,15 @@ export interface EntryFormModel {
 }
 
 /**
- * Baut ein neues, leeres Split-Modell. `key` ist die stabile Position
- * im Split-Array (Sortierung, Zuordnung); `id` ist die
- * formular-interne ID (beim Speichern durch `normalizeSplitIds`
- * ersetzt).
+ * Baut ein neues, leeres Split-Modell. `key` ist der Positions-Key
+ * für Anzeige/Sortierung; `id` ist die unveränderliche interne
+ * Identität (Review R4, P2) — sie muss innerhalb der Bearbeitung
+ * eindeutig sein und nie wiederverwendet werden (die Komponente
+ * vergibt sie monoton steigend, s. `addSplit`).
  */
-export function createDefaultSplit(key: string): EntrySplitModel {
+export function createDefaultSplit(key: string, id: string): EntrySplitModel {
   return {
-    id: key,
+    id,
     key,
     amountInput: '',
     poolId: '',
@@ -122,6 +131,26 @@ export function todayInBerlin(): string {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Höchste Split-ID-Nummer (Review R4, P2): die Komponente vergibt
+ * neue IDs `s<nummern+1>` monoton steigend über `commitForm` —
+ * gelöschte IDs werden nicht wiederverwendet. IDs ohne `s<nummer>`-
+ * Muster werden ignoriert (eigene Entwürfe tragen immer `sN`).
+ */
+export function maxSplitIdNumber(splits: EntrySplitModel[]): number {
+  let max = 0;
+  for (const split of splits) {
+    const match = /^s(\d+)$/.exec(split.id);
+    if (match !== null) {
+      const n = Number(match[1]);
+      if (n > max) {
+        max = n;
+      }
+    }
+  }
+  return max;
+}
+
 /** Neues, leeres Formular (Standard: heute, 1 Split). */
 export function createDefaultForm(date: string): EntryFormModel {
   return {
@@ -129,7 +158,7 @@ export function createDefaultForm(date: string): EntryFormModel {
     amountInput: '',
     accountId: '',
     note: '',
-    splits: [createDefaultSplit('s1')],
+    splits: [createDefaultSplit('s1', 's1')],
   };
 }
 
@@ -347,9 +376,13 @@ export function validateEntryForm(
  *
  * @param originalModel Ändern-Modus: ursprünglich geladenes Formular
  *   (`fromBookingDetail`); `null` (Standard) = neue Eingabe/Entwurf.
- *   Die Zuordnung ist positionsbasiert — wird ein Split gelöscht,
- *   verschiebt sich die Position und die betroffenen Namen werden
- *   (sicher) aus dem Snapshot abgeleitet.
+ *   Die Original-Metadaten werden über die unveränderliche Split-ID
+ *   `s.id` zugeordnet (Review R4, P2) — nicht über die Array-Position:
+ *   die verschiebt sich, wenn Splits gelöscht werden, und bei
+ *   „Löschen + Neu-Anlegen" würde ein neuer Split sonst den
+ *   gespeicherten Steuername eines gelöschten Splits erben. Für Splits
+ *   ohne Original (frische ID) wird (sicher) aus dem Snapshot
+ *   abgeleitet.
  * @returns `null`, wenn das Formular oder der Snapshot ungültig sind
  *   (der Aufrufer prüft vorab per `validateEntryForm`).
  */
@@ -369,8 +402,7 @@ export function toLocalInput(
     return null;
   }
   const splits: LocalSplitInput[] = [];
-  for (let index = 0; index < model.splits.length; index++) {
-    const s = model.splits[index];
+  for (const s of model.splits) {
     const cents = parseAmount(s.amountInput);
     if (cents === null || cents === undefined) {
       return null;
@@ -378,11 +410,13 @@ export function toLocalInput(
     // Steuer-Name: Standard (neue Eingabe/Entwurf) = immer Snapshot —
     // der Formularname ist nur Anzeige und nicht maßgeblich (Batch D
     // Review, P2). Ändern-Modus: unveränderte Steuerkategorie (gleiche
-    // ID an gleicher Position wie im Original) → ursprünglich
-    // gespeicherter Name (Review R3, P2); geänderte/neue Kategorie →
-    // Snapshot.
+    // ID wie im Original, Zuordnung über die stabile Split-ID,
+    // Review R4, P2) → ursprünglich gespeicherter Name (Review R3,
+    // P2); geänderte/neue Kategorie → Snapshot.
     const originalSplit =
-      originalModel !== null ? originalModel.splits[index] : undefined;
+      originalModel !== null
+        ? originalModel.splits.find((os) => os.id === s.id)
+        : undefined;
     const taxCategoryId = s.tax.relevant ? s.tax.taxCategoryId : null;
     let taxCategoryName: string | null = null;
     if (taxCategoryId !== null) {

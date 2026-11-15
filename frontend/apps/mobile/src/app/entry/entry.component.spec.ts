@@ -9,8 +9,11 @@ import {
   Component,
   provideZonelessChangeDetection,
 } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import {
+  ComponentFixture,
+  TestBed,
+} from '@angular/core/testing';
+import { ActivatedRoute, provideRouter } from '@angular/router';
 import {
   capacitorSqliteMockFactory,
   dbState,
@@ -440,6 +443,36 @@ describe('EntryComponent', () => {
     expect(comp.form().splits.map((s) => s.amountInput)).toEqual([
       '10,00',
       '15', // formatCents(1500): ganze Euro ohne Cent-Anteil
+    ]);
+  });
+
+  it('Split-IDs: monoton steigend, keine Wiederverwendung nach Löschen (Review R4, P2)', async () => {
+    const { comp } = await createLoaded(testSnapshot());
+    expect(comp.form().splits.map((s) => s.id)).toEqual(['s1']);
+
+    comp.addSplit();
+    comp.addSplit();
+    expect(comp.form().splits.map((s) => [s.id, s.key])).toEqual([
+      ['s1', 's1'],
+      ['s2', 's2'],
+      ['s3', 's3'],
+    ]);
+
+    // Löschen: Positions-Keys werden neu nummeriert, IDs bleiben.
+    comp.removeSplit('s1');
+    expect(comp.form().splits.map((s) => [s.id, s.key])).toEqual([
+      ['s2', 's1'],
+      ['s3', 's2'],
+    ]);
+
+    // Neuer Split: frische ID s4 — NICHT s1 (gelöschte ID wird nicht
+    // wiederverwendet), Positions-Key s3.
+    comp.addSplit();
+    const splits = comp.form().splits;
+    expect(splits.map((s) => [s.id, s.key])).toEqual([
+      ['s2', 's1'],
+      ['s3', 's2'],
+      ['s4', 's3'],
     ]);
   });
 
@@ -1085,6 +1118,192 @@ describe('EntryComponent — Edit-Mode (Batch E, Design D10)', () => {
 
     expect(comp.editMode()!.bookingId).toBe(b1);
     expect(comp.saveMessage()).toMatch(/bereits bearbeitet/i);
+  });
+
+  /**
+   * Review R3, P2 — Regression-Setup: startet `/erfassen/:bookingId`
+   * mit der echten `ngOnInit`-Reihenfolge, aber einer angehaltenen
+   * `BookingsRepository.get()`-Antwort (Promise-Gate). Die Komponente
+   * sieht nur den proxied Repository; `release()` lässt die Antwort
+   * eintreffen (`getBehavior` steuert Resolve/Reject).
+   */
+  async function createGatedEditLoad(
+    getBehavior: 'resolve' | 'reject',
+  ): Promise<{
+    comp: EntryComponent;
+    fixture: ComponentFixture<TestHostComponent>;
+    bookingId: string;
+    operationId: string;
+    release: () => void;
+  }> {
+    dbState.reset();
+    // Mutabler Routen-Parameter: die Buchung wird erst nach dem
+    // Modul-Setup gesamt, dann wird die ID in die Route geschrieben.
+    let routeBookingId: string | null = null;
+    let releaseGate: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    TestBed.configureTestingModule({
+      imports: [TestHostComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: {
+              paramMap: {
+                get: (name: string) =>
+                  name === 'bookingId' ? routeBookingId : null,
+              },
+            },
+          },
+        },
+        // Repository-Umschreibung: dieselbe echte Implementierung,
+        // aber `get` von einem Promise-Gate angehalten (Review R3,
+        // P2). Die Factory läuft im Injection-Kontext — die
+        // `inject()`-Field-Initialisatoren des Repositories auflösen
+        // sich wie üblich.
+        {
+          provide: BookingsRepository,
+          useFactory: () => {
+            const real = new BookingsRepository();
+            return new Proxy(real, {
+              get(target, prop) {
+                if (prop === 'get') {
+                  return (id: string) =>
+                    gate.then(() => {
+                      if (getBehavior === 'reject') {
+                        throw new Error('SQLite offline');
+                      }
+                      return (target as BookingsRepository).get(id);
+                    });
+                }
+                const value = (
+                  target as unknown as Record<string | symbol, unknown>
+                )[prop];
+                return typeof value === 'function'
+                  ? value.bind(target)
+                  : value;
+              },
+            });
+          },
+        },
+      ],
+    });
+    const db = TestBed.inject(LocalDatabase);
+    await db.init();
+    const snapshot = testSnapshot();
+    await TestBed.inject(SnapshotRepository).replace(
+      {
+        accounts: new Map(snapshot.accounts.map((a) => [a.id, a])),
+        pools: new Map(snapshot.pools.map((p) => [p.id, p])),
+        categories: new Map(snapshot.categories.map((c) => [c.id, c])),
+        taxCategories: new Map(
+          snapshot.taxCategories.map((t) => [t.id, t]),
+        ),
+      },
+      '2026-10-01T00:00:00Z',
+    );
+
+    // Wartende Buchung anlegen (über den Proxy — `save` ist nicht
+    // angehalten):
+    const repo = TestBed.inject(BookingsRepository);
+    const saved = await repo.save(baseInput as never, new Date());
+    routeBookingId = saved.bookingId;
+    const operationId = [...dbState.outbox.values()][0].operation_id;
+
+    const fixture = TestBed.createComponent(TestHostComponent);
+    const comp = fixture.debugElement.children[0]
+      .componentInstance as EntryComponent;
+    return {
+      comp,
+      fixture,
+      bookingId: saved.bookingId,
+      operationId,
+      release: () => releaseGate!(),
+    };
+  }
+
+  it('Review R3, P2: Eingabe/Save/Draft-Load während Edit-Load blockiert — danach update(A) mit gleicher Operation-ID', async () => {
+    const { comp, bookingId, operationId, release } =
+      await createGatedEditLoad('resolve');
+
+    // Echte ngOnInit-Pfad starten (nicht awaiten: get(A) angehalten).
+    const init = comp.ngOnInit();
+    // Routenabsicht synchron erfasst — vor dem ersten await:
+    expect(comp.editLoading()).toBe(true);
+    expect(comp.editMode()).toBeNull();
+
+    // Eingabe während des Ladens: blockiert (Formular unverändert).
+    comp.updateSplit('s1', { amountInput: '5' });
+    expect(comp.form().splits[0].amountInput).toBe('');
+
+    // Save während des Ladens: blockiert (keine neue Operation).
+    await comp.save();
+    expect(comp.saveStatus()).toBe('idle');
+    expect([...dbState.outbox.values()]).toHaveLength(1);
+
+    // Draft-Load während des Ladens: blockiert.
+    await comp.loadDraft();
+    expect(comp.saveMessage()).toMatch(/Aktion gesperrt/i);
+    expect(comp.form().splits[0].amountInput).toBe('');
+
+    // Antwort freigeben → Ändern-Modus aktiv, Formular befüllt:
+    release();
+    await init;
+    expect(comp.editLoading()).toBe(false);
+    expect(comp.editMode()!.bookingId).toBe(bookingId);
+    expect(comp.form().amountInput).toBe('30');
+    // (DOM-Prüfung der Lade-Hinweise entfällt: mit Zoneless-CD + OnPush
+    // sind negative `@if`-DOM-Übergänge im Test unsicher; der Zustand
+    // ist über die Signale oben verifiziert.)
+
+    // Jetzt: fachlich unbeteiligte Korrektur + Save → `update(A)` mit
+    // derselben Operation-ID (keine Neueingabe/keine zweite Outbox-Zeile):
+    comp.updateField({ note: 'Korrektur' });
+    await comp.save();
+    expect(comp.saveStatus()).toBe('saved');
+    expect(comp.saveMessage()).toBe('Änderungen gespeichert.');
+    expect(comp.editMode()).toBeNull();
+    const rows = [...dbState.outbox.values()];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].operation_id).toBe(operationId);
+    expect(rows[0].booking_id).toBe(bookingId);
+  });
+
+  it('Review R3, P2: get()-Fehler beim Edit-Load → klarer Fehler, kein Save, keine unbehandelte Rejection', async () => {
+    const { comp, fixture, release } = await createGatedEditLoad('reject');
+
+    const init = comp.ngOnInit();
+    expect(comp.editLoading()).toBe(true);
+
+    // Die Rejection wird behandelt — `init` löst auf (keine
+    // unbehandelte Promise-Rejection):
+    release();
+    await init;
+
+    expect(comp.editLoading()).toBe(false);
+    expect(comp.editMode()).toBeNull();
+    expect(comp.saveStatus()).toBe('error');
+    expect(comp.saveMessage()).toMatch(/nicht geladen/i);
+    expect(comp.saveMessage()).toContain('SQLite offline');
+
+    // Save bleibt gesperrt, bis der Nutzer bewusst zur Neuerfassung
+    // wechselt (frische Komponente ohne Routen-Parameter):
+    await comp.save();
+    expect(comp.saveStatus()).toBe('error');
+    expect(comp.saveMessage()).toMatch(/Neuerfassung/i);
+    expect([...dbState.outbox.values()]).toHaveLength(1);
+
+    // Der Fehlerblock ist im DOM sichtbar:
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid=entry-edit-load-failed]',
+      ),
+    ).not.toBeNull();
   });
 
   it('App-Start mit vorhandenem Entwurf → Hinweis, laden mit loadDraft', async () => {
