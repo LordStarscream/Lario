@@ -504,8 +504,8 @@ grün, keine Dependency-Änderung.
 
 ## Review-Nachgang — R3 P2 (stiller Moduswechsel) + R4 P2 (Split-ID-Wiederverwendung) — fertig (15. Nov. 2026)
 
-Commit `307f115` auf `step/8e-ui`, gepusht (PR #20, Head jetzt `307f115`, wartet
-auf Nutzer-Merge). Betroffen: 6 Files (entry-form.model + spec, entry.component
+Commit `307f115` auf `step/8e-ui`; **PR #20 am 15. Nov. 2026 gemerged → main
+`85e5925`** (Merge-Commit `85e5925`). Betroffen: 6 Files (entry-form.model + spec, entry.component
 + spec, entry.html, app.spec).
 
 **R3 P2 — `/erfassen/:id` mit fehlgeschlagenem Edit-Load:**
@@ -546,7 +546,9 @@ alles Bestehende unverändert grün), `build:mobile` grün, Nachlauf mit leerem
 Build-Cache grün.
 
 Offen (unverändert): Geräte-Abnahme Schritt 8 (kein Gerät verfügbar); kein
-Senden in Schritt 8 (Schritt 9). PR #20 wartet auf Nutzer-Merge.
+Senden in Schritt 8 (Schritt 9). PR #20 gemerged (15. Nov. 2026, main
+`85e5925`) — alle Batches A–E sind in main; nächster Folgeschritt ist Schritt 9
+(Synchronisation) nach der Geräte-Abnahme.
 
 ## Abnahmekriterien (konkret übersetzt)
 
