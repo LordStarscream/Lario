@@ -1,10 +1,10 @@
 # Schritt 9 — Synchronisation neuer Ausgaben
 
-**Status:** aktiv (Branch `step/9-sync-neue-ausgaben`, neu ab `origin/main` `85e5925` = PR #20, 18.11.2026) — **Achtung Git-Zustand:** die A1-/A2-Änderungen liegen im Worktree als **uncommittete Änderungen** (die früheren Commits `9468e28`/`328972b` sind verwaist — kein Branch enthält sie); Commit-Strategie (A1/A2 neu getrennt committen + Changelog-Fix, oder anders) ist mit dem Nutzer zu klären. Offen: Desktop-UI „Verbundene Geräte" + Batch B (Mobile Sync) + Batch C (Integration/Abnahme).
+**Status:** aktiv (Branch `step/9-sync-neue-ausgaben`, neu ab `origin/main` `85e5925` = PR #20, 18.11.2026) — A1 (Host-Protokoll) + Changelog-Fix in `4b8c64a`, A2 (Mobile-DB-Ebene) in `91ba0cf`, Outbox-Zustandsmaschine `queued→sending→confirmed|rejected` + Hash-gebundene Quittung in `a631ab1`, regenerierte OpenAPI-Clients (Sync-Vertrag mit `cursor`/`already_processed`/`ack`) in `f5392fc`. Review-Runde (LordStarscream, 18.11., 3 Befunde P1/P1/P2 auf Stand `7564bfd`): Client-Vertrag durch `f5392fc` abgestimmt, Quittungsbindung und `confirmed`-Schutz durch `a631ab1` auf DB-Ebene (CAS + Payload-Hash, 22 node:sqlite-Tests). Offen: Desktop-UI „Verbundene Geräte" + Batch B-Rest (SyncService, Setup-Pairing, Sync-UI, D8-SyncService-Tests) + Batch C (E2E-Smoke, Abnahmedoku).
 
 **Host-Vertrag (maßgeblich, aus Batch A1 — weicht stellenweise von D5/D6 oben ab):**
-- Push-Antwort: `{status: 'accepted'|'duplicate', bookingId, protocolGeneration}` (nicht `already_processed`); 409 `payload_mismatch` als ErrorResponse.
-- Pull: `GET /api/v1/sync/changes?after=<cursor>&limit=<n>` → `{cursor, complete, truncated, changes:[{id, dbGeneration, entityType, entityId, revision, occurredAtUtc}]}`.
+- Push-Antwort: `{status: 'accepted' | 'already_processed', bookingId, protocolGeneration, revision, ack}` (`ack: true` = einzige Quittungsquelle); 409 `payload_mismatch` als ErrorResponse.
+- Pull: `GET /api/v1/sync/changes?cursor=<n>&limit=<n>` (Default 0) → `{cursor, complete, truncated, changes:[{id, dbGeneration, entityType, entityId, revision, occurredAtUtc}]}`.
 - Bootstrap: `POST /api/v1/sync/bootstrap` → `{protocolGeneration, dbGeneration, cursor, accounts, pools, categories, taxCategories}`.
 - Pair: `POST /api/v1/sync/pair` Body `{name}` → `DeviceDto {id, name, token, createdAtUtc, revokedAtUtc, lastUsedAtUtc}`; Geräte-Liste `GET /devices` (token leer), Widerruf `DELETE /devices/{id}` (idempotent, 204).
 - Sync-Endpunkte akzeptieren **nur** Gerätetokens (Session-Token → 401).
@@ -14,8 +14,9 @@
 - Cursor/Generationen in Meta: `sync.cursor`, `sync.db_generation`, `sync.protocol_generation`; letzter Sync `sync.last_sync_at`.
 - Pairing läuft im Setup-Fluss nach Login+Listen (Fehler dort = Setup-Fehler, sichtbar); bei erneutem Setup koppelt die App neu (D1 bleibt bestehen).
 - Sync-UI: Statuszeile + Button „Synchronisieren“ im **Eingaben-Tab** (D7); Setup zeigt Geräteinfo (Name, ID).
-- Sync-Reihenfolge pro Start: (1) kein lokaler Cursor oder Generation-Wechsel → Bootstrap; (2) Push aller queued (sequenziell); (3) Pull `changes?after=`; (4) Cursor erst nach lokaler atomarer Übernahme.
+- Sync-Reihenfolge pro Start: (1) kein lokaler Cursor oder Generation-Wechsel → Bootstrap; (2) Push aller queued (sequenziell); (3) Pull `changes?cursor=`; (4) Cursor erst nach lokaler atomarer Übernahme.
 - `outbox.status_reason TEXT NULL` (Migration via `PRAGMA table_info` + `ALTER TABLE` in `LocalDatabase.doInit`); `update()`/`discard()` akzeptieren `queued` und `rejected` (D7); `confirmed` bleibt gesperrt.
+- Outbox-Zustandsmaschine (Review-Nachgang, `a631ab1`): `prepareSend(operationId, payloadHash)` friert den Inhalt ein (CAS `queued→sending`; bereits `sending` → eingefrorener Inhalt bleibt unverändert); `markConfirmed`/`markRejected` nur aus `sending` und nur mit dem Hash des gesendeten Inhalts (Abweichung → `payload_conflict`, kein Statuswechsel); `update()`/`discard()` verweigern `sending`; Wiederholung nach unklarem Ergebnis sendet denselben Inhalt + dieselbe ID (idempotent, keine Wiederverwendung). 22 Tests gegen echte SQLite (`node:sqlite`).
 - `bookings.base_revision` wird bei Quittung aus der Push-Antwort (`protocolGeneration` = Basisrevision des Hosts) gesetzt.
 **Plan:** `docs/Finanzplanung_Implementierungsplan.md` §5 „Schritt 9“; Protokollgrundsätze:
 `docs/Finanzplanung_Architektur_und_Umsetzungsplan.md` §6, `docs/step-0/rechenvertrag.md` §5.4/§5.5,
@@ -289,11 +290,15 @@ prüfen + Idempotenz + Widerruf. (Browser-/Host-Smoke ≠ Android-Geräte-Abnahm
   Bestätigung, Route `/geraete`) + OpenAPI neu generieren (Sync-Endpoints
   fehlen noch in `frontend/openapi.json` — **erledigt 16.11.2026**: Host
   gestartet, Dokument gezogen, Clients für host+mobile regeneriert).
-- **B — Mobile Sync** (SyncService, Sync-Repository-Methoden (Cursor/Generationen
-  in Meta, Snapshot-Replace atomar), Outbox-Status `rejected` + Spalte
-  `status_reason`, `update`/`discard` auf `rejected`, HostClient-Erweiterung
-  (pair/bootstrap/push/changes), Setup-Erweiterung (Pair), Sync-UI +
-  Eingaben-UI `rejected`, mobile Tests D8-Mobile).
+- **B — Mobile Sync** — **teilweise fertig:** Mobile-DB-Ebene (`91ba0cf`):
+  Outbox-Status `rejected` + Spalte `status_reason`, `update`/`discard` auf
+  `rejected`; Outbox-Zustandsmaschine `sending` + Hash-gebundene Quittung
+  (`a631ab1`, 22 node:sqlite-Tests); regenerierte OpenAPI-Clients mit den
+  Sync-Endpunkten (`91ba0cf`, korrigiert `f5392fc`). **Offen:** SyncService
+  (Bootstrap/Push/Pull-Orchestrierung, Cursor/Generationen in Meta,
+  Snapshot-Replace atomar), Setup-Erweiterung (Pair), Sync-UI (Statuszeile +
+  Button im Eingaben-Tab) + `rejected`-Darstellung in Eingaben-Liste/Detail,
+  D8-Mobile-Tests für den SyncService-Fluss.
 - **C — Integration/Abnahme** (E2E-Smoke 20-Eingaben, Abnahmedoku
   `docs/step-9/`, Index-Update, Geräte-Abnahmen als offene Blocker dokumentiert).
 
@@ -317,9 +322,14 @@ prüfen + Idempotenz + Widerruf. (Browser-/Host-Smoke ≠ Android-Geräte-Abnahm
 
 **Neue Tests (`Step9ChangelogApiTests.cs`, 4×):** Session-Ausgabe → exakt 1 `booking`-Zeile (Revision 1, korrektes entityId); Konto via Session → 1 `account`-Zeile; 20 Sync-Pushes → 20 `booking`- + 15 Stammdaten-Zeilen, Revisionen 1–20, in Ordung, Pull danach leer; Push mit unbekanntem Konto (400) → keine Buchung, keine `booking`-Zeile (kein Phantom-Log).
 
-**Betroffen (uncommittiert, zusammen mit A1/A2):** `LarioDbContext.cs` (Fix), `Step9ChangelogApiTests.cs` (neu), `MasterDataRepository.cs` (Haken no-op), `Scratch_ChangelogCount.cs` (Beweis-Test, vor Commit ggf. in die Testklasse aufnehmen oder löschen).
+**Betroffen (committet in `4b8c64a`/`91ba0cf`):** `LarioDbContext.cs` (Fix), `Step9ChangelogApiTests.cs` (neu), `MasterDataRepository.cs` (Haken no-op); `Scratch_ChangelogCount.cs` (Beweis-Test) wurde vor dem Commit entfernt.
 
 ## Übergabe/Review
 
-- **PR #21** `step/9-sync-neue-ausgaben` → `main` (angelegt 18.11.2026, Commits `4b8c64a` A1, `91ba0cf` A2, `3d479b6` Doku); Review-Worktree nach Bedarf.
+- **PR #21** `step/9-sync-neue-ausgaben` → `main` (angelegt 18.11.2026; Head `a631ab1`: `4b8c64a` A1, `91ba0cf` A2 (Mobile-DB-Ebene), `3d479b6`+`7564bfd` Doku, `634b1f4` Vertragsdok, `f5392fc` regenerierte Clients, `a631ab1` Outbox-Zustandsmaschine).
+- **Review-Runde (LordStarscream, 18.11.2026, auf Stand `7564bfd`, 3 Befunde):**
+  1. **P1 Client-Vertrag:** generierter Client beschrieb einen anderen Vertrag (`changes?after=`, `PushResponseDto` ohne `ack`/`revision`, Status `accepted|duplicate`) als der Host (`changes?cursor=`, `SyncPushResponse` mit `ack`/`revision`, `accepted|already_processed`). **Fix `f5392fc`:** Clients aus dem aktuellen `openapi.json` regeneriert; frische Generierung erzeugt keinen Diff (verifiziert 18.11.). Regression mit echtem Host + generiertem Client = Batch-C-E2E-Smoke (offen, in PR gelistet).
+  2. **P1 Quittungsbindung:** Quittung war an die Outbox-Zeile gebunden, nicht an den gesendeten Inhalt. **Fix `a631ab1` (DB-Ebene):** `prepareSend` friert den Inhalt ein (`sending`), `markConfirmed` nur aus `sending` + nur mit Hash des gesendeten Inhalts (sonst `payload_conflict`, kein Statuswechsel); `sync-outbox.spec.ts` (22 Tests, echte SQLite via `node:sqlite`).
+  3. **P2 `confirmed`-Schutz:** `rejected` war aus jedem Status möglich. **Fix `a631ab1`:** `markRejected` nur aus `sending` (CAS + Hash); `confirmed` unveränderbar; Test vorhanden.
+  - Alle 3 Threads beantwortet und aufgelöst (18.11.2026).
 - Kein Merge ohne explizite Nutzerfreigabe.
