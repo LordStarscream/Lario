@@ -321,5 +321,5 @@ prüfen + Idempotenz + Widerruf. (Browser-/Host-Smoke ≠ Android-Geräte-Abnahm
 
 ## Übergabe/Review
 
-- PR `step/9-sync-neue-ausgaben` → `main`; Review-Worktree nach Bedarf.
+- **PR #21** `step/9-sync-neue-ausgaben` → `main` (angelegt 18.11.2026, Commits `4b8c64a` A1, `91ba0cf` A2, `3d479b6` Doku); Review-Worktree nach Bedarf.
 - Kein Merge ohne explizite Nutzerfreigabe.
