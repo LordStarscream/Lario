@@ -2,12 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { BootstrapSnapshotDto } from '../models/BootstrapSnapshotDto';
+import type { BootstrapResponseDto } from '../models/BootstrapResponseDto';
 import type { DeviceDto } from '../models/DeviceDto';
 import type { PairDeviceRequest } from '../models/PairDeviceRequest';
-import type { PushResponseDto } from '../models/PushResponseDto';
-import type { SyncChangesDto } from '../models/SyncChangesDto';
-import type { SyncExpensePayload } from '../models/SyncExpensePayload';
+import type { SyncPullResponse } from '../models/SyncPullResponse';
+import type { SyncPushRequest } from '../models/SyncPushRequest';
+import type { SyncPushResponse } from '../models/SyncPushResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -60,10 +60,10 @@ export class SyncEndpointsService {
         });
     }
     /**
-     * @returns BootstrapSnapshotDto OK
+     * @returns BootstrapResponseDto OK
      * @throws ApiError
      */
-    public static syncBootstrap(): CancelablePromise<BootstrapSnapshotDto> {
+    public static syncBootstrap(): CancelablePromise<BootstrapResponseDto> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/sync/bootstrap',
@@ -74,12 +74,12 @@ export class SyncEndpointsService {
     }
     /**
      * @param requestBody
-     * @returns PushResponseDto OK
+     * @returns SyncPushResponse OK
      * @throws ApiError
      */
     public static syncPush(
-        requestBody?: (null | SyncExpensePayload),
-    ): CancelablePromise<PushResponseDto> {
+        requestBody?: (null | SyncPushRequest),
+    ): CancelablePromise<SyncPushResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/sync/push',
@@ -92,20 +92,20 @@ export class SyncEndpointsService {
         });
     }
     /**
-     * @param after
+     * @param cursor
      * @param limit
-     * @returns SyncChangesDto OK
+     * @returns SyncPullResponse OK
      * @throws ApiError
      */
     public static syncGetChanges(
-        after: number | string,
+        cursor: number | string,
         limit: number | string,
-    ): CancelablePromise<SyncChangesDto> {
+    ): CancelablePromise<SyncPullResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/v1/sync/changes',
             query: {
-                'after': after,
+                'cursor': cursor,
                 'limit': limit,
             },
             errors: {

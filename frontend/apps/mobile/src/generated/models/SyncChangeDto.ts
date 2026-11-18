@@ -7,6 +7,5 @@ export type SyncChangeDto = {
     entityType: string;
     entityId: string;
     revision: number | string;
-    occurredAtUtc: string;
 };
 

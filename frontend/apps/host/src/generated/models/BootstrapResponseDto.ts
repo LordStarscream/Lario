@@ -6,9 +6,9 @@ import type { AccountDto } from './AccountDto';
 import type { CategoryDto } from './CategoryDto';
 import type { PoolDto } from './PoolDto';
 import type { TaxCategoryDto } from './TaxCategoryDto';
-export type BootstrapSnapshotDto = {
-    protocolGeneration: number | string;
+export type BootstrapResponseDto = {
     dbGeneration: number | string;
+    protocolGeneration: number | string;
     cursor: number | string;
     accounts: Array<AccountDto>;
     pools: Array<PoolDto>;

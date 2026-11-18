@@ -6,7 +6,7 @@
   },
   "servers": [
     {
-      "url": "http://127.0.0.1:8080/"
+      "url": "http://localhost:8080/"
     }
   ],
   "paths": {
@@ -1214,6 +1214,9 @@
           }
         ],
         "responses": {
+          "204": {
+            "description": "No Content"
+          },
           "400": {
             "description": "Bad Request",
             "content": {
@@ -1239,7 +1242,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BootstrapSnapshotDto"
+                  "$ref": "#/components/schemas/BootstrapResponseDto"
                 }
               }
             }
@@ -1272,7 +1275,7 @@
                     "type": "null"
                   },
                   {
-                    "$ref": "#/components/schemas/SyncExpensePayload"
+                    "$ref": "#/components/schemas/SyncPushRequest"
                   }
                 ]
               }
@@ -1285,7 +1288,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PushResponseDto"
+                  "$ref": "#/components/schemas/SyncPushResponse"
                 }
               }
             }
@@ -1321,7 +1324,7 @@
         "operationId": "syncGetChanges",
         "parameters": [
           {
-            "name": "after",
+            "name": "cursor",
             "in": "query",
             "required": true,
             "schema": {
@@ -1353,7 +1356,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SyncChangesDto"
+                  "$ref": "#/components/schemas/SyncPullResponse"
                 }
               }
             }
@@ -3178,10 +3181,10 @@
           }
         }
       },
-      "BootstrapSnapshotDto": {
+      "BootstrapResponseDto": {
         "required": [
-          "protocolGeneration",
           "dbGeneration",
+          "protocolGeneration",
           "cursor",
           "accounts",
           "pools",
@@ -3190,7 +3193,7 @@
         ],
         "type": "object",
         "properties": {
-          "protocolGeneration": {
+          "dbGeneration": {
             "pattern": "^-?(?:0|[1-9]\\d*)$",
             "type": [
               "integer",
@@ -3198,7 +3201,7 @@
             ],
             "format": "int64"
           },
-          "dbGeneration": {
+          "protocolGeneration": {
             "pattern": "^-?(?:0|[1-9]\\d*)$",
             "type": [
               "integer",
@@ -3783,6 +3786,7 @@
           }
         }
       },
+      "JsonNode": { },
       "LoginRequest": {
         "required": [
           "username",
@@ -4068,33 +4072,6 @@
           }
         }
       },
-      "PushResponseDto": {
-        "required": [
-          "status",
-          "bookingId",
-          "protocolGeneration"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "bookingId": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "protocolGeneration": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          }
-        }
-      },
       "ReassignmentCommand": {
         "required": [
           "id",
@@ -4352,8 +4329,7 @@
           "id",
           "entityType",
           "entityId",
-          "revision",
-          "occurredAtUtc"
+          "revision"
         ],
         "type": "object",
         "properties": {
@@ -4378,14 +4354,10 @@
               "string"
             ],
             "format": "int32"
-          },
-          "occurredAtUtc": {
-            "type": "string",
-            "format": "date-time"
           }
         }
       },
-      "SyncChangesDto": {
+      "SyncPullResponse": {
         "required": [
           "cursor",
           "complete",
@@ -4416,17 +4388,13 @@
           }
         }
       },
-      "SyncExpensePayload": {
+      "SyncPushRequest": {
         "required": [
           "operationId",
           "type",
-          "bookingId",
-          "date",
-          "totalAmountCents",
-          "accountId",
-          "note",
-          "splits",
-          "expectedBaseRevision"
+          "payload",
+          "payloadHash",
+          "createdAtUtc"
         ],
         "type": "object",
         "properties": {
@@ -4442,150 +4410,64 @@
               "string"
             ]
           },
-          "bookingId": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "date": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "totalAmountCents": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "accountId": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "note": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "splits": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/SyncExpenseSplitPayload"
-            }
-          },
-          "expectedBaseRevision": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "SyncExpenseSplitPayload": {
-        "required": [
-          "id",
-          "amountCents",
-          "poolId",
-          "categoryId",
-          "note",
-          "tax"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "amountCents": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "poolId": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "categoryId": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "note": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "tax": {
+          "payload": {
             "oneOf": [
               {
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SyncTaxMarkingPayload"
+                "$ref": "#/components/schemas/JsonNode"
               }
             ]
-          }
-        }
-      },
-      "SyncTaxMarkingPayload": {
-        "required": [
-          "relevant",
-          "taxCategoryId",
-          "markedAmountCents",
-          "note"
-        ],
-        "type": "object",
-        "properties": {
-          "relevant": {
-            "type": [
-              "null",
-              "boolean"
-            ]
           },
-          "taxCategoryId": {
+          "payloadHash": {
             "type": [
               "null",
               "string"
             ]
           },
-          "markedAmountCents": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
+          "createdAtUtc": {
             "type": [
               "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "SyncPushResponse": {
+        "required": [
+          "status",
+          "bookingId",
+          "protocolGeneration",
+          "revision",
+          "ack"
+        ],
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "bookingId": {
+            "type": "string"
+          },
+          "protocolGeneration": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
               "integer",
               "string"
             ],
             "format": "int64"
           },
-          "note": {
+          "revision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
             "type": [
-              "null",
+              "integer",
               "string"
-            ]
+            ],
+            "format": "int32"
+          },
+          "ack": {
+            "type": "boolean"
           }
         }
       },

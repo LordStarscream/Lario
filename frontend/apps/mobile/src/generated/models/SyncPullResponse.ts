@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { SyncChangeDto } from './SyncChangeDto';
-export type SyncChangesDto = {
+export type SyncPullResponse = {
     cursor: number | string;
     complete: boolean;
     truncated: boolean;
