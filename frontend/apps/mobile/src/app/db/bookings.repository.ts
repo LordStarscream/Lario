@@ -22,6 +22,7 @@ import {
   SnapshotRepository,
 } from './snapshot.repository';
 import {
+  COUNT_OUTBOX_QUEUED,
   DELETE_BOOKING,
   DELETE_OUTBOX,
   DELETE_SPLITS,
@@ -31,9 +32,13 @@ import {
   SELECT_BOOKING_BY_ID,
   SELECT_BOOKING_LIST,
   SELECT_OUTBOX_BY_BOOKING,
+  SELECT_OUTBOX_QUEUED,
   SELECT_SPLITS_BY_BOOKING,
   UPDATE_BOOKING,
+  UPDATE_BOOKING_BASE_REVISION,
+  UPDATE_OUTBOX_CONFIRMED,
   UPDATE_OUTBOX_PAYLOAD,
+  UPDATE_OUTBOX_REJECTED,
   selectMetaSet,
   upsertMetaSet,
 } from './statements';
@@ -77,8 +82,10 @@ function newId(): string {
  * Haupt-Batch; sie gehört nicht zum D7-Batch (Buchung + Splits +
  * Outbox + Zähler).
  *
- * Nur `queued`-Buchungen dürfen geändert oder verworfen werden — der
- * Host hat die Operation dann nie gesehen (Design D4).
+ * Nur `queued`- und `rejected`-Buchungen dürfen geändert oder
+ * verworfen werden (Schritt 9, Design D7) — der Host hat die Operation
+ * dann nie angenommen. `confirmed` bleibt gesperrt (Korrektur ist
+ * Schritt 10).
  */
 
 /** Validierungsfehler: `reason` maschinell unterscheidbar. */
@@ -122,6 +129,9 @@ export class BookingStateError extends Error {
   }
 }
 
+/** Outbox-Status einer lokalen Ausgabe. */
+export type LocalOutboxStatus = 'queued' | 'confirmed' | 'rejected' | 'unknown';
+
 /** Eintrag der Eingaben-Liste (Design D2, Outbox-Status mitgeführt). */
 export interface LocalBookingListItem {
   bookingId: string;
@@ -129,8 +139,10 @@ export interface LocalBookingListItem {
   totalAmountCents: number;
   accountId: string;
   note: string | null;
-  /** `queued`/`confirmed` aus der Outbox; `unknown` ohne Outbox-Zeile. */
-  status: 'queued' | 'confirmed' | 'unknown';
+  /** `queued`/`confirmed`/`rejected` aus der Outbox; `unknown` ohne Outbox-Zeile. */
+  status: LocalOutboxStatus;
+  /** Ablehnungsgrund aus dem Host (nur bei `rejected`, sonst null). */
+  statusReason: string | null;
   /** Technischer UTC-Zeitpunkt der Anlage (Liste-Sortierung, P5). */
   createdAtUtc: string;
   /**
@@ -170,8 +182,27 @@ export interface LocalBookingDetail {
   totalAmountCents: number;
   note: string | null;
   createdAtUtc: string;
-  status: 'queued' | 'confirmed' | 'unknown';
+  status: LocalOutboxStatus;
+  /** Ablehnungsgrund aus dem Host (nur bei `rejected`, sonst null). */
+  statusReason: string | null;
   splits: LocalBookingSplit[];
+}
+
+/**
+ * Outbox-Eintrag im Sync-Zustand (Schritt 9, Design D5/D6). `payloadJson`
+ * ist das lokale ExpenseCommand-JSON (siehe `expense-payload.ts`); der
+ * SyncService bildet es auf die `SyncExpensePayload` des Hosts ab.
+ */
+export interface QueuedSyncOperation {
+  operationId: string;
+  deviceId: string;
+  /** Operationstyp (Schritt 9: immer `expense`). */
+  type: string;
+  bookingId: string;
+  payloadJson: string;
+  payloadHash: string;
+  expectedBaseRevision: number | null;
+  createdAtUtc: string;
 }
 
 /** `yyyy-MM-dd` und echtes Kalendertag (z. B. `2026-02-30` ungültig). */
@@ -283,8 +314,12 @@ function parsePoolIds(value: unknown): string[] {
 }
 
 /** Outbox-Status aus der Join-Zeile (null → unknown). */
-function mapOutboxStatus(status: unknown): 'queued' | 'confirmed' | 'unknown' {
-  if (status === 'queued' || status === 'confirmed') {
+function mapOutboxStatus(status: unknown): LocalOutboxStatus {
+  if (
+    status === 'queued' ||
+    status === 'confirmed' ||
+    status === 'rejected'
+  ) {
     return status;
   }
   return 'unknown';
@@ -442,7 +477,7 @@ export class BookingsRepository {
     // Outbox-Payload aktualisieren. Keine Zähler-Änderung —
     // operationId bleibt.
     await this.db.withWriteTransaction(async (tx) => {
-      const { operationId } = await this.loadQueued(bookingId, tx);
+      const { operationId } = await this.loadEditable(bookingId, tx);
       await tx.executeSet([
         {
           statement: UPDATE_BOOKING,
@@ -455,23 +490,32 @@ export class BookingsRepository {
         })),
         {
           statement: UPDATE_OUTBOX_PAYLOAD,
-          values: [payload, hash, nowIso, operationId, 'queued'],
+          values: [
+            payload,
+            hash,
+            'queued',
+            nowIso,
+            operationId,
+            'queued',
+            'rejected',
+          ],
         },
       ]);
     });
   }
 
   /**
-   * Queued-Ausgabe verwerfen (Design D4): Buchung + Splits + Outbox in
-   * EINER Transaktion löschen. Der Zähler wird NICHT zurückgesetzt
-   * (Operation-IDs bleiben eindeutig). Nicht queued → `not_queued`.
+   * Queued-/Rejected-Ausgabe verwerfen (Design D4/D7): Buchung +
+   * Splits + Outbox in EINER Transaktion löschen. Der Zähler wird
+   * NICHT zurückgesetzt (Operation-IDs bleiben eindeutig). Nicht
+   * änderbar (confirmed/unknown) → `not_queued`.
    */
   async discard(bookingId: string): Promise<void> {
     // Status-Prüfung und Lösch-Batch in EINER Schreibtransaktion
     // (Review-Befund P2). Explizite Lösch-Reihenfolge Splits →
     // Buchung → Outbox (Verteidigungstiefe, Design D2a).
     await this.db.withWriteTransaction(async (tx) => {
-      const { operationId } = await this.loadQueued(bookingId, tx);
+      const { operationId } = await this.loadEditable(bookingId, tx);
       await tx.executeSet([
         { statement: DELETE_SPLITS, values: [bookingId] },
         { statement: DELETE_BOOKING, values: [bookingId] },
@@ -494,6 +538,7 @@ export class BookingsRepository {
       accountId: String(row['account_id']),
       note: (row['note'] as string | null) ?? null,
       status: mapOutboxStatus(row['outbox_status']),
+      statusReason: (row['outbox_reason'] as string | null) ?? null,
       createdAtUtc: String(row['created_at_utc']),
       // `GROUP_CONCAT` liefert `null` ohne Splits; sonst
       // Kommakollation (SQLite-Standardtrenner).
@@ -531,8 +576,96 @@ export class BookingsRepository {
         outboxRows.length === 0
           ? 'unknown'
           : mapOutboxStatus(outboxRows[0]['status']),
+      statusReason:
+        outboxRows.length === 0
+          ? null
+          : ((outboxRows[0]['status_reason'] as string | null) ?? null),
       splits: splitRows.map((row) => mapSplitRow(row)),
     };
+  }
+
+  /**
+   * Outbox-Einträge im Sync-Zustand (Schritt 9, Design D5/D6), in der
+   * Sende-Reihenfolge: `created_at_utc` aufsteigend, dann
+   * `operation_id` aufsteigend. Nur `queued` — bereits abgelehnte
+   * Einträge bleiben lokal (Design D7) und werden erst durch eine
+   * Korrektur (→ `queued`) erneut sendbar.
+   */
+  async listQueuedForSync(): Promise<QueuedSyncOperation[]> {
+    const rows = await this.db.withSerializedRead((db) =>
+      db.query<Record<string, unknown>>(SELECT_OUTBOX_QUEUED, ['queued']),
+    );
+    return rows.map((row) => ({
+      operationId: String(row['operation_id']),
+      deviceId: String(row['device_id']),
+      type: String(row['type']),
+      bookingId: String(row['booking_id']),
+      payloadJson: String(row['payload']),
+      payloadHash: String(row['payload_hash']),
+      expectedBaseRevision:
+        row['expected_base_revision'] === null ||
+        row['expected_base_revision'] === undefined
+          ? null
+          : Number(row['expected_base_revision']),
+      createdAtUtc: String(row['created_at_utc']),
+    }));
+  }
+
+  /** Anzahl der noch unsynchronisierten (`queued`) Outbox-Einträge. */
+  async countQueued(): Promise<number> {
+    const rows = await this.db.query<{ n: number }>(
+      COUNT_OUTBOX_QUEUED,
+      ['queued'],
+    );
+    return Number(rows[0]?.['n'] ?? 0);
+  }
+
+  /**
+   * Quittung nach explizitem `ack` des Hosts (Design D6/D7): Outbox-
+   * Status `confirmed` + Fachrevision (`base_revision`) aus der
+   * Push-Antwort — atomar in EINER Transaktion. Die `status = queued`
+   * -Wächter machen eine Doppel-Quittung wirkungslos (Idempotenz).
+   */
+  async markConfirmed(
+    bookingId: string,
+    operationId: string,
+    baseRevision: number,
+    now: Date,
+  ): Promise<void> {
+    await this.db.executeSet([
+      {
+        statement: UPDATE_OUTBOX_CONFIRMED,
+        values: [
+          'confirmed',
+          baseRevision,
+          now.toISOString(),
+          operationId,
+          'queued',
+        ],
+      },
+      {
+        statement: UPDATE_BOOKING_BASE_REVISION,
+        values: [baseRevision, bookingId],
+      },
+    ]);
+  }
+
+  /**
+   * Ablehnung durch den Host (400/409, Design D7): Outbox-Status
+   * `rejected` + Grund für die UI. Die Buchung bleibt lokal bestehen;
+   * über `update`/`discard` ist sie weiterhin bearbeitbar.
+   */
+  async markRejected(
+    operationId: string,
+    reason: string,
+    now: Date,
+  ): Promise<void> {
+    await this.db.executeSet([
+      {
+        statement: UPDATE_OUTBOX_REJECTED,
+        values: ['rejected', reason, now.toISOString(), operationId],
+      },
+    ]);
   }
 
   /**
@@ -601,13 +734,14 @@ export class BookingsRepository {
   }
 
   /**
-   * Buchung + Outbox-Zeile laden und prüfen, dass sie `queued` ist.
-   * Fehlende Buchung/Outbox → `not_found`; nicht queued → `not_queued`.
+   * Buchung + Outbox-Zeile laden und prüfen, dass sie änderbar ist
+   * (`queued` oder `rejected`, Design D7). Fehlende Buchung/Outbox →
+   * `not_found`; `confirmed`/`unknown` → `not_queued`.
    * Läuft innerhalb der Transaktion des Aufrufers (Review-Befund P2):
    * Status-Check und Folge-Schreib-Batch teilen dieselbe
    * Schreibtransaktion — kein Check-then-Write-Fenster in-process.
    */
-  private async loadQueued(
+  private async loadEditable(
     bookingId: string,
     tx: LocalDatabaseTransaction,
   ): Promise<{ operationId: string }> {
@@ -630,10 +764,10 @@ export class BookingsRepository {
     }
     const operationId = String(outboxRows[0]['operation_id']);
     const status = outboxRows[0]['status'];
-    if (status !== 'queued') {
+    if (status !== 'queued' && status !== 'rejected') {
       throw new BookingStateError(
         'not_queued',
-        `Buchung ${bookingId} ist ${String(status)} — nur queued darf geändert/verworfen werden`,
+        `Buchung ${bookingId} ist ${String(status)} — nur queued oder rejected darf geändert/verworfen werden`,
       );
     }
     return { operationId };
