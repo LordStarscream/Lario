@@ -374,7 +374,7 @@ public static class JournalWriteEndpoints
     /// Anwesenheit noch null-freie Elemente (System.Text.Json), daher die
     /// zentrale Prüfung vor dem Command→Spec-Mapping (Review R1 P2).
     /// </summary>
-    private static IReadOnlyList<T> RequiredList<T>(IReadOnlyList<T>? list, string field)
+    internal static IReadOnlyList<T> RequiredList<T>(IReadOnlyList<T>? list, string field)
         where T : class
     {
         if (list is null)
@@ -415,7 +415,7 @@ public static class JournalWriteEndpoints
         return list;
     }
 
-    private static ExpenseSplitSpec MapSplitSpec(ExpenseSplitCommand s) => new()
+    internal static ExpenseSplitSpec MapSplitSpec(ExpenseSplitCommand s) => new()
     {
         Id = s.Id,
         Amount = new Money(s.Amount),
@@ -438,7 +438,7 @@ public static class JournalWriteEndpoints
     /// <summary>
     /// <c>yyyy-MM-dd</c>; ungültig → 400 validation_error.
     /// </summary>
-    private static DateOnly ParseDate(string? value, string field)
+    internal static DateOnly ParseDate(string? value, string field)
     {
         if (string.IsNullOrWhiteSpace(value)
             || !DateOnly.TryParseExact(

@@ -373,7 +373,7 @@ public class Step7_5OpeningBalanceTests
         var db = new TestDatabase(migrateTo: "20261014134142_Step6CorrectionPayload");
         try
         {
-            await SeedAsync(db);
+            await SeedLegacyMasterDataAsync(db);
 
             // Legacy-Anfangsbestand ohne Pool-Verteilung (150 € unzugeordnet)
             // — wie von der alten Version gespeichert, ohne die neue Spalte.
@@ -430,7 +430,7 @@ public class Step7_5OpeningBalanceTests
         var db = new TestDatabase(migrateTo: "20261014134142_Step6CorrectionPayload");
         try
         {
-            await SeedAsync(db);
+            await SeedLegacyMasterDataAsync(db);
             await InsertLegacyOpeningBalanceAsync(db, "init-old", Haupt, 100_000, new DateOnly(2026, 1, 1));
             await InsertLegacyOpeningBalanceAsync(db, "init-new", Haupt, 40_000, new DateOnly(2026, 2, 1));
 
@@ -502,6 +502,35 @@ public class Step7_5OpeningBalanceTests
         await admin.CreatePoolAsync(Flex, "Flex");
         await admin.CreatePoolAsync(PoolFreizeit, "Freizeit");
         await admin.CreateCategoryAsync("cat-1", "Lebensmittel");
+    }
+
+    /// <summary>
+    /// Dasselbe Seed wie <see cref="SeedAsync"/>, aber per rohem SQL im
+    /// Legacy-Schema (Step6): die Upgrade-Tests simulieren eine
+    /// Datenbank, die von der alten Version geschrieben wurde. Seit
+    /// Schritt 9 legt <c>MasterDataAdmin</c> zusätzlich Changelog-Zeilen
+    /// an (Tabelle <c>sync_changes</c>), die im Legacy-Schema nicht
+    /// existiert — in Produktion tritt das nie auf, weil der Host vor dem
+    /// Bedienen migriert. Die Legacy-Zeilen müssen so entstehen, wie die
+    /// alte Version sie geschrieben hätte (ohne Changelog).
+    /// </summary>
+    private static async Task SeedLegacyMasterDataAsync(TestDatabase db)
+    {
+        await using var connection = new SqliteConnection($"Data Source={db.DatabaseFile}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO Accounts (Id, Name, Type, IsInterestBearing, Status, BaseRevision)
+            VALUES ('acc-haupt', 'Hauptkonto', 'Bank', 0, 'Active', 1),
+                   ('acc-freizeit', 'Freizeitkonto', 'Bank', 0, 'Active', 1);
+            INSERT INTO Pools (Id, Name, Status, BaseRevision)
+            VALUES ('pool-flex', 'Flex', 'Active', 1),
+                   ('pool-freizeit', 'Freizeit', 'Active', 1);
+            INSERT INTO Categories (Id, ParentId, Name, Status, BaseRevision)
+            VALUES ('cat-1', NULL, 'Lebensmittel', 'Active', 1);
+            """;
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task<IReadOnlyList<string>> ColumnNamesAsync(

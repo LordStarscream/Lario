@@ -54,6 +54,8 @@ public sealed class MasterDataRepository(LarioDbContext db) : IMasterDataReposit
             tracked.BaseRevision = account.BaseRevision;
         }
 
+        // Cursor-Counter zählt der Kontext-Override mit (derselbe Save).
+        await AppendChangeAsync("account", account.Id, account.BaseRevision, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -71,6 +73,8 @@ public sealed class MasterDataRepository(LarioDbContext db) : IMasterDataReposit
             tracked.BaseRevision = pool.BaseRevision;
         }
 
+        // Cursor-Counter zählt der Kontext-Override mit (derselbe Save).
+        await AppendChangeAsync("pool", pool.Id, pool.BaseRevision, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -97,6 +101,8 @@ public sealed class MasterDataRepository(LarioDbContext db) : IMasterDataReposit
         }
 
         await SavePresetAsync(category, cancellationToken);
+        // Cursor-Counter zählt der Kontext-Override mit (derselbe Save).
+        await AppendChangeAsync("category", category.Id, category.BaseRevision, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -115,7 +121,35 @@ public sealed class MasterDataRepository(LarioDbContext db) : IMasterDataReposit
             tracked.BaseRevision = taxCategory.BaseRevision;
         }
 
+        // Cursor-Counter zählt der Kontext-Override mit (derselbe Save).
+        await AppendChangeAsync("taxCategory", taxCategory.Id, taxCategory.BaseRevision, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    // ---------- Changelog (Schritt 9, D2/D3) ----------
+
+    /// <summary>
+    /// Legt eine Changelog-Zeile in denselben Unit-of-Work wie die
+    /// Stammdatenänderung (der Caller persistiert per SaveChanges) —
+    /// eine Änderung ohne Zeile oder umgekehrt ist nicht möglich.
+    /// <c>entityType</c> folgt dem Pull-Vertrag: account, pool, category,
+    /// taxCategory (camelCase).
+    /// </summary>
+    private async Task<SyncChange> AppendChangeAsync(
+        string entityType, string entityId, int revision, CancellationToken cancellationToken)
+    {
+        var state = await db.SyncProtocolStates.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == "1", cancellationToken);
+        var change = new SyncChange
+        {
+            DbGeneration = state?.DbGeneration ?? 1,
+            EntityType = entityType,
+            EntityId = entityId,
+            Revision = revision,
+            OccurredAtUtc = DateTime.UtcNow
+        };
+        db.SyncChanges.Add(change);
+        return change;
     }
 
     /// <summary>

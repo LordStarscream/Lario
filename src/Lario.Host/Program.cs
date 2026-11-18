@@ -5,6 +5,7 @@ using Lario.Host.Api;
 using Lario.Host.Api.Attachments;
 using Lario.Host.Api.Journal;
 using Lario.Host.Api.MasterData;
+using Lario.Host.Api.Sync;
 using Lario.Infrastructure;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
@@ -92,6 +93,12 @@ builder.Services.AddSingleton(new AuthService(
     builder.Configuration.GetValue<string>("Lario:Auth:Password"),
     dataPaths.Root));
 
+// Sync-Protokoll (Schritt 9, Batch A1): Gerätekopplung (Pairing, Token-
+// Hash, Widerruf) und Protokoll (Bootstrap, Push mit atomarer Buchung +
+// Änderungszeile + Idempotenz, Changelog). Scoped, da auf dem DbContext.
+builder.Services.AddScoped<SyncDeviceService>();
+builder.Services.AddScoped<SyncService>();
+
 var app = builder.Build();
 
 // Erste Migration (und spätere) anwenden; ist ohne offene Migration ein No-op.
@@ -133,12 +140,18 @@ using (var scope = app.Services.CreateScope())
 // unberührt (die Prüfung greift nur auf /api/v1 außer /auth/login).
 app.UseMiddleware<ApiExceptionMiddleware>();
 app.UseApiAuth();
+// Auth-Trennung der Sync-Endpunkte (Schritt 9): Kopplung verlangt
+// Sitzungstoken, Sync-Endpunkte ein aktives Gerätetoken.
+app.UseMiddleware<SyncAuthMiddleware>();
 
 // Authentifizierungs-Endpunkte (Design D1).
 app.MapAuth();
 
 // Stammdaten (Schritt 7, T2) — /api/v1/accounts|pools|categories|tax-categories.
 app.MapMasterData();
+
+// Sync (Schritt 9, Batch A1) — /api/v1/sync/*.
+app.MapSyncEndpoints();
 
 // Belege (Schritt 7a, Design D3) — /api/v1/attachments + bookings/{id}/attachments.
 app.MapAttachments();
