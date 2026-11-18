@@ -19,7 +19,9 @@ import {
   SELECT_ACCOUNT_STATUSES,
   SELECT_BOOKING_BY_ID,
   SELECT_CATEGORY_STATUSES,
+  SELECT_OUTBOX_BY_OPERATION,
   SELECT_OUTBOX_QUEUED,
+  SELECT_OUTBOX_SYNCABLE,
   SELECT_POOL_STATUSES,
   SELECT_SNAPSHOT_ACCOUNTS,
   SELECT_SNAPSHOT_CATEGORIES,
@@ -37,6 +39,7 @@ import {
   UPDATE_OUTBOX_CONFIRMED,
   UPDATE_OUTBOX_PAYLOAD,
   UPDATE_OUTBOX_REJECTED,
+  UPDATE_OUTBOX_SENDING,
 } from './statements';
 
 /**
@@ -404,6 +407,7 @@ type StateTables = Pick<
   | 'drafts'
   | 'schemaStatementsExecuted'
   | 'foreignKeys'
+  | 'outboxHasStatusReasonColumn'
 >;
 
 function constraintError(table: string, column: string, value: string): Error {
@@ -725,13 +729,36 @@ function applySet(
     });
     return;
   }
-  if (stmt === normalize(UPDATE_OUTBOX_CONFIRMED)) {
-    // `['confirmed', baseRevision, nowIso, operationId, 'queued']` —
-    // Wächter `AND status = 'queued'`: Doppel-Quittung ist wirkungslos.
-    const [status, baseRevision, updatedAtUtc, operationId, queuedStatus] =
-      values as (string | number)[];
+  if (stmt === normalize(UPDATE_OUTBOX_SENDING)) {
+    // `['sending', nowIso, operationId, 'queued']` (Review-Befund P1):
+    // atomare Send-Reservierung, Wächter `AND status = 'queued'`.
+    const [status, updatedAtUtc, operationId, queuedStatus] = values as (
+      | string
+      | number
+    )[];
     const row = state.outbox.get(String(operationId));
     if (!row || row.status !== String(queuedStatus)) {
+      return;
+    }
+    state.outbox.set(String(operationId), {
+      ...row,
+      status: String(status),
+      updated_at_utc: String(updatedAtUtc),
+    });
+    return;
+  }
+  if (stmt === normalize(UPDATE_OUTBOX_CONFIRMED)) {
+    // `['confirmed', baseRevision, nowIso, operationId, 'sending',
+    // sentPayloadHash]` (Review-Befund P1): Wächter Status + Payload-
+    // Hash — die Quittung ist an den gesendeten Inhalt gebunden.
+    const [status, baseRevision, updatedAtUtc, operationId, sendingStatus, sentPayloadHash] =
+      values as (string | number)[];
+    const row = state.outbox.get(String(operationId));
+    if (
+      !row ||
+      row.status !== String(sendingStatus) ||
+      row.payload_hash !== String(sentPayloadHash)
+    ) {
       return;
     }
     state.outbox.set(String(operationId), {
@@ -743,13 +770,17 @@ function applySet(
     return;
   }
   if (stmt === normalize(UPDATE_OUTBOX_REJECTED)) {
-    // `['rejected', reason, nowIso, operationId]` (Design D7).
-    const [status, reason, updatedAtUtc, operationId] = values as (
-      | string
-      | number
-    )[];
+    // `['rejected', reason, nowIso, operationId, 'sending',
+    // sentPayloadHash]` (Design D7, Review-Befund P1): Wächter Status
+    // + Payload-Hash; `confirmed` geht nie zurück auf `rejected`.
+    const [status, reason, updatedAtUtc, operationId, sendingStatus, sentPayloadHash] =
+      values as (string | number)[];
     const row = state.outbox.get(String(operationId));
-    if (!row) {
+    if (
+      !row ||
+      row.status !== String(sendingStatus) ||
+      row.payload_hash !== String(sentPayloadHash)
+    ) {
       return;
     }
     state.outbox.set(String(operationId), {
@@ -1039,11 +1070,57 @@ function runQuery(state: StateTables, statement: string, values: unknown[]): unk
     return rows;
   }
   // ── Schritt 9: Sync ─────────────────────────────────────────────────
+  if (stmt === normalize(SELECT_OUTBOX_BY_OPERATION)) {
+    // WHERE operation_id = ? — volle Zeile inkl. Status (CAS-Vorabfrage,
+    // Review-Befund P1).
+    const operationId = v(0);
+    const row = state.outbox.get(String(operationId));
+    if (!row) {
+      return [];
+    }
+    return [
+      {
+        operation_id: row.operation_id,
+        device_id: row.device_id,
+        type: row.type,
+        booking_id: row.booking_id,
+        payload: row.payload,
+        payload_hash: row.payload_hash,
+        expected_base_revision: row.expected_base_revision,
+        status: row.status,
+        status_reason: row.status_reason,
+        created_at_utc: row.created_at_utc,
+      },
+    ];
+  }
   if (stmt === normalize(SELECT_OUTBOX_QUEUED)) {
     // WHERE status = ? — Parameter wird respektiert (sonst leere Liste).
     const status = v(0);
     return [...state.outbox.values()]
       .filter((o) => o.status === status)
+      .sort(
+        (a, b) =>
+          a.created_at_utc.localeCompare(b.created_at_utc) ||
+          a.operation_id.localeCompare(b.operation_id),
+      )
+      .map((o) => ({
+        operation_id: o.operation_id,
+        device_id: o.device_id,
+        type: o.type,
+        booking_id: o.booking_id,
+        payload: o.payload,
+        payload_hash: o.payload_hash,
+        expected_base_revision: o.expected_base_revision,
+        created_at_utc: o.created_at_utc,
+      }));
+  }
+  if (stmt === normalize(SELECT_OUTBOX_SYNCABLE)) {
+    // WHERE status IN (?, ?) — Parameter werden respektiert; sendbare
+    // Zeilen (queued + sending), gleiche Sortierung wie SELECT_OUTBOX_QUEUED.
+    const statusA = v(0);
+    const statusB = v(1);
+    return [...state.outbox.values()]
+      .filter((o) => o.status === statusA || o.status === statusB)
       .sort(
         (a, b) =>
           a.created_at_utc.localeCompare(b.created_at_utc) ||

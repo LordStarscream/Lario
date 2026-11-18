@@ -210,20 +210,54 @@ export const COUNT_OUTBOX_QUEUED =
   'SELECT COUNT(*) AS n FROM outbox WHERE status = ?';
 
 /**
- * Quittung nach explizitem `ack` des Hosts (Design D6/D7): Status
- * `confirmed` + erwartete Basisrevision aus der Push-Antwort.
- * Nur von `queued` — eine bereits quittierte Zeile wird nie erneut
- * bestätigt. Values: `['confirmed', baseRevision, nowIso, operationId, 'queued']`.
+ * Komplette Outbox-Zeile nach Operation-ID (CAS-Vorabfrage, Review-
+ * Befund P1, Batch B): Status und Hash des gespeicherten Inhalts
+ * lesen, um Quittung/Ablehnung an den tatsächlich gesendeten Inhalt
+ * zu binden.
  */
-export const UPDATE_OUTBOX_CONFIRMED =
-  'UPDATE outbox SET status = ?, expected_base_revision = ?, updated_at_utc = ? WHERE operation_id = ? AND status = ?';
+export const SELECT_OUTBOX_BY_OPERATION =
+  'SELECT operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, status_reason, created_at_utc FROM outbox WHERE operation_id = ?';
 
 /**
- * Ablehnung durch den Host (400/409, Design D7): Status `rejected` +
- * Grund (UI-Meldung, keine Finanzdaten). Values: `['rejected', reason, nowIso, operationId]`.
+ * Outbox-Zeilen in sendbarem Zustand, in der Sende-Reihenfolge:
+ * `queued` UND `sending`. `sending` deckt unklare Übertragungen ab
+ * (z. B. App-Abbruch/Neustart mitten in der Sendung): Das erneute
+ * Senden mit derselben ID und demselben Inhalt ist auf dem Host
+ * idempotent (Design D5). Values: `['queued', 'sending']`.
+ */
+export const SELECT_OUTBOX_SYNCABLE =
+  'SELECT operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, created_at_utc FROM outbox WHERE status IN (?, ?) ORDER BY created_at_utc ASC, operation_id ASC';
+
+/**
+ * Atomare Send-Reservierung (Review-Befund P1, Batch B): `queued` →
+ * `sending`. Ab diesem Punkt ist das Payload eingefroren: `update`/
+ * `discard` verweigern `sending`, und Wiederholungen senden exakt den
+ * reservierten Inhalt. Values: `['sending', nowIso, operationId, 'queued']`.
+ */
+export const UPDATE_OUTBOX_SENDING =
+  'UPDATE outbox SET status = ?, updated_at_utc = ? WHERE operation_id = ? AND status = ?';
+
+/**
+ * Quittung nach explizitem `ack` des Hosts (Design D6/D7, Review-
+ * Befund P1): Status `confirmed` + erwartete Basisrevision aus der
+ * Push-Antwort. CAS auf `sending` UND den Hash des tatsächlich
+ * gesendeten Payloads — die Quittung ist an den gesendeten Inhalt
+ * gebunden. Values:
+ * `['confirmed', baseRevision, nowIso, operationId, 'sending', sentPayloadHash]`.
+ */
+export const UPDATE_OUTBOX_CONFIRMED =
+  'UPDATE outbox SET status = ?, expected_base_revision = ?, updated_at_utc = ? WHERE operation_id = ? AND status = ? AND payload_hash = ?';
+
+/**
+ * Ablehnung durch den Host (400/409, Design D7, Review-Befund P1):
+ * Status `rejected` + Grund (UI-Meldung, keine Finanzdaten). Nur aus
+ * `sending` mit dem Hash des tatsächlich gesendeten Payloads —
+ * `confirmed` geht nie zurück auf `rejected`.
+ * Values:
+ * `['rejected', reason, nowIso, operationId, 'sending', sentPayloadHash]`.
  */
 export const UPDATE_OUTBOX_REJECTED =
-  'UPDATE outbox SET status = ?, status_reason = ?, updated_at_utc = ? WHERE operation_id = ?';
+  'UPDATE outbox SET status = ?, status_reason = ?, updated_at_utc = ? WHERE operation_id = ? AND status = ? AND payload_hash = ?';
 
 /** Fachrevision der Buchung aus der Push-Antwort (Design D6). */
 export const UPDATE_BOOKING_BASE_REVISION =
