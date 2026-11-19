@@ -1,6 +1,9 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { BookingsRepository } from '../db/bookings.repository';
+import {
+  BookingsRepository,
+  ORIGIN_VERSION_META_KEY,
+} from '../db/bookings.repository';
 import { LocalDatabase } from '../db/local-database';
 import { SnapshotRepository } from '../db/snapshot.repository';
 import { SYNC_META_KEYS } from '../sync/sync.service';
@@ -236,6 +239,31 @@ export class SetupComponent implements OnInit {
         if (hostSwitchWithLocalEntries(protectedEntries, previousHostValue, url)) {
           throw new Error(HOST_SWITCH_WITH_ENTRIES_MESSAGE);
         }
+        // Herkunfts-Version (Review P1 2, 19.11.2026): wird NUR bei
+        // erfolgreichem Hostwechsel erhöht (die Herkunft neuer
+        // Eingaben ändert sich damit); Neukopplung am selben Host
+        // erhält die Version, der erste Setup initialisiert sie auf
+        // 1. `BookingsRepository.save` rechnet wartende Anlagen
+        // gegen exakt diese Version ab (Recheck unter derselben
+        // Sperre) — ein zwischen Start des Save und dem Commit
+        // erfolgter Hostwechsel macht sich dort als Konflikt sichtbar,
+        // statt die alte Eingabe still unter dem neuen Host zu
+        // speichern. Lesen + Erhöhen liegen innerhalb derselben
+        // geschützten Sektion: kein paralleler Setup kann die
+        // Version dazwischen ändern (Setup läuft zudem hinter der
+        // Verbindungssperre serialisiert).
+        const originRows = await this.db.query<{ value: string }>(
+          'SELECT value FROM meta WHERE key = ?', [ORIGIN_VERSION_META_KEY]);
+        const rawOrigin = originRows[0]?.value ?? null;
+        const parsedOrigin =
+          rawOrigin === null ? Number.NaN : Number.parseInt(rawOrigin, 10);
+        const previousOriginVersion =
+          Number.isInteger(parsedOrigin) && parsedOrigin > 0 ? parsedOrigin : 0;
+        const isHostSwitch = previousHostValue !== undefined
+          && previousHostValue !== url;
+        const nextOriginVersion = isHostSwitch
+          ? previousOriginVersion + 1
+          : previousOriginVersion > 0 ? previousOriginVersion : 1;
         // EINE atomare lokale Transaktion: komplettes Snapshot-Replace
         // (4×DELETE + alle INSERT + Zeitstempel) UND die gemerkten
         // Verbindungsdaten inkl. des ausgestellten Sitzungstokens
@@ -254,6 +282,7 @@ export class SetupComponent implements OnInit {
           upsertMetaSet(SYNC_META_KEYS.cursor, String(bootstrap.cursor)),
           upsertMetaSet(SYNC_META_KEYS.bootstrapGeneration, String(bootstrap.dbGeneration)),
           upsertMetaSet(SYNC_META_KEYS.protocolGeneration, String(bootstrap.protocolGeneration)),
+          upsertMetaSet(ORIGIN_VERSION_META_KEY, String(nextOriginVersion)),
         ]);
       });
       const { accounts, pools, categories } = snapshot;

@@ -17,7 +17,11 @@ import {
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { formatCents, parseAmount } from '../amount';
-import { BookingsRepository, BookingValidationError } from '../db/bookings.repository';
+import {
+  BookingsRepository,
+  BookingValidationError,
+  OriginConflictError,
+} from '../db/bookings.repository';
 import { DraftsRepository } from '../db/drafts.repository';
 import {
   SnapshotRepository,
@@ -221,6 +225,21 @@ export class EntryComponent implements OnInit {
   private formGeneration = 0;
 
   /**
+   * Herkunfts-Version (Meta `sync.origin_version`) zum Zeitpunkt des
+   * Snapshot-Loads (Review-Befund P1 2, 19.11.2026): Die Referenzdaten,
+   * aus denen die Nutzerin/die Nutzer Konten, Pools und Kategorien
+   * wählen, stammen aus dem dann geladenen Snapshot — diese Version
+   * ist der sichere Herkunftsnachweis für neue Anlagen. `save` gibt
+   * sie ans Repository weiter; ein Hostwechsel zwischen Laden und
+   * Speichern macht sich dort als `OriginConflictError` sichtbar
+   * (Formular bleibt erhalten), statt die Eingabe still unter dem
+   * neuen Host zu speichern. `null` = Snapshot-Load fehlgeschlagen
+   * (Save bleibt in dem Fall ohnehin gesperrt, `snapshot === null`)
+   * — das Repository fällt dann auf die Erfassung am Aufruf zurück.
+   */
+  private formOriginVersion: number | null = null;
+
+  /**
    * Höchste Split-ID-Nummer, die jemals vergeben wurde (Review R4, P2):
    * `addSplit` vergibt `s<highWater+1>` — monoton steigend über die
    * gesamte Bearbeitungs-Session, auch wenn Splits gelöscht werden.
@@ -248,6 +267,11 @@ export class EntryComponent implements OnInit {
     }
     try {
       this.snapshot.set(await this.snapshotRepository.loadSnapshot());
+      // Herkunfts-Version zum Formularladen erfassen (Review P1 2,
+      // 19.11.2026): sie gehört zur gerade geladenen
+      // Validierungsbasis — nicht die beim Speichern gültige Version.
+      this.formOriginVersion =
+        await this.bookingsRepository.currentOriginVersion();
     } catch (e) {
       this.snapshotError.set(`Snapshot konnte nicht geladen werden: ${describeError(e)}`);
     }
@@ -495,7 +519,14 @@ export class EntryComponent implements OnInit {
       if (editingBookingId === null) {
         // Neu erfassen: eine Transaktion (Buchung + Splits + Outbox +
         // Zähler, Batch B) — erst jetzt ist die Eingabe sicher.
-        await this.bookingsRepository.save(input, new Date());
+        // Die Herkunfts-Version des Formularladens (Review P1 2) wird
+        // mitgegeben; ein zwischenzeitlicher Hostwechsel führt zu
+        // `OriginConflictError` (sichtbar, Formular bleibt erhalten).
+        await this.bookingsRepository.save(
+          input,
+          new Date(),
+          this.formOriginVersion ?? undefined,
+        );
         this.saveStatus.set('saved');
         this.saveMessage.set('Gespeichert in der Outbox.');
       } else {
@@ -522,7 +553,7 @@ export class EntryComponent implements OnInit {
     } catch (e) {
       this.saveStatus.set('error');
       this.saveMessage.set(
-        e instanceof BookingValidationError
+        e instanceof BookingValidationError || e instanceof OriginConflictError
           ? e.message
           : `Speichern fehlgeschlagen: ${describeError(e)}`,
       );

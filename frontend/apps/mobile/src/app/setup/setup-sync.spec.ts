@@ -9,7 +9,11 @@ import {
   type CapacitorSqliteMock,
 } from '../db/capacitor-sqlite-fake';
 import { LocalDatabase } from '../db/local-database';
-import { BookingsRepository } from '../db/bookings.repository';
+import {
+  BookingsRepository,
+  ORIGIN_VERSION_META_KEY,
+  OriginConflictError,
+} from '../db/bookings.repository';
 import { SetupComponent } from './setup.component';
 import { SyncService, SYNC_META_KEYS } from '../sync/sync.service';
 
@@ -209,6 +213,109 @@ describe('SetupComponent — Sync-Kopplung und Gerätebindung', () => {
     expect(retried.payloadHash).toBe(frozen.payloadHash);
     expect((await bookings.get(retried.bookingId))?.status).toBe('sending');
     expect(dbState.meta.get(SYNC_META_KEYS.deviceToken)).toBe('device-token-2');
+  });
+
+  it('lehnt eine hinter dem Hostwechsel-Commit wartende Anlage ab: Herkunftskonflikt statt stiller Übertragung (P1 2, 19.11.2026)', async () => {
+    // Review-Szenario: Die Anlage wird unter Host A gestartet (die
+    // Herkunfts-Version wird erfasst), während der Setup-Hostwechsel
+    // zu B läuft. Die Anlage wartet auf die OriginWriteLock hinter
+    // dem Setup-Commit — nach dem Commit (neue Herkunft, Version
+    // erhöht) darf sie NICHT still gegen das neue Snapshot B
+    // validiert und als Eingabe an B gespeichert werden: Sie endet
+    // im sichtbaren Herkunftskonflikt, die lokale Buchung bleibt
+    // leer, und es geht nichts an den neuen Host.
+    await connect();
+    const bookings = TestBed.inject(BookingsRepository);
+
+    // (1) Geschützter Outbox-Read: hält den Setup-Commit so, dass
+    // die wartende Anlage deterministisch HINTER dem Commit landet.
+    // Der frühe Read (vor dem Pair) bleibt ungestört, nur der
+    // geschützte Read (unter der Sperre, zweiter Aufruf) wird
+    // gehalten.
+    const originalListPending = bookings.listPending.bind(bookings);
+    let listPendingCalls = 0;
+    let protectedReadGate: Promise<void> | null = null;
+    let releaseProtectedRead: (() => void) | undefined;
+    bookings.listPending = async () => {
+      listPendingCalls += 1;
+      if (listPendingCalls >= 2 && protectedReadGate === null) {
+        protectedReadGate = new Promise<void>(resolve => {
+          releaseProtectedRead = resolve;
+        });
+      }
+      await protectedReadGate;
+      return originalListPending();
+    };
+
+    // (2) Herkunfts-Erfassung des Save: hält den Save so, dass er die
+    // Version unter A erfasst, NACHDEM der Setup die Sperre bereits
+    // hält — die Anlage steht damit garantiert hinter dem Commit.
+    const originalVersion = bookings.currentOriginVersion.bind(bookings);
+    let captureGate: Promise<void> | null = null;
+    let releaseCapture: (() => void) | undefined;
+    let captureGated = false;
+    bookings.currentOriginVersion = async () => {
+      if (!captureGated) {
+        captureGated = true;
+        captureGate = new Promise<void>(resolve => {
+          releaseCapture = resolve;
+        });
+        await captureGate;
+      }
+      return originalVersion();
+    };
+
+    component.url.set('https://anderer-host.test');
+    const pairCalls = () => mockFetch.mock.calls
+      .filter(call => String(call[0]).endsWith('/api/v1/sync/pair')).length;
+    const pairsBefore = pairCalls(); // 1 Pair aus connect() (Host A)
+    const releasePair = gatePair();
+    const setup = component.saveAndLoad();
+    // Bis die NEUE Paarung (Host B) am Gate wartet — nicht der alte
+    // Pair-Call aus connect(). Der frühe Outbox-Read wurde bereits
+    // ausgeführt und blieb ungestört.
+    await vi.waitFor(() => {
+      expect(pairCalls()).toBe(pairsBefore + 1);
+    });
+
+    // Anlage unter A starten: wartet auf die Herkunfts-Erfassung.
+    const input = {
+      date: '2026-11-19', totalAmountCents: 100, accountId: 'acc-1', note: null,
+      splits: [{ id: 'split-1', amountCents: 100, poolId: 'pool-1', categoryId: 'cat-1', note: null, tax: null }],
+    };
+    const savePromise = bookings.save(input, new Date('2026-11-19T00:00:00Z'));
+
+    // Pair freigeben: Bootstrap-200, dann hält der Setup-Commit die
+    // OriginWriteLock beim geschützten Outbox-Read.
+    releasePair(pairResponse(2));
+    await vi.waitFor(() => expect(releaseProtectedRead).toBeDefined());
+    // Der Setup-Commit hält die Sperre; die Anlage hat noch nichts
+    // geschrieben (sie wartet auf ihre Herkunfts-Erfassung).
+    expect(dbState.bookings.size).toBe(0);
+
+    // Anlage erfasst die Version unter A (1) und wartet nun auf die
+    // OriginWriteLock — hinter dem Setup-Commit.
+    releaseCapture?.();
+
+    // Geschützten Read freigeben: kein Eintrag → Hostwechsel wird
+    // committet (Host B, Device-Token 2, Herkunfts-Version 2).
+    releaseProtectedRead?.();
+    await setup;
+
+    // Die wartende Anlage erkennt unter der Sperre die neue
+    // Herkunft (Version 2 ≠ 1) und wird abgelehnt — nichts wird
+    // gespeichert, nichts geht an B.
+    await expect(savePromise).rejects.toThrow(OriginConflictError);
+    await expect(savePromise)
+      .rejects.toThrow('Die Verbindung hat sich während des Speicherns');
+
+    expect(dbState.bookings.size).toBe(0);
+    expect(dbState.outbox.size).toBe(0);
+    expect(component.status()).toBe('success');
+    expect(component.message()).toContain('Verbunden');
+    expect(dbState.meta.get('sync.host')).toBe('https://anderer-host.test');
+    expect(dbState.meta.get(SYNC_META_KEYS.deviceToken)).toBe('device-token-2');
+    expect(dbState.meta.get(ORIGIN_VERSION_META_KEY)).toBe('2');
   });
 
   it('Hostwechsel mit lokalen Eingaben lässt bisherige Kopplung und Buchung unverändert', async () => {

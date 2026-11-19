@@ -51,6 +51,18 @@ import {
 export const DEVICE_ID_META_KEY = 'device.id';
 
 /**
+ * Meta-Key der Herkunfts-Version (Schritt 9, Review-Befund P1 2,
+ * 19.11.2026): monoton wachsende Ganzzahl, die NUR der
+ * Setup-Commit bei erfolgreichem Hostwechsel erhöht. `save` erfasst
+ * die Version am Anfang des Aufrufs (bzw. nimmt sie vom Aufrufer —
+ * für UI-Eingaben die Version beim Formularladen) und prüft sie
+ * nach Erwerb der `OriginWriteLock` erneut: Eine wartende Anlage
+ * darf nie still unter der neuen Herkunft validiert und gespeichert
+ * werden (Abweichung → `OriginConflictError`).
+ */
+export const ORIGIN_VERSION_META_KEY = 'sync.origin_version';
+
+/**
  * UUIDv4 (Muster `app/sqlite.service.ts`): `crypto.randomUUID()` im
  * Android-WebView (HTTPS-Kontext); Fallback über
  * `crypto.getRandomValues`, dadurch auf jedem Pfad verfügbar.
@@ -119,6 +131,25 @@ export class BookingValidationError extends Error {
   ) {
     super(message);
     this.name = 'BookingValidationError';
+  }
+}
+
+/**
+ * Herkunftskonflikt (Schritt 9, Review-Befund P1 2, 19.11.2026): Die
+ * Verbindungsherkunft (Host) hat sich zwischen Start der Anlage und
+ * ihrem Write geändert — z. B. ein Setup-Hostwechsel, der während
+ * des Wartens auf die `OriginWriteLock` committet wurde. Die Anlage
+ * wird NICHT gespeichert; die UI erhält die Formulardaten und
+ * meldet den Konflikt sichtbar.
+ */
+export class OriginConflictError extends Error {
+  constructor(
+    readonly capturedVersion: number,
+    readonly currentVersion: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'OriginConflictError';
   }
 }
 
@@ -392,12 +423,28 @@ export class BookingsRepository {
    * ist garantiert nichts gespeichert). Bei einem `executeSet`-Fehler
    * (z. B. UNIQUE-Verstoß auf `outbox.operation_id`) rollt die
    * Transaktion komplett zurück — kein Teilzustand.
+   *
+   * Herkunftsschutz (Review-Befund P1 2, 19.11.2026): `originVersion`
+   * trägt die der Eingabedaten zugeordnete Herkunfts-Version (Meta
+   * `sync.origin_version`) — für UI-Formulare die Version beim
+   * Laden der Referenzdaten (EntryComponent). Ohne Angabe wird die
+   * aktuelle Version am Aufruf erfasst. Beide Erfassungen laufen
+   * VOR `saveChain`/`OriginWriteLock` — ein bereits wartender
+   * Auftrag wird nicht still unter neuer Herkunft umgedeutet; der
+   * verbindliche Recheck erfolgt unter der Sperre (`doSave`). Bei
+   * abweichender Herkunft wirft die Methode `OriginConflictError`
+   * (nichts wird gespeichert).
    */
   async save(
     input: LocalExpenseInput,
     now: Date,
+    originVersion?: number,
   ): Promise<{ bookingId: string; operationId: string }> {
-    const operation = this.saveChain.then(() => this.doSave(input, now));
+    const capturedOrigin =
+      originVersion ?? (await this.currentOriginVersion());
+    const operation = this.saveChain.then(
+      () => this.doSave(input, now, capturedOrigin),
+    );
     // Die Kette läuft auch bei Fehlern weiter, sonst würden spätere
     // Saves dauerhaft hängen.
     this.saveChain = operation.then(
@@ -405,6 +452,30 @@ export class BookingsRepository {
       () => undefined,
     );
     return operation;
+  }
+
+  /**
+   * Aktuelle Herkunfts-Version (Meta `sync.origin_version`; `0`,
+   * wenn nicht gesetzt). Die Version wird ausschließlich vom
+   * Setup-Commit bei erfolgreichem Hostwechsel erhöht (erster
+   * Setup initialisiert sie auf 1) — sie ist der einzige
+   * Vergleichsmaßstab für den Herkunftsnachweis in `save`.
+   */
+  async currentOriginVersion(): Promise<number> {
+    // `withSerializedRead` (nicht `meta.get`/öffentliche `query`):
+    // stellt die Initialisierung sicher (Nach-Fehl-Schlag-Retry) —
+    // bei fehlendem Plugin propagiert der Plugin-Fehler (z. B.
+    // „simulated connection failure“) wie im übrigen Anlagepfad,
+    // statt „No available connection“ (Test: fehlendes Plugin).
+    const rows = await this.db.withSerializedRead((handle) =>
+      handle.query<{ value: string }>(
+        'SELECT value FROM meta WHERE key = ?',
+        [ORIGIN_VERSION_META_KEY],
+      ),
+    );
+    const raw = rows[0]?.value ?? null;
+    const parsed = raw === null ? Number.NaN : Number.parseInt(raw, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
   }
 
   /**
@@ -442,6 +513,7 @@ export class BookingsRepository {
   private async doSave(
     input: LocalExpenseInput,
     now: Date,
+    capturedOrigin: number,
   ): Promise<{ bookingId: string; operationId: string }> {
     // Herkunfts-Schreibschutz (Review P1, 19.11.2026): Der komplette
     // Anlagepfad — Referenzvalidierung gegen den Snapshot, Zähler-/ und
@@ -452,7 +524,32 @@ export class BookingsRepository {
     // den Hostwechsel-Commit — eine A-Eingabe kann nicht still an B
     // landen. `update`/`discard` benötigen die Sperre nicht: Sie können
     // keine der Herkunftsprüfung unsichtbaren neuen Eingaben erzeugen.
-    return this.originWriteLock.run(() => this.writeExpense(input, now));
+    //
+    // Herkunft-Recheck unter der Sperre (Review P1 2, 19.11.2026): Die
+    // FIFO-Reihenfolge allein schützt nur den laufenden Abschnitt —
+    // ein HINTER dem Setup-Commit wartender Auftrag würde sonst nach
+    // dem Commit gegen das neue Snapshot validiert und bei
+    // identischen Referenz-IDs (z. B. geklonte Datenbestände) still
+    // unter der neuen Herkunft gespeichert. Die erfasste Version
+    // (vor `saveChain`/Sperre, siehe `save`) wird daher erst nach
+    // Erwerb der Sperre mit der aktuellen verglichen: Ein
+    // Hostwechsel-Commit kann die Version nur unter derselben
+    // Sperre erhöhen, die Abweichung ist hier exakt erkennbar und
+    // wird mit `OriginConflictError` abgelehnt — die Anlage wird
+    // weder gespeichert noch als neue Eingabe gesendet.
+    return this.originWriteLock.run(async () => {
+      const currentOrigin = await this.currentOriginVersion();
+      if (currentOrigin !== capturedOrigin) {
+        throw new OriginConflictError(
+          capturedOrigin,
+          currentOrigin,
+          'Die Verbindung hat sich während des Speicherns geändert '
+            + '(Hostwechsel). Die Eingabe wurde nicht gespeichert — '
+            + 'bitte prüfen und erneut speichern.',
+        );
+      }
+      return this.writeExpense(input, now);
+    });
   }
 
   private async writeExpense(
