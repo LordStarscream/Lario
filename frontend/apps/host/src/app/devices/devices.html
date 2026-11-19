@@ -1,0 +1,35 @@
+<h1>Verbundene Geräte</h1>
+<p>Widerrufene Geräte können nicht mehr synchronisieren. Lokal gespeicherte Eingaben bleiben auf dem Gerät erhalten.</p>
+<button type="button" class="btn btn-secondary" [disabled]="busy()" (click)="reload()">Aktualisieren</button>
+@if (busy()) {
+  <p role="status">Gerätezugänge werden aktualisiert …</p>
+}
+@if (error(); as problem) {
+  <p role="alert">{{ problem.message }}</p>
+}
+@if (success(); as message) {
+  <p role="status">{{ message }}</p>
+}
+@if (pending(); as device) {
+  <section aria-label="Gerätezugang widerrufen">
+    <p>Zugang für „{{ device.name }}“ wirklich widerrufen? Für eine erneute Synchronisation muss das Gerät neu eingerichtet werden.</p>
+    <button type="button" class="btn btn-danger" [disabled]="busy()" (click)="confirmRevoke()">Widerruf bestätigen</button>
+    <button type="button" class="btn btn-secondary" [disabled]="busy()" (click)="cancelRevoke()">Abbrechen</button>
+  </section>
+}
+@for (device of devices(); track device.id) {
+  <section>
+    <h2>{{ device.name }}</h2>
+    <p>Gekoppelt: {{ device.createdAtUtc | date:'dd.MM.yyyy HH:mm' }}</p>
+    <p>Zuletzt synchronisiert: {{ device.lastUsedAtUtc ? (device.lastUsedAtUtc | date:'dd.MM.yyyy HH:mm') : 'Noch nie' }}</p>
+    @if (device.revokedAtUtc) {
+      <p>Widerrufen: {{ device.revokedAtUtc | date:'dd.MM.yyyy HH:mm' }}</p>
+    } @else {
+      <button type="button" class="btn btn-danger" [disabled]="busy()" (click)="requestRevoke(device)">Zugang widerrufen</button>
+    }
+  </section>
+} @empty {
+  @if (!busy() && !error()) {
+    <p>Keine Geräte gekoppelt. Die Kopplung erfolgt in der Einrichtung der mobilen App.</p>
+  }
+}
