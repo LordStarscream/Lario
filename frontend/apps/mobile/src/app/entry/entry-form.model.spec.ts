@@ -865,6 +865,7 @@ describe('fromBookingDetail (Batch E, Design D10)', () => {
       note: null,
       createdAtUtc: '2026-10-30T12:00:00Z',
       status: 'queued',
+      statusReason: null,
       splits: [
         {
           id: 's-uuid-1',

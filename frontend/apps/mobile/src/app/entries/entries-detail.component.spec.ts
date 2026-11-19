@@ -363,6 +363,93 @@ describe('EntriesDetailComponent (Batch E, P5)', () => {
       el.querySelector('[data-testid="entries-detail-notfound"]'),
     ).not.toBeNull();
   });
+
+  it('abgelehnte Eingabe zeigt den Host-Grund und erlaubt Korrektur oder bestätigtes Verwerfen', async () => {
+    const harness = await createHarness();
+    const bookingId = await seedBookingWithTax();
+    const repository = TestBed.inject(BookingsRepository);
+    const operation = (await repository.listSyncable())[0];
+    await repository.prepareSend(operation.operationId, new Date());
+    await repository.markRejected(
+      operation.operationId,
+      'Das Konto ist archiviert.',
+      operation.payloadHash,
+      new Date(),
+    );
+    await harness.navigateByUrl(`/eingaben/${bookingId}`);
+    await flush();
+    harness.detectChanges();
+    const el = harness.fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[data-testid="entries-detail-rejected"]')?.textContent)
+      .toContain('Das Konto ist archiviert.');
+    expect(el.querySelector('[data-testid="entries-detail-edit"]')).not.toBeNull();
+    const discard = el.querySelector<HTMLButtonElement>('[data-testid="entries-detail-discard"]');
+    expect(discard).not.toBeNull();
+    discard!.click();
+    harness.detectChanges();
+    expect(await repository.get(bookingId)).not.toBeNull();
+    const navSpy = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    el.querySelector<HTMLButtonElement>('[data-testid="entries-detail-discard-confirm-yes"]')!.click();
+    await flush();
+    expect(await repository.get(bookingId)).toBeNull();
+    expect(navSpy).toHaveBeenCalledWith(['/eingaben'], {
+      state: { discardMessage: 'Buchung verworfen.' },
+    });
+  });
+
+  it.each(['sending', 'confirmed'] as const)(
+    '%s: Liste und Detail bieten nur Ansicht, keine Änderung oder Löschung',
+    async (status) => {
+      const harness = await createHarness();
+      const bookingId = await seedBookingWithTax();
+      const repository = TestBed.inject(BookingsRepository);
+      const operation = (await repository.listSyncable())[0];
+      await repository.prepareSend(operation.operationId, new Date());
+      if (status === 'confirmed') {
+        await repository.markConfirmed(bookingId, operation.operationId, 1, operation.payloadHash, new Date());
+      }
+      await harness.navigateByUrl('/eingaben');
+      await flush();
+      harness.detectChanges();
+      let el = harness.fixture.nativeElement as HTMLElement;
+      expect(el.querySelector('[data-testid="entry-edit"]')).toBeNull();
+      expect(el.querySelector('[data-testid="entry-discard"]')).toBeNull();
+      expect(el.textContent).toContain(status === 'sending' ? 'Bestätigung ausstehend' : 'synchronisiert');
+      await harness.navigateByUrl(`/eingaben/${bookingId}`);
+      await flush();
+      harness.detectChanges();
+      el = harness.fixture.nativeElement as HTMLElement;
+      expect(el.querySelector('[data-testid="entries-detail-edit"]')).toBeNull();
+      expect(el.querySelector('[data-testid="entries-detail-discard"]')).toBeNull();
+      if (status === 'sending') {
+        expect(el.querySelector('[data-testid="entries-detail-sending"]')?.textContent)
+          .toContain('Erneut synchronisieren');
+      }
+      // Auch ein direkter Handler-Aufruf darf keine Bestätigung öffnen.
+      const component = harness.routeDebugElement!.componentInstance as EntriesDetailComponent;
+      await component.onDiscard();
+      expect(component.confirmingDiscard()).toBe(false);
+      expect(await repository.get(bookingId)).not.toBeNull();
+    },
+  );
+
+  it('abgelehnte Eingabe ist auch in der Liste mit Grund und Aktionen erkennbar', async () => {
+    const harness = await createHarness();
+    const bookingId = await seedBookingWithTax();
+    const repository = TestBed.inject(BookingsRepository);
+    const operation = (await repository.listSyncable())[0];
+    await repository.prepareSend(operation.operationId, new Date());
+    await repository.markRejected(operation.operationId, 'Kategorie nicht verfügbar.', operation.payloadHash, new Date());
+    await harness.navigateByUrl('/eingaben');
+    await flush();
+    harness.detectChanges();
+    const el = harness.fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[data-testid="entry-row"]')?.textContent).toContain('abgelehnt');
+    expect(el.querySelector('[data-testid="entry-row"]')?.textContent).toContain('Kategorie nicht verfügbar.');
+    expect(el.querySelector('[data-testid="entry-edit"]')?.getAttribute('href')).toBe(`/erfassen/${bookingId}`);
+    expect(el.querySelector('[data-testid="entry-discard"]')).not.toBeNull();
+  });
+
 });
 
 async function createHarness(): Promise<RouterTestingHarness> {

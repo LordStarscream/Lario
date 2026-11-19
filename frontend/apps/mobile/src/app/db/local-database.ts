@@ -186,7 +186,44 @@ export class LocalDatabase {
         (statement): SqlSet => ({ statement, values: [] }),
       ),
     });
+    // Migrationen für bestehende Datenbanken (idempotent, s. Methode).
+    await this.migrateOutboxStatusReason();
     this.ready = true;
+  }
+
+  /**
+   * Migration Schritt 9 (Batch B): Spalte `outbox.status_reason` für
+   * abgelehnte Sync-Operationen (Design D7). Neue Datenbanken haben
+   * die Spalte bereits (Schema); bei Datenbanken aus Schritt 8 fehlt
+   * sie — `ALTER TABLE … ADD COLUMN` nach Prüfung über
+   * `PRAGMA table_info(outbox)` (idempotent: zweiter Aufruf findet
+   * die Spalte und unterlässt die Änderung). Läuft außerhalb der
+   * Schreib-Serialisierung (doInit-Phase, keine parallelen Writer).
+   */
+  private async migrateOutboxStatusReason(): Promise<void> {
+    const info = await CapacitorSQLite.query({
+      database: LocalDatabase.DbName,
+      statement: 'PRAGMA table_info(outbox)',
+      values: [],
+      readonly: false,
+    });
+    const hasStatusReason = (info.values ?? []).some(
+      (row) => row['name'] === 'status_reason',
+    );
+    if (!hasStatusReason) {
+      await CapacitorSQLite.executeSet({
+        database: LocalDatabase.DbName,
+        readonly: false,
+        transaction: false,
+        set: [
+          {
+            statement:
+              'ALTER TABLE outbox ADD COLUMN status_reason TEXT',
+            values: [],
+          },
+        ],
+      });
+    }
   }
 
   /**

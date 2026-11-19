@@ -48,6 +48,19 @@
       <dd>{{ statusLabel(d.status) }}</dd>
     </dl>
 
+    @if (d.status === 'rejected') {
+      <p class="entries-error" data-testid="entries-detail-rejected">
+        {{ d.statusReason ?? 'Der Host hat diese Eingabe abgelehnt.' }}
+        Bitte ändern oder verwerfen.
+      </p>
+    }
+    @if (d.status === 'sending') {
+      <p data-testid="entries-detail-sending">
+        Erneut synchronisieren, um die Übernahme zu bestätigen.
+        Bis dahin ist diese Eingabe gesperrt.
+      </p>
+    }
+
     <h3>Splits</h3>
     <ul class="entries-detail-splits">
       @for (split of d.splits; track split.id) {
@@ -81,7 +94,7 @@
     </ul>
 
     <div class="entries-detail-actions">
-      @if (d.status === 'queued') {
+      @if (d.status === 'queued' || d.status === 'rejected') {
         <a
           [routerLink]="['/erfassen', d.bookingId]"
           data-testid="entries-detail-edit"

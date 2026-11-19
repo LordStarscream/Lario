@@ -1,9 +1,6 @@
-// Batch E (P5) — Eingaben-Liste: lokal gespeicherte Ausgaben aus
-// `listPending()`, sortiert nach createdAtUtc aufsteigend, dann
-// bookingId aufsteigend. Jede Zeile: Datum, Total, Status-Text
-// (queued → „ausstehend“, sonst roher Status) und die Aktionen
-// „Ändern“ (→ `erfassen/:bookingId`) und „Verwerfen“ (→ Detail
-// `eingaben/:bookingId`, dort Zweiklick-Bestätigung).
+// Lokale Eingaben mit Übertragungsstatus und manuell gestarteter Synchronisation.
+// Queued/rejected lassen sich korrigieren; sending bleibt bis zur expliziten
+// Host-Bestätigung eingefroren, confirmed bleibt unveränderbar.
 //
 // Zoneless: asynchrone Zustände (Liste, Fehler) sind Signals;
 // OnPush + Signale (Muster `entry.component.ts`).
@@ -22,6 +19,7 @@ import {
 } from '../db/bookings.repository';
 import { SnapshotRepository } from '../db/snapshot.repository';
 import { formatCents } from '../amount';
+import { SyncService } from '../sync/sync.service';
 
 @Component({
   selector: 'app-entries',
@@ -34,6 +32,8 @@ export class EntriesComponent implements OnInit {
   private readonly bookingsRepository = inject(BookingsRepository);
   private readonly snapshotRepository = inject(SnapshotRepository);
   private readonly location = inject(Location);
+  readonly syncService = inject(SyncService);
+  readonly syncLoadError = signal<string | null>(null);
 
   /** Liste (null = noch nicht geladen). */
   readonly items = signal<LocalBookingListItem[] | null>(null);
@@ -65,13 +65,15 @@ export class EntriesComponent implements OnInit {
     return formatCents(cents);
   }
 
-  /**
-   * Status-Text (P5): `queued` → „ausstehend“, sonst roher Status
-   * (Schritt 8 kennt nur `queued`; `confirmed`/`unknown` werden roh
-   * angezeigt).
-   */
+  /** Lokaler Übertragungsstatus für die Eingabenansicht. */
   statusLabel(status: LocalBookingListItem['status']): string {
-    return status === 'queued' ? 'ausstehend' : status;
+    return {
+      queued: 'ausstehend',
+      sending: 'Bestätigung ausstehend',
+      confirmed: 'synchronisiert',
+      rejected: 'abgelehnt',
+      unknown: 'unbekannt',
+    }[status];
   }
 
   ngOnInit(): void {
@@ -94,10 +96,15 @@ export class EntriesComponent implements OnInit {
    */
   async refresh(): Promise<void> {
     this.loadError.set(null);
-    const [listResult, snapshotResult] = await Promise.allSettled([
+    this.syncLoadError.set(null);
+    const [listResult, snapshotResult, syncResult] = await Promise.allSettled([
       this.bookingsRepository.listPending(),
       this.snapshotRepository.loadSnapshot(),
+      this.syncService.refreshState(),
     ]);
+    if (syncResult.status === 'rejected') {
+      this.syncLoadError.set(`Synchronisationsstand konnte nicht geladen werden: ${describeError(syncResult.reason)}`);
+    }
     if (listResult.status === 'fulfilled') {
       const items = [...listResult.value].sort(
         (a, b) =>
@@ -122,6 +129,20 @@ export class EntriesComponent implements OnInit {
       this.accountNames.set(accounts);
       this.poolNames.set(pools);
     }
+  }
+
+  /** Synchronisiert manuell und liest danach die tatsächlich gespeicherten Status neu. */
+  async synchronize(): Promise<void> {
+    if (this.syncService.busy()) return;
+    this.syncLoadError.set(null);
+    try {
+      await this.syncService.sync();
+    } catch (error) {
+      await this.refresh();
+      this.syncLoadError.set(`Synchronisation fehlgeschlagen: ${describeError(error)}`);
+      return;
+    }
+    await this.refresh();
   }
 
   /** Verwerfen-Hinweis entfernen (Button). */

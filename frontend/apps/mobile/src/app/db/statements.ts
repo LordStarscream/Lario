@@ -96,6 +96,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     payload_hash TEXT NOT NULL,
     expected_base_revision INTEGER,
     status TEXT NOT NULL,
+    status_reason TEXT,
     created_at_utc TEXT NOT NULL,
     updated_at_utc TEXT NOT NULL
   );`,
@@ -163,7 +164,7 @@ export const DELETE_SPLITS = 'DELETE FROM splits WHERE booking_id = ?';
  * - Sortierung: createdAtUtc aufsteigend (neueste unten), dann bookingId.
  */
 export const SELECT_BOOKING_LIST =
-  'SELECT b.id, b.date, b.total_amount_cents, b.account_id, b.note, b.created_at_utc, o.status AS outbox_status, (SELECT GROUP_CONCAT(DISTINCT s2.pool_id) FROM splits s2 WHERE s2.booking_id = b.id) AS pool_ids FROM bookings b LEFT JOIN outbox o ON o.booking_id = b.id ORDER BY b.created_at_utc ASC, b.id ASC';
+  'SELECT b.id, b.date, b.total_amount_cents, b.account_id, b.note, b.created_at_utc, o.status AS outbox_status, o.status_reason AS outbox_reason, (SELECT GROUP_CONCAT(DISTINCT s2.pool_id) FROM splits s2 WHERE s2.booking_id = b.id) AS pool_ids FROM bookings b LEFT JOIN outbox o ON o.booking_id = b.id ORDER BY b.created_at_utc ASC, b.id ASC';
 
 /** Buchung laden (alle Spalten). */
 export const SELECT_BOOKING_BY_ID =
@@ -177,16 +178,90 @@ export const SELECT_SPLITS_BY_BOOKING =
 export const INSERT_OUTBOX =
   'INSERT INTO outbox (operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, created_at_utc, updated_at_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
-/** Outbox-Zeile einer Buchung (operation_id + status). */
+/** Outbox-Zeile einer Buchung (operation_id + status + Ablehnungsgrund). */
 export const SELECT_OUTBOX_BY_BOOKING =
-  'SELECT operation_id, status FROM outbox WHERE booking_id = ?';
+  'SELECT operation_id, status, status_reason FROM outbox WHERE booking_id = ?';
 
-/** Payload+Hash einer noch queued Outbox-Zeile ersetzen (sonst 0 Zeilen). */
+/**
+ * Payload+Hash einer änderbaren Outbox-Zeile ersetzen (sonst 0 Zeilen).
+ * Schritt 9 (Design D7): `queued` UND `rejected` sind änderbar — die
+ * Korrektur nach Ablehnung setzt den Status zurück auf `queued` und
+ * leert den Ablehnungsgrund; `confirmed` bleibt gesperrt.
+ * Values: `[payload, hash, 'queued', nowIso, operationId, 'queued', 'rejected']`.
+ */
 export const UPDATE_OUTBOX_PAYLOAD =
-  'UPDATE outbox SET payload = ?, payload_hash = ?, updated_at_utc = ? WHERE operation_id = ? AND status = ?';
+  'UPDATE outbox SET payload = ?, payload_hash = ?, status = ?, status_reason = NULL, updated_at_utc = ? WHERE operation_id = ? AND status IN (?, ?)';
 
 /** Outbox-Zeile löschen (wirkt nichts, wenn sie fehlt). */
 export const DELETE_OUTBOX = 'DELETE FROM outbox WHERE operation_id = ?';
+
+// ---------- Sync (Schritt 9, Batch B) ----------
+
+/**
+ * Outbox-Zeilen im Sendezustand, in der Sende-Reihenfolge (Design D5/D6):
+ * `created_at_utc` aufsteigend, dann `operation_id` aufsteigend.
+ * Values: `['queued']`.
+ */
+export const SELECT_OUTBOX_QUEUED =
+  'SELECT operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, created_at_utc FROM outbox WHERE status = ? ORDER BY created_at_utc ASC, operation_id ASC';
+
+/** Anzahl queued Outbox-Zeilen. Values: `['queued']`. */
+export const COUNT_OUTBOX_QUEUED =
+  'SELECT COUNT(*) AS n FROM outbox WHERE status = ?';
+
+/**
+ * Komplette Outbox-Zeile nach Operation-ID (CAS-Vorabfrage, Review-
+ * Befund P1, Batch B): Status und Hash des gespeicherten Inhalts
+ * lesen, um Quittung/Ablehnung an den tatsächlich gesendeten Inhalt
+ * zu binden.
+ */
+export const SELECT_OUTBOX_BY_OPERATION =
+  'SELECT operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, status, status_reason, created_at_utc FROM outbox WHERE operation_id = ?';
+
+/**
+ * Outbox-Zeilen in sendbarem Zustand, in der Sende-Reihenfolge:
+ * `queued` UND `sending`. `sending` deckt unklare Übertragungen ab
+ * (z. B. App-Abbruch/Neustart mitten in der Sendung): Das erneute
+ * Senden mit derselben ID und demselben Inhalt ist auf dem Host
+ * idempotent (Design D5). Values: `['queued', 'sending']`.
+ */
+export const SELECT_OUTBOX_SYNCABLE =
+  'SELECT operation_id, device_id, type, booking_id, payload, payload_hash, expected_base_revision, created_at_utc FROM outbox WHERE status IN (?, ?) ORDER BY created_at_utc ASC, operation_id ASC';
+
+/**
+ * Atomare Send-Reservierung (Review-Befund P1, Batch B): `queued` →
+ * `sending`. Ab diesem Punkt ist das Payload eingefroren: `update`/
+ * `discard` verweigern `sending`, und Wiederholungen senden exakt den
+ * reservierten Inhalt. Values: `['sending', nowIso, operationId, 'queued']`.
+ */
+export const UPDATE_OUTBOX_SENDING =
+  'UPDATE outbox SET status = ?, updated_at_utc = ? WHERE operation_id = ? AND status = ?';
+
+/**
+ * Quittung nach explizitem `ack` des Hosts (Design D6/D7, Review-
+ * Befund P1): Status `confirmed` + erwartete Basisrevision aus der
+ * Push-Antwort. CAS auf `sending` UND den Hash des tatsächlich
+ * gesendeten Payloads — die Quittung ist an den gesendeten Inhalt
+ * gebunden. Values:
+ * `['confirmed', baseRevision, nowIso, operationId, 'sending', sentPayloadHash]`.
+ */
+export const UPDATE_OUTBOX_CONFIRMED =
+  'UPDATE outbox SET status = ?, expected_base_revision = ?, updated_at_utc = ? WHERE operation_id = ? AND status = ? AND payload_hash = ?';
+
+/**
+ * Ablehnung durch den Host (400/409, Design D7, Review-Befund P1):
+ * Status `rejected` + Grund (UI-Meldung, keine Finanzdaten). Nur aus
+ * `sending` mit dem Hash des tatsächlich gesendeten Payloads —
+ * `confirmed` geht nie zurück auf `rejected`.
+ * Values:
+ * `['rejected', reason, nowIso, operationId, 'sending', sentPayloadHash]`.
+ */
+export const UPDATE_OUTBOX_REJECTED =
+  'UPDATE outbox SET status = ?, status_reason = ?, updated_at_utc = ? WHERE operation_id = ? AND status = ? AND payload_hash = ?';
+
+/** Fachrevision der Buchung aus der Push-Antwort (Design D6). */
+export const UPDATE_BOOKING_BASE_REVISION =
+  'UPDATE bookings SET base_revision = ? WHERE id = ?';
 
 /** Entwurf anlegen oder ersetzen (created_at_utc bleibt bei bestehendem Entwurf erhalten). */
 export const UPSERT_DRAFT =

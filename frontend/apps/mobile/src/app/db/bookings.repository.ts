@@ -21,7 +21,9 @@ import {
   ReferenceCatalog,
   SnapshotRepository,
 } from './snapshot.repository';
+import { OriginWriteLock } from '../sync/origin-write-lock';
 import {
+  COUNT_OUTBOX_QUEUED,
   DELETE_BOOKING,
   DELETE_OUTBOX,
   DELETE_SPLITS,
@@ -31,15 +33,34 @@ import {
   SELECT_BOOKING_BY_ID,
   SELECT_BOOKING_LIST,
   SELECT_OUTBOX_BY_BOOKING,
+  SELECT_OUTBOX_BY_OPERATION,
+  SELECT_OUTBOX_QUEUED,
+  SELECT_OUTBOX_SYNCABLE,
   SELECT_SPLITS_BY_BOOKING,
   UPDATE_BOOKING,
+  UPDATE_BOOKING_BASE_REVISION,
+  UPDATE_OUTBOX_CONFIRMED,
   UPDATE_OUTBOX_PAYLOAD,
+  UPDATE_OUTBOX_REJECTED,
+  UPDATE_OUTBOX_SENDING,
   selectMetaSet,
   upsertMetaSet,
 } from './statements';
 
 /** Meta-Key der stabilen Geräte-ID (Design D1; UUIDv4). */
 export const DEVICE_ID_META_KEY = 'device.id';
+
+/**
+ * Meta-Key der Herkunfts-Version (Schritt 9, Review-Befund P1 2,
+ * 19.11.2026): monoton wachsende Ganzzahl, die NUR der
+ * Setup-Commit bei erfolgreichem Hostwechsel erhöht. `save` erfasst
+ * die Version am Anfang des Aufrufs (bzw. nimmt sie vom Aufrufer —
+ * für UI-Eingaben die Version beim Formularladen) und prüft sie
+ * nach Erwerb der `OriginWriteLock` erneut: Eine wartende Anlage
+ * darf nie still unter der neuen Herkunft validiert und gespeichert
+ * werden (Abweichung → `OriginConflictError`).
+ */
+export const ORIGIN_VERSION_META_KEY = 'sync.origin_version';
 
 /**
  * UUIDv4 (Muster `app/sqlite.service.ts`): `crypto.randomUUID()` im
@@ -77,8 +98,10 @@ function newId(): string {
  * Haupt-Batch; sie gehört nicht zum D7-Batch (Buchung + Splits +
  * Outbox + Zähler).
  *
- * Nur `queued`-Buchungen dürfen geändert oder verworfen werden — der
- * Host hat die Operation dann nie gesehen (Design D4).
+ * Nur `queued`- und `rejected`-Buchungen dürfen geändert oder
+ * verworfen werden (Schritt 9, Design D7) — der Host hat die Operation
+ * dann nie angenommen. `confirmed` bleibt gesperrt (Korrektur ist
+ * Schritt 10).
  */
 
 /** Validierungsfehler: `reason` maschinell unterscheidbar. */
@@ -111,16 +134,55 @@ export class BookingValidationError extends Error {
   }
 }
 
+/**
+ * Herkunftskonflikt (Schritt 9, Review-Befund P1 2, 19.11.2026): Die
+ * Verbindungsherkunft (Host) hat sich zwischen Start der Anlage und
+ * ihrem Write geändert — z. B. ein Setup-Hostwechsel, der während
+ * des Wartens auf die `OriginWriteLock` committet wurde. Die Anlage
+ * wird NICHT gespeichert; die UI erhält die Formulardaten und
+ * meldet den Konflikt sichtbar.
+ */
+export class OriginConflictError extends Error {
+  constructor(
+    readonly capturedVersion: number,
+    readonly currentVersion: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'OriginConflictError';
+  }
+}
+
 /** Zustandsfehler: `reason` maschinell unterscheidbar. */
 export class BookingStateError extends Error {
   constructor(
-    readonly reason: 'not_found' | 'not_queued' | 'duplicate_operation',
+    readonly reason:
+      | 'not_found'
+      | 'not_queued'
+      | 'duplicate_operation'
+      // Schritt 9, Review-Befund P1 (Quittung an gesendeten Inhalt
+      // binden):
+      | 'payload_conflict'
+      | 'unexpected_status',
     message: string,
   ) {
     super(message);
     this.name = 'BookingStateError';
   }
 }
+
+/**
+ * Outbox-Status einer lokalen Ausgabe. `sending` (Schritt 9, Review-
+ * Befund P1): atomare Send-Reservierung — das Payload ist eingefroren,
+ * `update`/`discard` verweigern, Wiederholungen senden denselben Inhalt
+ * mit derselben ID (Host-Idempotenz, Design D5).
+ */
+export type LocalOutboxStatus =
+  | 'queued'
+  | 'sending'
+  | 'confirmed'
+  | 'rejected'
+  | 'unknown';
 
 /** Eintrag der Eingaben-Liste (Design D2, Outbox-Status mitgeführt). */
 export interface LocalBookingListItem {
@@ -129,8 +191,10 @@ export interface LocalBookingListItem {
   totalAmountCents: number;
   accountId: string;
   note: string | null;
-  /** `queued`/`confirmed` aus der Outbox; `unknown` ohne Outbox-Zeile. */
-  status: 'queued' | 'confirmed' | 'unknown';
+  /** `queued`/`sending`/`confirmed`/`rejected`; `unknown` ohne Outbox-Zeile. */
+  status: LocalOutboxStatus;
+  /** Ablehnungsgrund aus dem Host (nur bei `rejected`, sonst null). */
+  statusReason: string | null;
   /** Technischer UTC-Zeitpunkt der Anlage (Liste-Sortierung, P5). */
   createdAtUtc: string;
   /**
@@ -170,8 +234,28 @@ export interface LocalBookingDetail {
   totalAmountCents: number;
   note: string | null;
   createdAtUtc: string;
-  status: 'queued' | 'confirmed' | 'unknown';
+  status: LocalOutboxStatus;
+  /** Ablehnungsgrund aus dem Host (nur bei `rejected`, sonst null). */
+  statusReason: string | null;
   splits: LocalBookingSplit[];
+}
+
+/**
+ * Outbox-Eintrag im Sync-Zustand (Schritt 9, Design D5/D6). `payloadJson`
+ * ist das lokale ExpenseCommand-JSON (siehe `expense-payload.ts`); der
+ * SyncService packt es zusammen mit `operationId`, `type`, `payloadHash`
+ * und `createdAtUtc` in die Push-Envelope `SyncPushRequest` des Hosts.
+ */
+export interface QueuedSyncOperation {
+  operationId: string;
+  deviceId: string;
+  /** Operationstyp (Schritt 9: immer `expense`). */
+  type: string;
+  bookingId: string;
+  payloadJson: string;
+  payloadHash: string;
+  expectedBaseRevision: number | null;
+  createdAtUtc: string;
 }
 
 /** `yyyy-MM-dd` und echtes Kalendertag (z. B. `2026-02-30` ungültig). */
@@ -283,11 +367,34 @@ function parsePoolIds(value: unknown): string[] {
 }
 
 /** Outbox-Status aus der Join-Zeile (null → unknown). */
-function mapOutboxStatus(status: unknown): 'queued' | 'confirmed' | 'unknown' {
-  if (status === 'queued' || status === 'confirmed') {
+function mapOutboxStatus(status: unknown): LocalOutboxStatus {
+  if (
+    status === 'queued' ||
+    status === 'sending' ||
+    status === 'confirmed' ||
+    status === 'rejected'
+  ) {
     return status;
   }
   return 'unknown';
+}
+
+/** Outbox-Zeile (snake_case) → `QueuedSyncOperation` (camelCase). */
+function mapOutboxRow(row: Record<string, unknown>): QueuedSyncOperation {
+  return {
+    operationId: String(row['operation_id']),
+    deviceId: String(row['device_id']),
+    type: String(row['type']),
+    bookingId: String(row['booking_id']),
+    payloadJson: String(row['payload']),
+    payloadHash: String(row['payload_hash']),
+    expectedBaseRevision:
+      row['expected_base_revision'] === null ||
+      row['expected_base_revision'] === undefined
+        ? null
+        : Number(row['expected_base_revision']),
+    createdAtUtc: String(row['created_at_utc']),
+  };
 }
 
 @Injectable({ providedIn: 'root' })
@@ -297,6 +404,7 @@ export class BookingsRepository {
   private readonly db = inject(LocalDatabase);
   private readonly meta = inject(MetaService);
   private readonly snapshotRepository = inject(SnapshotRepository);
+  private readonly originWriteLock = inject(OriginWriteLock);
 
   /**
    * Serialisiert den Read-Modify-Write-Zyklus von `save` (Zähler lesen
@@ -315,12 +423,28 @@ export class BookingsRepository {
    * ist garantiert nichts gespeichert). Bei einem `executeSet`-Fehler
    * (z. B. UNIQUE-Verstoß auf `outbox.operation_id`) rollt die
    * Transaktion komplett zurück — kein Teilzustand.
+   *
+   * Herkunftsschutz (Review-Befund P1 2, 19.11.2026): `originVersion`
+   * trägt die der Eingabedaten zugeordnete Herkunfts-Version (Meta
+   * `sync.origin_version`) — für UI-Formulare die Version beim
+   * Laden der Referenzdaten (EntryComponent). Ohne Angabe wird die
+   * aktuelle Version am Aufruf erfasst. Beide Erfassungen laufen
+   * VOR `saveChain`/`OriginWriteLock` — ein bereits wartender
+   * Auftrag wird nicht still unter neuer Herkunft umgedeutet; der
+   * verbindliche Recheck erfolgt unter der Sperre (`doSave`). Bei
+   * abweichender Herkunft wirft die Methode `OriginConflictError`
+   * (nichts wird gespeichert).
    */
   async save(
     input: LocalExpenseInput,
     now: Date,
+    originVersion?: number,
   ): Promise<{ bookingId: string; operationId: string }> {
-    const operation = this.saveChain.then(() => this.doSave(input, now));
+    const capturedOrigin =
+      originVersion ?? (await this.currentOriginVersion());
+    const operation = this.saveChain.then(
+      () => this.doSave(input, now, capturedOrigin),
+    );
     // Die Kette läuft auch bei Fehlern weiter, sonst würden spätere
     // Saves dauerhaft hängen.
     this.saveChain = operation.then(
@@ -328,6 +452,30 @@ export class BookingsRepository {
       () => undefined,
     );
     return operation;
+  }
+
+  /**
+   * Aktuelle Herkunfts-Version (Meta `sync.origin_version`; `0`,
+   * wenn nicht gesetzt). Die Version wird ausschließlich vom
+   * Setup-Commit bei erfolgreichem Hostwechsel erhöht (erster
+   * Setup initialisiert sie auf 1) — sie ist der einzige
+   * Vergleichsmaßstab für den Herkunftsnachweis in `save`.
+   */
+  async currentOriginVersion(): Promise<number> {
+    // `withSerializedRead` (nicht `meta.get`/öffentliche `query`):
+    // stellt die Initialisierung sicher (Nach-Fehl-Schlag-Retry) —
+    // bei fehlendem Plugin propagiert der Plugin-Fehler (z. B.
+    // „simulated connection failure“) wie im übrigen Anlagepfad,
+    // statt „No available connection“ (Test: fehlendes Plugin).
+    const rows = await this.db.withSerializedRead((handle) =>
+      handle.query<{ value: string }>(
+        'SELECT value FROM meta WHERE key = ?',
+        [ORIGIN_VERSION_META_KEY],
+      ),
+    );
+    const raw = rows[0]?.value ?? null;
+    const parsed = raw === null ? Number.NaN : Number.parseInt(raw, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
   }
 
   /**
@@ -363,6 +511,48 @@ export class BookingsRepository {
   }
 
   private async doSave(
+    input: LocalExpenseInput,
+    now: Date,
+    capturedOrigin: number,
+  ): Promise<{ bookingId: string; operationId: string }> {
+    // Herkunfts-Schreibschutz (Review P1, 19.11.2026): Der komplette
+    // Anlagepfad — Referenzvalidierung gegen den Snapshot, Zähler-/ und
+    // Geräte-ID-Lesung, finaler Schreib-Batch — läuft unter derselben
+    // Sperre wie der verbindungsändernde Setup-Commit (OriginWriteLock).
+    // Kein Hostwechsel kann zwischen Validierungsbasis und Schreib-
+    // vorgang erfolgen, und eine Anlage unter dem alten Host verhindert
+    // den Hostwechsel-Commit — eine A-Eingabe kann nicht still an B
+    // landen. `update`/`discard` benötigen die Sperre nicht: Sie können
+    // keine der Herkunftsprüfung unsichtbaren neuen Eingaben erzeugen.
+    //
+    // Herkunft-Recheck unter der Sperre (Review P1 2, 19.11.2026): Die
+    // FIFO-Reihenfolge allein schützt nur den laufenden Abschnitt —
+    // ein HINTER dem Setup-Commit wartender Auftrag würde sonst nach
+    // dem Commit gegen das neue Snapshot validiert und bei
+    // identischen Referenz-IDs (z. B. geklonte Datenbestände) still
+    // unter der neuen Herkunft gespeichert. Die erfasste Version
+    // (vor `saveChain`/Sperre, siehe `save`) wird daher erst nach
+    // Erwerb der Sperre mit der aktuellen verglichen: Ein
+    // Hostwechsel-Commit kann die Version nur unter derselben
+    // Sperre erhöhen, die Abweichung ist hier exakt erkennbar und
+    // wird mit `OriginConflictError` abgelehnt — die Anlage wird
+    // weder gespeichert noch als neue Eingabe gesendet.
+    return this.originWriteLock.run(async () => {
+      const currentOrigin = await this.currentOriginVersion();
+      if (currentOrigin !== capturedOrigin) {
+        throw new OriginConflictError(
+          capturedOrigin,
+          currentOrigin,
+          'Die Verbindung hat sich während des Speicherns geändert '
+            + '(Hostwechsel). Die Eingabe wurde nicht gespeichert — '
+            + 'bitte prüfen und erneut speichern.',
+        );
+      }
+      return this.writeExpense(input, now);
+    });
+  }
+
+  private async writeExpense(
     input: LocalExpenseInput,
     now: Date,
   ): Promise<{ bookingId: string; operationId: string }> {
@@ -442,7 +632,7 @@ export class BookingsRepository {
     // Outbox-Payload aktualisieren. Keine Zähler-Änderung —
     // operationId bleibt.
     await this.db.withWriteTransaction(async (tx) => {
-      const { operationId } = await this.loadQueued(bookingId, tx);
+      const { operationId } = await this.loadEditable(bookingId, tx);
       await tx.executeSet([
         {
           statement: UPDATE_BOOKING,
@@ -455,23 +645,32 @@ export class BookingsRepository {
         })),
         {
           statement: UPDATE_OUTBOX_PAYLOAD,
-          values: [payload, hash, nowIso, operationId, 'queued'],
+          values: [
+            payload,
+            hash,
+            'queued',
+            nowIso,
+            operationId,
+            'queued',
+            'rejected',
+          ],
         },
       ]);
     });
   }
 
   /**
-   * Queued-Ausgabe verwerfen (Design D4): Buchung + Splits + Outbox in
-   * EINER Transaktion löschen. Der Zähler wird NICHT zurückgesetzt
-   * (Operation-IDs bleiben eindeutig). Nicht queued → `not_queued`.
+   * Queued-/Rejected-Ausgabe verwerfen (Design D4/D7): Buchung +
+   * Splits + Outbox in EINER Transaktion löschen. Der Zähler wird
+   * NICHT zurückgesetzt (Operation-IDs bleiben eindeutig). Nicht
+   * änderbar (confirmed/unknown) → `not_queued`.
    */
   async discard(bookingId: string): Promise<void> {
     // Status-Prüfung und Lösch-Batch in EINER Schreibtransaktion
     // (Review-Befund P2). Explizite Lösch-Reihenfolge Splits →
     // Buchung → Outbox (Verteidigungstiefe, Design D2a).
     await this.db.withWriteTransaction(async (tx) => {
-      const { operationId } = await this.loadQueued(bookingId, tx);
+      const { operationId } = await this.loadEditable(bookingId, tx);
       await tx.executeSet([
         { statement: DELETE_SPLITS, values: [bookingId] },
         { statement: DELETE_BOOKING, values: [bookingId] },
@@ -494,6 +693,7 @@ export class BookingsRepository {
       accountId: String(row['account_id']),
       note: (row['note'] as string | null) ?? null,
       status: mapOutboxStatus(row['outbox_status']),
+      statusReason: (row['outbox_reason'] as string | null) ?? null,
       createdAtUtc: String(row['created_at_utc']),
       // `GROUP_CONCAT` liefert `null` ohne Splits; sonst
       // Kommakollation (SQLite-Standardtrenner).
@@ -531,8 +731,222 @@ export class BookingsRepository {
         outboxRows.length === 0
           ? 'unknown'
           : mapOutboxStatus(outboxRows[0]['status']),
+      statusReason:
+        outboxRows.length === 0
+          ? null
+          : ((outboxRows[0]['status_reason'] as string | null) ?? null),
       splits: splitRows.map((row) => mapSplitRow(row)),
     };
+  }
+
+  /**
+   * Outbox-Einträge im Sync-Zustand (Schritt 9, Design D5/D6), in der
+   * Sende-Reihenfolge: `created_at_utc` aufsteigend, dann
+   * `operation_id` aufsteigend. Nur `queued` — bereits abgelehnte
+   * Einträge bleiben lokal (Design D7) und werden erst durch eine
+   * Korrektur (→ `queued`) erneut sendbar.
+   */
+  async listQueuedForSync(): Promise<QueuedSyncOperation[]> {
+    const rows = await this.db.withSerializedRead((db) =>
+      db.query<Record<string, unknown>>(SELECT_OUTBOX_QUEUED, ['queued']),
+    );
+    return rows.map(mapOutboxRow);
+  }
+
+  /**
+   * Outbox-Einträge in sendbarem Zustand (Schritt 9, Review-Befund P1):
+   * `queued` UND `sending`, in der Sende-Reihenfolge. `sending` deckt
+   * unklare Übertragungen ab (z. B. App-Neustart mitten in der Sendung):
+   * Das erneute Senden mit derselben ID und demselben Inhalt ist auf
+   * dem Host idempotent (Design D5).
+   */
+  async listSyncable(): Promise<QueuedSyncOperation[]> {
+    const rows = await this.db.withSerializedRead((db) =>
+      db.query<Record<string, unknown>>(
+        SELECT_OUTBOX_SYNCABLE,
+        ['queued', 'sending'],
+      ),
+    );
+    return rows.map(mapOutboxRow);
+  }
+
+  /**
+   * Atomare Send-Reservierung (Schritt 9, Review-Befund P1): Liest die
+   * Outbox-Zeile in einer einzigen Schreibtransaktion und überführt sie
+   * — falls noch `queued` — in `sending`. Ab diesem Punkt ist der
+   * zurückgegebene Payload der eingefrorene Sendeinhalt: `update`/
+   * `discard` verweigern `sending`, und Wiederholungen (unklare
+   * Übertragung, z. B. nach App-Neustart) senden exakt diesen Inhalt
+   * mit derselben ID — der Host behandelt dieselbe ID mit gleichem
+   * Inhalt idempotent (Design D5).
+   *
+   * Bereits `sending` → der eingefrorene Inhalt wird unverändert
+   * zurückgegeben (Retry, keine neue Reservierung). `confirmed`/
+   * `rejected`/`unknown` → `BookingStateError('not_queued')`; fehlende
+   * Outbox-Zeile → `not_found`.
+   */
+  async prepareSend(
+    operationId: string,
+    now: Date,
+  ): Promise<QueuedSyncOperation> {
+    return this.db.withWriteTransaction(async (tx) => {
+      const row = await this.loadOutboxByOperation(tx, operationId);
+      const status = String(row['status']);
+      if (status === 'queued') {
+        await tx.executeSet([
+          {
+            statement: UPDATE_OUTBOX_SENDING,
+            values: ['sending', now.toISOString(), operationId, 'queued'],
+          },
+        ]);
+      } else if (status !== 'sending') {
+        throw new BookingStateError(
+          'not_queued',
+          `Operation ${operationId} ist ${status} — nur queued/sending-Operationen sind sendbar`,
+        );
+      }
+      return mapOutboxRow(row);
+    });
+  }
+
+  /** Anzahl der noch unsynchronisierten (`queued`) Outbox-Einträge. */
+  async countQueued(): Promise<number> {
+    const rows = await this.db.query<{ n: number }>(
+      COUNT_OUTBOX_QUEUED,
+      ['queued'],
+    );
+    return Number(rows[0]?.['n'] ?? 0);
+  }
+
+  /**
+   * Quittung nach explizitem `ack` des Hosts (Design D6/D7, Review-
+   * Befund P1): Outbox-Status `confirmed` + Fachrevision
+   * (`base_revision`) aus der Push-Antwort — atomar in EINER
+   * Schreibtransaktion.
+   *
+   * Die Quittung ist an den tatsächlich gesendeten Inhalt gebunden:
+   * Die Vorabfrage innerhalb der Transaktion prüft Operation, Status
+   * (`sending`) und den Payload-Hash des gesendeten Inhalts; die
+   * gewachsenen UPDATE-Statements (CAS auf Status + Hash) sind
+   * zusätzliche Abwehr — Check und Write teilen dieselbe
+   * serialisierte Schreibtransaktion (kein Check-then-Write-Fenster).
+   *
+   * - Doppel-/späte Quittung (bereits `confirmed`): no-op, die
+   *   Buchung wird NICHT erneut erhöht (Idempotenz).
+   * - Hash-Abweichung: `BookingStateError('payload_conflict')`, KEIN
+   *   Zustandswechsel — eine Abweichung bleibt sichtbar, statt
+   *   still zu quittieren.
+   * - Anderer Status (z. B. lokal `rejected`):
+   *   `BookingStateError('unexpected_status')`.
+   * - `base_revision` der Buchung wird nur mitgeupdated, wenn die
+   *   Outbox-Übergabe tatsächlich stattfindet; fehlschlägt die zweite
+   *   Statement, rollt die gesamte Transaktion zurück (kein
+   *   Teilzustand).
+   */
+  async markConfirmed(
+    bookingId: string,
+    operationId: string,
+    baseRevision: number,
+    sentPayloadHash: string,
+    now: Date,
+  ): Promise<void> {
+    await this.db.withWriteTransaction(async (tx) => {
+      const row = await this.loadOutboxByOperation(tx, operationId);
+      const status = String(row['status']);
+      if (status === 'confirmed') {
+        return; // Doppel-/späte Quittung: no-op (Idempotenz).
+      }
+      if (status !== 'sending') {
+        throw new BookingStateError(
+          'unexpected_status',
+          `Operation ${operationId} ist ${status} — Quittung ist nur aus sending möglich`,
+        );
+      }
+      if (String(row['payload_hash']) !== sentPayloadHash) {
+        throw new BookingStateError(
+          'payload_conflict',
+          `Operation ${operationId}: Quittung betrifft anderen Inhalt als lokal gespeichert`,
+        );
+      }
+      if (String(row['booking_id']) !== bookingId) {
+        throw new BookingStateError(
+          'unexpected_status',
+          `Operation ${operationId} gehört nicht zu Buchung ${bookingId}`,
+        );
+      }
+      await tx.executeSet([
+        {
+          statement: UPDATE_OUTBOX_CONFIRMED,
+          values: [
+            'confirmed',
+            baseRevision,
+            now.toISOString(),
+            operationId,
+            'sending',
+            sentPayloadHash,
+          ],
+        },
+        {
+          statement: UPDATE_BOOKING_BASE_REVISION,
+          values: [baseRevision, bookingId],
+        },
+      ]);
+    });
+  }
+
+  /**
+   * Ablehnung durch den Host (400/409, Design D7, Review-Befund P1):
+   * Outbox-Status `rejected` + Grund für die UI. Die Buchung bleibt
+   * lokal bestehen; über `update`/`discard` ist sie weiterhin
+   * bearbeitbar bzw. verwerfbar.
+   *
+   * Die Ablehnung ist an den tatsächlich gesendeten Inhalt gebunden
+   * (CAS auf `sending` + Payload-Hash). Eine Ablehnung folgt immer
+   * auf einen echten Sendeversuch (`prepareSend`), daher ist `sending`
+   * der einzige zulässige Ausgangszustand. Doppel-/späte Ablehnungen
+   * lassen die Aufzeichnungen unverändert: `rejected` → no-op;
+   * `confirmed` (späte Ablehnung nach Quittung) → no-op — eine
+   * quittierte Zeile geht NIEMALS zurück auf `rejected`. Hash-Abweichung
+   * → `BookingStateError('payload_conflict')`, kein Zustandswechsel.
+   */
+  async markRejected(
+    operationId: string,
+    reason: string,
+    sentPayloadHash: string,
+    now: Date,
+  ): Promise<void> {
+    await this.db.withWriteTransaction(async (tx) => {
+      const row = await this.loadOutboxByOperation(tx, operationId);
+      const status = String(row['status']);
+      if (status === 'rejected' || status === 'confirmed') {
+        return; // Doppel-/späte Ablehnung: no-op (kein Downgrade).
+      }
+      if (status !== 'sending') {
+        throw new BookingStateError(
+          'unexpected_status',
+          `Operation ${operationId} ist ${status} — Ablehnung ist nur aus sending möglich`,
+        );
+      }
+      if (String(row['payload_hash']) !== sentPayloadHash) {
+        throw new BookingStateError(
+          'payload_conflict',
+          `Operation ${operationId}: Ablehnung betrifft anderen Inhalt als lokal gespeichert`,
+        );
+      }
+      await tx.executeSet([
+        {
+          statement: UPDATE_OUTBOX_REJECTED,
+          values: [
+            'rejected',
+            reason,
+            now.toISOString(),
+            operationId,
+            'sending',
+            sentPayloadHash,
+          ],
+        },
+      ]);
+    });
   }
 
   /**
@@ -601,13 +1015,38 @@ export class BookingsRepository {
   }
 
   /**
-   * Buchung + Outbox-Zeile laden und prüfen, dass sie `queued` ist.
-   * Fehlende Buchung/Outbox → `not_found`; nicht queued → `not_queued`.
-   * Läuft innerhalb der Transaktion des Aufrufers (Review-Befund P2):
-   * Status-Check und Folge-Schreib-Batch teilen dieselbe
-   * Schreibtransaktion — kein Check-then-Write-Fenster in-process.
+   * Outbox-Zeile nach Operation-ID laden; fehlt → `not_found`. Läuft
+   * innerhalb der Transaktion des Aufrufers (Vorabfrage der CAS-
+   * Entscheidungen in `prepareSend`/`markConfirmed`/`markRejected`,
+   * Review-Befund P1).
    */
-  private async loadQueued(
+  private async loadOutboxByOperation(
+    tx: LocalDatabaseTransaction,
+    operationId: string,
+  ): Promise<Record<string, unknown>> {
+    const rows = await tx.query<Record<string, unknown>>(
+      SELECT_OUTBOX_BY_OPERATION,
+      [operationId],
+    );
+    if (rows.length === 0) {
+      throw new BookingStateError(
+        'not_found',
+        `Outbox-Zeile für Operation ${operationId} nicht gefunden`,
+      );
+    }
+    return rows[0];
+  }
+
+  /**
+   * Buchung + Outbox-Zeile laden und prüfen, dass sie änderbar ist
+   * (`queued` oder `rejected`, Design D7). Fehlende Buchung/Outbox →
+   * `not_found`; `sending`/`confirmed`/`unknown` → `not_queued`
+   * (`sending` ist eingefroren, Review-Befund P1). Läuft innerhalb der
+   * Transaktion des Aufrufers (Review-Befund P2): Status-Check und
+   * Folge-Schreib-Batch teilen dieselbe Schreibtransaktion — kein
+   * Check-then-Write-Fenster in-process.
+   */
+  private async loadEditable(
     bookingId: string,
     tx: LocalDatabaseTransaction,
   ): Promise<{ operationId: string }> {
@@ -630,10 +1069,10 @@ export class BookingsRepository {
     }
     const operationId = String(outboxRows[0]['operation_id']);
     const status = outboxRows[0]['status'];
-    if (status !== 'queued') {
+    if (status !== 'queued' && status !== 'rejected') {
       throw new BookingStateError(
         'not_queued',
-        `Buchung ${bookingId} ist ${String(status)} — nur queued darf geändert/verworfen werden`,
+        `Buchung ${bookingId} ist ${String(status)} — nur queued oder rejected darf geändert/verworfen werden`,
       );
     }
     return { operationId };

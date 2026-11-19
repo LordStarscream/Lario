@@ -1,5 +1,6 @@
 import type { SqlSet } from './statements';
 import {
+  COUNT_OUTBOX_QUEUED,
   DELETE_BOOKING,
   DELETE_DRAFT,
   DELETE_OUTBOX,
@@ -18,6 +19,9 @@ import {
   SELECT_ACCOUNT_STATUSES,
   SELECT_BOOKING_BY_ID,
   SELECT_CATEGORY_STATUSES,
+  SELECT_OUTBOX_BY_OPERATION,
+  SELECT_OUTBOX_QUEUED,
+  SELECT_OUTBOX_SYNCABLE,
   SELECT_POOL_STATUSES,
   SELECT_SNAPSHOT_ACCOUNTS,
   SELECT_SNAPSHOT_CATEGORIES,
@@ -31,7 +35,11 @@ import {
   SELECT_SPLITS_BY_BOOKING,
   UPSERT_DRAFT,
   UPDATE_BOOKING,
+  UPDATE_BOOKING_BASE_REVISION,
+  UPDATE_OUTBOX_CONFIRMED,
   UPDATE_OUTBOX_PAYLOAD,
+  UPDATE_OUTBOX_REJECTED,
+  UPDATE_OUTBOX_SENDING,
 } from './statements';
 
 /**
@@ -178,7 +186,7 @@ export interface FakeTaxCategoryRow {
   base_revision: number;
 }
 
-/** Outbox-Zeile (Design D4) — spiegelt die Batch-A-Spalten 1:1. */
+/** Outbox-Zeile (Design D4, Schritt 9: +status_reason). */
 export interface FakeOutboxRow {
   operation_id: string;
   device_id: string;
@@ -188,6 +196,8 @@ export interface FakeOutboxRow {
   payload_hash: string;
   expected_base_revision: number | null;
   status: string;
+  /** Ablehnungsgrund aus dem Host (nur bei `rejected`, sonst null). */
+  status_reason: string | null;
   created_at_utc: string;
   updated_at_utc: string;
 }
@@ -268,6 +278,15 @@ export interface CapacitorSqliteFakeState {
    */
   foreignKeys: boolean;
   /**
+   * Test-Option (Schritt 9): true, solange die (virtuelle) Outbox-Tabelle
+   * die Spalte `status_reason` hat (Default: true, Schema aus Schritt 9).
+   * Auf false gesetzt simuliert eine Datenbank aus Schritt 8 —
+   * `PRAGMA table_info(outbox)` meldet die Spalte dann nicht und die
+   * Migration (`ALTER TABLE … ADD COLUMN`) wirkt. `reset()` stellt true
+   * wieder her.
+   */
+  outboxHasStatusReasonColumn: boolean;
+  /**
    * Test-Option (Batch B, Abnahme (e)): executeSet wirft beim Set mit
    * diesem Index `Error('simulated failure')`. null = aus. `reset()`
    * setzt die Option zurück.
@@ -319,6 +338,7 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
     queryLog: [] as { statement: string; manualTxActive: boolean }[],
     schemaStatementsExecuted: false,
     foreignKeys: false,
+    outboxHasStatusReasonColumn: true,
     failOnStatementIndex: null as number | null,
     failOnCreateConnection: false,
     manualTxActive: false,
@@ -349,6 +369,7 @@ export const dbState: CapacitorSqliteFakeState = vi.hoisted(() => {
       state.queryLog.length = 0;
       state.schemaStatementsExecuted = false;
       state.foreignKeys = false;
+      state.outboxHasStatusReasonColumn = true;
       state.failOnStatementIndex = null;
       state.failOnCreateConnection = false;
       state.manualTxActive = false;
@@ -386,6 +407,7 @@ type StateTables = Pick<
   | 'drafts'
   | 'schemaStatementsExecuted'
   | 'foreignKeys'
+  | 'outboxHasStatusReasonColumn'
 >;
 
 function constraintError(table: string, column: string, value: string): Error {
@@ -666,17 +688,33 @@ function applySet(
           ? null
           : Number(expectedBaseRevision),
       status: String(status),
+      status_reason: null,
       created_at_utc: String(createdAtUtc),
       updated_at_utc: String(updatedAtUtc),
     });
     return;
   }
   if (stmt === normalize(UPDATE_OUTBOX_PAYLOAD)) {
-    const [payload, payloadHash, updatedAtUtc, operationId, status] =
-      values as (string | number)[];
+    // Schritt 9 (Design D7): `[payload, hash, 'queued', nowIso,
+    // operationId, 'queued', 'rejected']` — änderbar sind `queued` und
+    // `rejected`; die Korrektur setzt den Status zurück und leert den
+    // Ablehnungsgrund.
+    const [
+      payload,
+      payloadHash,
+      status,
+      updatedAtUtc,
+      operationId,
+      statusQueued,
+      statusRejected,
+    ] = values as (string | number)[];
     const row = state.outbox.get(String(operationId));
-    // WHERE operation_id = ? AND status = ? → sonst 0 Zeilen (kein Fehler).
-    if (!row || row.status !== String(status)) {
+    // WHERE operation_id = ? AND status IN (?, ?) → sonst 0 Zeilen (kein Fehler).
+    if (
+      !row ||
+      (row.status !== String(statusQueued) &&
+        row.status !== String(statusRejected))
+    ) {
       return;
     }
     // Row-Objekt ersetzen (Copy-Semantik wie echtes SQLite: früher
@@ -685,8 +723,94 @@ function applySet(
       ...row,
       payload: String(payload),
       payload_hash: String(payloadHash),
+      status: String(status),
+      status_reason: null,
       updated_at_utc: String(updatedAtUtc),
     });
+    return;
+  }
+  if (stmt === normalize(UPDATE_OUTBOX_SENDING)) {
+    // `['sending', nowIso, operationId, 'queued']` (Review-Befund P1):
+    // atomare Send-Reservierung, Wächter `AND status = 'queued'`.
+    const [status, updatedAtUtc, operationId, queuedStatus] = values as (
+      | string
+      | number
+    )[];
+    const row = state.outbox.get(String(operationId));
+    if (!row || row.status !== String(queuedStatus)) {
+      return;
+    }
+    state.outbox.set(String(operationId), {
+      ...row,
+      status: String(status),
+      updated_at_utc: String(updatedAtUtc),
+    });
+    return;
+  }
+  if (stmt === normalize(UPDATE_OUTBOX_CONFIRMED)) {
+    // `['confirmed', baseRevision, nowIso, operationId, 'sending',
+    // sentPayloadHash]` (Review-Befund P1): Wächter Status + Payload-
+    // Hash — die Quittung ist an den gesendeten Inhalt gebunden.
+    const [status, baseRevision, updatedAtUtc, operationId, sendingStatus, sentPayloadHash] =
+      values as (string | number)[];
+    const row = state.outbox.get(String(operationId));
+    if (
+      !row ||
+      row.status !== String(sendingStatus) ||
+      row.payload_hash !== String(sentPayloadHash)
+    ) {
+      return;
+    }
+    state.outbox.set(String(operationId), {
+      ...row,
+      status: String(status),
+      expected_base_revision: Number(baseRevision),
+      updated_at_utc: String(updatedAtUtc),
+    });
+    return;
+  }
+  if (stmt === normalize(UPDATE_OUTBOX_REJECTED)) {
+    // `['rejected', reason, nowIso, operationId, 'sending',
+    // sentPayloadHash]` (Design D7, Review-Befund P1): Wächter Status
+    // + Payload-Hash; `confirmed` geht nie zurück auf `rejected`.
+    const [status, reason, updatedAtUtc, operationId, sendingStatus, sentPayloadHash] =
+      values as (string | number)[];
+    const row = state.outbox.get(String(operationId));
+    if (
+      !row ||
+      row.status !== String(sendingStatus) ||
+      row.payload_hash !== String(sentPayloadHash)
+    ) {
+      return;
+    }
+    state.outbox.set(String(operationId), {
+      ...row,
+      status: String(status),
+      status_reason: String(reason),
+      updated_at_utc: String(updatedAtUtc),
+    });
+    return;
+  }
+  if (stmt === normalize(UPDATE_BOOKING_BASE_REVISION)) {
+    // `[baseRevision, bookingId]` (Design D6: Antwort des Hosts).
+    const [baseRevision, id] = values as (string | number)[];
+    const row = state.bookings.get(String(id));
+    if (!row) {
+      return;
+    }
+    state.bookings.set(String(id), {
+      ...row,
+      base_revision: Number(baseRevision),
+    });
+    return;
+  }
+  if (stmt === 'ALTER TABLE outbox ADD COLUMN status_reason TEXT') {
+    // Migration (Schritt 9): bei bereits vorhandener Spalte wirft echtes
+    // SQLite — der Code prüft vorher über `PRAGMA table_info(outbox)`.
+    if (state.outboxHasStatusReasonColumn) {
+      throw new Error('duplicate column name: status_reason');
+    }
+    state.outboxHasStatusReasonColumn = true;
     return;
   }
   if (stmt === normalize(DELETE_OUTBOX)) {
@@ -895,6 +1019,15 @@ function runQuery(state: StateTables, statement: string, values: unknown[]): unk
           pools.push(s.pool_id);
         }
       }
+      let outboxReason: string | null = null;
+      if (outboxStatus !== null) {
+        for (const o of state.outbox.values()) {
+          if (o.booking_id === b.id) {
+            outboxReason = o.status_reason;
+            break;
+          }
+        }
+      }
       return {
         id: b.id,
         date: b.date,
@@ -903,6 +1036,7 @@ function runQuery(state: StateTables, statement: string, values: unknown[]): unk
         note: b.note,
         created_at_utc: b.created_at_utc,
         outbox_status: outboxStatus,
+        outbox_reason: outboxReason,
         pool_ids: pools.length > 0 ? pools.join(',') : null,
       };
     });
@@ -919,13 +1053,116 @@ function runQuery(state: StateTables, statement: string, values: unknown[]): unk
   }
   // ── Batch B: Outbox ───────────────────────────────────────────────────
   if (stmt === normalize(SELECT_OUTBOX_BY_BOOKING)) {
-    const rows: { operation_id: string; status: string }[] = [];
+    const rows: {
+      operation_id: string;
+      status: string;
+      status_reason: string | null;
+    }[] = [];
     for (const row of state.outbox.values()) {
       if (row.booking_id === v(0)) {
-        rows.push({ operation_id: row.operation_id, status: row.status });
+        rows.push({
+          operation_id: row.operation_id,
+          status: row.status,
+          status_reason: row.status_reason,
+        });
       }
     }
     return rows;
+  }
+  // ── Schritt 9: Sync ─────────────────────────────────────────────────
+  if (stmt === normalize(SELECT_OUTBOX_BY_OPERATION)) {
+    // WHERE operation_id = ? — volle Zeile inkl. Status (CAS-Vorabfrage,
+    // Review-Befund P1).
+    const operationId = v(0);
+    const row = state.outbox.get(String(operationId));
+    if (!row) {
+      return [];
+    }
+    return [
+      {
+        operation_id: row.operation_id,
+        device_id: row.device_id,
+        type: row.type,
+        booking_id: row.booking_id,
+        payload: row.payload,
+        payload_hash: row.payload_hash,
+        expected_base_revision: row.expected_base_revision,
+        status: row.status,
+        status_reason: row.status_reason,
+        created_at_utc: row.created_at_utc,
+      },
+    ];
+  }
+  if (stmt === normalize(SELECT_OUTBOX_QUEUED)) {
+    // WHERE status = ? — Parameter wird respektiert (sonst leere Liste).
+    const status = v(0);
+    return [...state.outbox.values()]
+      .filter((o) => o.status === status)
+      .sort(
+        (a, b) =>
+          a.created_at_utc.localeCompare(b.created_at_utc) ||
+          a.operation_id.localeCompare(b.operation_id),
+      )
+      .map((o) => ({
+        operation_id: o.operation_id,
+        device_id: o.device_id,
+        type: o.type,
+        booking_id: o.booking_id,
+        payload: o.payload,
+        payload_hash: o.payload_hash,
+        expected_base_revision: o.expected_base_revision,
+        created_at_utc: o.created_at_utc,
+      }));
+  }
+  if (stmt === normalize(SELECT_OUTBOX_SYNCABLE)) {
+    // WHERE status IN (?, ?) — Parameter werden respektiert; sendbare
+    // Zeilen (queued + sending), gleiche Sortierung wie SELECT_OUTBOX_QUEUED.
+    const statusA = v(0);
+    const statusB = v(1);
+    return [...state.outbox.values()]
+      .filter((o) => o.status === statusA || o.status === statusB)
+      .sort(
+        (a, b) =>
+          a.created_at_utc.localeCompare(b.created_at_utc) ||
+          a.operation_id.localeCompare(b.operation_id),
+      )
+      .map((o) => ({
+        operation_id: o.operation_id,
+        device_id: o.device_id,
+        type: o.type,
+        booking_id: o.booking_id,
+        payload: o.payload,
+        payload_hash: o.payload_hash,
+        expected_base_revision: o.expected_base_revision,
+        created_at_utc: o.created_at_utc,
+      }));
+  }
+  if (stmt === normalize(COUNT_OUTBOX_QUEUED)) {
+    const status = v(0);
+    const count = [...state.outbox.values()].filter(
+      (o) => o.status === status,
+    ).length;
+    return [{ n: count }];
+  }
+  if (stmt === 'PRAGMA table_info(outbox)') {
+    // Migration-Prüfung (Schritt 9): Spaltenliste der virtuellen
+    // Outbox-Tabelle; `status_reason` nur, wenn die (simulierte)
+    // Datenbank die Spalte hat.
+    const columns: { name: string }[] = [
+      { name: 'operation_id' },
+      { name: 'device_id' },
+      { name: 'type' },
+      { name: 'booking_id' },
+      { name: 'payload' },
+      { name: 'payload_hash' },
+      { name: 'expected_base_revision' },
+      { name: 'status' },
+    ];
+    if (state.outboxHasStatusReasonColumn) {
+      columns.push({ name: 'status_reason' });
+    }
+    columns.push({ name: 'created_at_utc' }, { name: 'updated_at_utc' });
+    return columns;
   }
   // ── Batch B: Entwürfe ─────────────────────────────────────────────────
   if (stmt === normalize(SELECT_DRAFT_BY_ID)) {

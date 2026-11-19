@@ -6,6 +6,7 @@ import { MasterData } from './masterdata/master-data';
 import { OpeningBalance } from './opening/opening-balance';
 import { Shell } from './shell';
 import { BookingsList } from './list/bookings-list';
+import { Devices } from './devices/devices';
 
 export const routes: Routes = [
   { path: 'login', component: Login },
@@ -20,6 +21,7 @@ export const routes: Routes = [
       { path: 'anfangsbestaende', component: OpeningBalance },
       { path: 'anfangsbestaende/:id/korrektur', component: OpeningBalance },
       { path: 'stammdaten', component: MasterData },
+      { path: 'geraete', component: Devices },
     ],
   },
   { path: '**', redirectTo: '' },
