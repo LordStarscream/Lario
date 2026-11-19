@@ -483,3 +483,51 @@ eindeutig bleiben.
   Integrationstest gegen echten Host bestanden (1/1).
 
 **Schritt 9 ist wegen offener Pflichtabnahmen nicht vollständig abgenommen.**
+
+### Review-Befund P1 2 — Herkunftskonflikt bei wartender Anlage (LordStarscream, 19.11.2026, Kommentar auf `8d4104c`)
+
+**Befund:** Das Setup blockiert die Anlage (via `OriginWriteLock`), aber wenn die
+Anlage auf die Sperre wartet und der Setup-Commit (Host B) zuerst durchläuft,
+wird die A-Anlage nach dem Commit gegen Snapshot B validiert und bei
+identischen Referenz-IDs (z. B. geklonte Datenbestände) still unter der neuen
+Herkunft gespeichert. `OriginWriteLock` allein reicht nicht — die
+Herkunftsprüfung muss den Hostwechsel erkennen und die wartende Anlage ablehnen.
+
+**Behoben (19.11.2026):**
+- Neue Herkunfts-Version Meta `sync.origin_version` (`ORIGIN_VERSION_META_KEY`):
+  wird ausschließlich vom Setup-Commit erhöht — Hostwechsel → +1 (unter der
+  `OriginWriteLock`, in derselben Sektion wie der Commit), Neukopplung am selben
+  Host → Version bleibt, erster Setup → 1. Lesen + Erhöhen liegen in derselben
+  geschützten Sektion (kein paralleles Setup kann die Version dazwischen ändern).
+- `BookingsRepository.save` akzeptiert optional `originVersion` (Herkunft der
+  Eingabedaten): wird VOR `saveChain`/Sperre erfasst (ohne Angabe: aktuelle
+  Version am Aufruf) und in `doSave` unter der `OriginWriteLock` gegen die
+  aktuelle Version nachgerechnet. Abweichung → neue `OriginConflictError` (nichts
+  wird gespeichert). Der Recheck läuft durch `currentOriginVersion()` über
+  `withSerializedRead` (Initialisierung sicher, Plugin-Fehler wie im übrigen
+  Anlagepfad).
+- `EntryComponent`: erfasst die Version direkt nach dem Snapshot-Load
+  (`formOriginVersion`) und übergibt sie bei `save` — die Referenzdaten des
+  Formulars (Snapshot) sind die Validierungsbasis; `OriginConflictError` wird wie
+  `BookingValidationError` mit der Nachricht angezeigt (Formular bleibt erhalten).
+- `update`/`discard` bleiben unberührt (erzeugen keine neuen Eingaben —
+  Designentscheidung des P1-Nachgangs, unverändert).
+- Deterministischer Regressionstest in `setup-sync.spec.ts` (ListPending-Gate am
+  geschützten Read + Capture-Gate an `currentOriginVersion`): Anlage startet
+  unter A, Setup hält die `OriginWriteLock` beim geschützten Outbox-Read, Anlage
+  erfasst Version 1 hinter dem Commit, Commit erhöht auf 2 → Anlage wird mit
+  `OriginConflictError` abgelehnt; lokale Buchung bleibt leer, Host B mit
+  Device-Token 2 und Version 2 wird committet.
+
+**Nachgeprüfte Prüfungen (19.11.2026, Worktree `.worktrees/step9-sync`):**
+- `npx ng test mobile` → **316 bestanden**, 1 übersprungen (Integrationsspec ohne
+  `LARIO_SYNC_HOST`), 21 Dateien (vorher 315; +1 neuer Test).
+- `npx ng test host` → 135 bestanden, 15 Dateien (unverändert, keine Host-Änderung).
+- `npx ng lint mobile` → 0 Befunde.
+- `npx ng build mobile` → grün (Produktionsbuild mit den UI-Änderungen).
+- `DOTNET_ROOT=/home/mario/.dotnet bash scripts/test-step9-sync.sh` →
+  Integrationstest gegen echten Host bestanden (1/1, unverändert — keine
+  Host-/Sync-Änderung durch diesen Befund).
+
+**Schritt 9 ist wegen offener Pflichtabnahmen (Android-Gerät) weiterhin nicht
+vollständig abgenommen.**
