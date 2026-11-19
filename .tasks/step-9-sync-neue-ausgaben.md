@@ -334,3 +334,113 @@ prüfen + Idempotenz + Widerruf. (Browser-/Host-Smoke ≠ Android-Geräte-Abnahm
   - Alle 3 Threads beantwortet und aufgelöst (18.11.2026).
 - **Nachreview (LordStarscream, 18.11.2026, Head `fb78b4c`): „Alle drei bisherigen Befunde sind behoben. Keine neuen Befunde im geprüften Nachgang; der A1/A2-Teilstand von PR #21 ist aus Code-Review-Sicht zum Merge geeignet.“** — Prüfnachweise: Client unter Node mit abgefangenem `request()` (korrektes Envelope, `cursor` statt `after`); Quittung/Inhaltsbindung mit Original-TS + echter `node:sqlite` (update/discard während `sending` gesperrt, erneutes `prepareSend`/neue Instanz behalten exakt Payload/Hash/Operation-ID, falscher ACK-Hash und fremde Booking-ID verändern nichts); Status/Revision (confirmed bleibt bei verspäteter Ablehnung confirmed, zweites ACK mit abweichender Revision ändert weder Buchungs- noch Outboxrevision, Trigger-abgebrochenes zweites ACK → vollständiger Rollback, Status bleibt `sending`). Prüfgrenzen: .NET-Suite/Android nicht erneut ausgeführt; Freigabe gilt nur für den A1/A2-Teilstand — SyncService/Setup/UI/Integration + Geräte-Abnahmen bleiben Batches B/C. PR-Kommentar 20:01 (id 6990007072) fasst den Stand zusammen.
 - **PR #21 wartet auf Nutzer-Merge** (Reviewer-Empfehlung: A1/A2 mergebar; Merge nur auf Nutzerfreigabe).
+
+
+## Übernahme von pi — 19. November 2026
+
+Rest von Batch B und Desktop-Geräteverwaltung ergänzt. Manueller Sync im Eingaben-Tab,
+gekoppelte Gerätetokens statt Sitzungstoken für Bootstrap/Push/Pull, konsistentes
+Snapshot-Replace samt Cursor/Generationen in einer lokalen SQLite-Transaktion.
+Setup, Health und Sync teilen eine Sperre für die globale OpenAPI-Konfiguration.
+
+Verbindliche Präzisierung zu D2/D5/D6/D7: HTTP 400 wird als korrigierbare Ablehnung
+angezeigt. HTTP 409 bleibt als gesperrter Konflikt in `sending`, weil möglicherweise
+bereits eine Hostbuchung existiert; Verwerfen würde den lokalen Nachweis verlieren.
+Netzwerk-/Antwortverlust bleibt ebenfalls `sending` und wird mit identischer ID und
+identischem Inhalt wiederholt. Ein Datenbank-/Protokollgenerationswechsel stoppt vor
+Push; eine automatische Neubasierung könnte Restoreverluste verdecken. Die spätere
+kontrollierte Geräteabstimmung bleibt Schritt 17. Host- und Generationsbindung bleibt
+beim Abmelden erhalten. Neukopplung beim gleichen Host/Generation kann unbestätigte
+Sendungen unverändert fortsetzen (zweite Idempotenzstufe über stabile Buchungs-ID).
+Abmelden mit unbestätigter Sendung bleibt gesperrt.
+
+Batch-C-Smoke und Prüfgrenzen: `docs/step-9/integration-smoke.md`.
+Geräteabnahmen sind weiter offen; Schritt 9 ist noch nicht vollständig abgenommen.
+Review-Schwerpunkte: `sync.service.ts` (Quittung/Cursor/Konflikte), Setup-Persistenz
+und Herkunftsbindung, `devices.ts` (Widerruf), echter Host-Smoke.
+
+
+## Übergabe an pi — aktueller Arbeitsstand vom 19. November 2026
+
+**Nutzerauftrag:** Codex-Arbeit jetzt an pi zurückgeben. Keine Folgeetappe beginnen.
+**Wichtig: Die neue Implementierung liegt ausschließlich uncommittet in diesem Worktree:**
+`/home/mario/Projects/Lario/.worktrees/step9-sync`
+Branch: `step/9-sync-integration`, Basis `fa91eb7` (bisheriger Schritt-9-Branch).
+Der bisherige pi-Worktree `/home/mario/Projects/Lario-step9-wt` enthält die neuen
+Codeänderungen NICHT. Zum Fortsetzen in das oben genannte Arbeitsverzeichnis wechseln.
+`main` bleibt auf `85e5925`. Keine Änderungen committet, gepusht oder gemerged;
+PR #21 enthält noch den bisherigen Stand. Es laufen keine beauftragten Implementierungsagenten mehr.
+
+### Implementiert, noch nicht veröffentlicht
+
+- Desktop: `/geraete` samt Navigation, Liste, Bestätigung des Widerrufs,
+  Doppelklickschutz, Fehleranzeige; bestehende generierte Sync-Endpunkte genutzt.
+- Mobile: `sync/sync.service.ts` + `sync-connection-lock.ts` — manueller Bootstrap,
+  Push, paginierter Pull, atomarer Snapshot/Cursor/Generationen, sichere ACK-Prüfung,
+  Fortschritt/Ergebnis; `sending` bleibt bei Antwortverlust identisch wiederholbar.
+- Einrichtung: nach Login Pair + Bootstrap mit Gerätetoken; Snapshot/Auth/Sync-Meta
+  in einer lokalen Transaktion; Fehler räumt neue Kopplung best effort auf.
+  Setup/Health/Sync teilen eine Sperre gegen globale OpenAPI-Rennen.
+- Herkunftsschutz: `sync.host` und Generationen bleiben beim Abmelden erhalten;
+  Hostwechsel mit lokalen Eingaben und Generationswechsel stoppen.
+  Gleicher Host/Generation erlaubt Neukopplung mit unveränderter offener Sendung;
+  Host dedupliziert zusätzlich über stabile Buchungs-ID. Abmelden bei `sending` gesperrt.
+- Eingaben-Liste/Detail: manueller Sync, Status/Grund, `rejected` korrigierbar,
+  `sending`/`confirmed` gegen Ändern und Verwerfen gesperrt.
+- Sicherheitskorrektur aus unabhängigem Review: HTTP 409 bleibt gesperrtes `sending`
+  und stoppt den Lauf mit Konflikthinweis; nur HTTP 400 wird bearbeitbares `rejected`.
+  Das präzisiert den bisherigen Task-Entwurf, der 400/409 gleich behandelte.
+- Neue Tests: `devices/devices.spec.ts`, `setup/setup-sync.spec.ts`,
+  `sync/sync.service.spec.ts` (echte SQLite), optionale `sync/sync-host.integration.spec.ts`.
+- Neuer Smoke-Befehl: `bash scripts/test-step9-sync.sh`.
+  Doku: `docs/step-9/sync-contract.md`, `docs/step-9/integration-smoke.md`, README,
+  Implementierungsplan; `BATCH_A_CONTRACT.md` als überholter Entwurf gekennzeichnet.
+
+### Tatsächlich bestandene Prüfungen
+
+Alle folgenden Befehle liefen im neuen Worktree (Frontendbefehle unter `frontend/`):
+
+- `LANG=de_DE.UTF-8 LC_ALL=de_DE.UTF-8 /home/mario/.dotnet/dotnet test Lario.slnx -m:1 --no-restore`
+  → **573 bestanden** (API 159, Domain 214, Infrastructure 200).
+  Die frühere Doku nannte 574; diese Zahl wurde nicht übernommen. Keine .NET-Tests verändert.
+- `npm test -- --watch=false` → **135 Host + 313 Mobile bestanden**, ein optionaler
+  Host-Integrationstest im Standardlauf bewusst übersprungen.
+- `npm run lint` → Host und Mobile grün.
+- `npm run build` → beide Produktionsbuilds grün; nach letzter 409-Korrektur
+  zusätzlich `npm run build:mobile` erneut grün.
+- `DOTNET_ROOT=/home/mario/.dotnet bash scripts/test-step9-sync.sh`
+  → echter Hostbuild + **ein Integrationstest bestanden**: 20 Offline-Ausgaben,
+  echte mobile/Host-SQLite, Host-/Service-Neustart, Antwort nach Servercommit verloren,
+  Widerruf + Neukopplung + sichere Wiederholung, zwei weitere Wiederholungen,
+  exakt 20 Ausgaben, Salden 83000 Cent gesamt / Flex 57000 / Freizeit 26000;
+  erneuter Widerruf stoppt Sync, lokale Speicherung bleibt möglich.
+- `git diff --check` → grün vor Übergabe; nochmals nach Übergabedoku prüfen.
+
+Umgebungsdetails: System-`dotnet` findet ASP.NET-Runtime nicht, daher obiger
+`/home/mario/.dotnet/dotnet`-Befehl. Ohne de_DE scheitert ein bestehender API-Test
+an erwartetem Dezimalkomma. NuGet-Restore brauchte Netzwerkfreigabe; VSTest und
+Smoke brauchen Loopback außerhalb der Socket-Sandbox. `npm ci --offline` scheiterte
+am leeren temporären Cache; identische vorhandene `node_modules` aus dem bisherigen
+Step-9-Worktree wurden ins neue Arbeitsverzeichnis kopiert. Keine Abhängigkeiten geändert.
+
+### Review und nächste konkrete Schritte
+
+Unabhängige Agentreviews für Desktop, Sync, Setup und finalen Delta erfolgt;
+P1 zur lokalen Löschbarkeit nach 409 behoben und regressionsgetestet. Final kein
+neuer funktionaler Befund. Einige Kommentare alter Setup-Tests nennen noch frühere
+Callcounts/Statementpositionen; Assertions sind erhalten, nur Mocks/Anzahl ergänzt.
+
+1. Im **neuen Worktree** `git status --short --branch`, `git diff` und neue Dateien lesen
+   (untracked Dateien erscheinen nicht in `git diff --stat`!).
+2. Reviewfähigen Gesamtstand prüfen, bei weiteren Änderungen passende Tests wiederholen.
+3. Änderungen auf den bisherigen PR-Branch `step/9-sync-neue-ausgaben` bringen,
+   auftragsbezogen committen/pushen und PR #21 Beschreibung aktualisieren.
+   Branch im alten Worktree nicht unbedacht wechseln/überschreiben. Kein Merge ohne Freigabe.
+4. Geräteabnahmen auf echtem Android bleiben offen: dauerhaftes Offline-Speichern,
+   Appkill/Neustart, LAN/HTTPS/Zertifikatsvertrauen und Sync. Smoke rendert das
+   Setup-Formular nicht; es nutzt die originale HostClient-Netzwerklogik und SyncService.
+5. Native Keystore-Anbindung ist weiterhin nicht umgesetzt; bestehende lokale
+   Zugangsdatenablage aus Schritt 8 bleibt bestehen (in Vertragsdoku benannt).
+   Daher keine vollständige Sicherheits-/Geräteabnahme behaupten.
+
+**Schritt 9 ist wegen offener Pflichtabnahmen nicht vollständig abgenommen.**
