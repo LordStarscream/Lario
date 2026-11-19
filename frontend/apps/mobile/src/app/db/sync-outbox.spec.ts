@@ -29,6 +29,7 @@ import { BookingStateError, BookingsRepository } from './bookings.repository';
 import { LocalDatabase } from './local-database';
 import { MetaService } from './meta.service';
 import { SnapshotRepository } from './snapshot.repository';
+import { OriginWriteLock } from '../sync/origin-write-lock';
 import { type LocalExpenseInput } from './expense-payload';
 import { UPDATE_BOOKING_BASE_REVISION } from './statements';
 import { payloadHash } from './sha256';
@@ -245,6 +246,7 @@ describe('P1: Outbox-Zustandsmaschine (echte SQLite)', () => {
         MetaService,
         SnapshotRepository,
         BookingsRepository,
+        OriginWriteLock,
       ],
     });
     db = injector.get(LocalDatabase);

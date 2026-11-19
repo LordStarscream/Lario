@@ -443,4 +443,43 @@ Callcounts/Statementpositionen; Assertions sind erhalten, nur Mocks/Anzahl ergä
    Zugangsdatenablage aus Schritt 8 bleibt bestehen (in Vertragsdoku benannt).
    Daher keine vollständige Sicherheits-/Geräteabnahme behaupten.
 
+### Review-Befund P1 — Herkunfts-Schreibschutz (LordStarscream, 19.11.2026, Kommentar auf `3f1a64a`)
+
+**Befund:** Herkunfts- und Schreibschutz sind unzureichend. Gerät ist mit A verbunden und
+hat lokale Eingaben. Hostwechsel auf B startet; Setup prüft vor Pairing, dass keine lokalen
+Eingaben existieren. Während Setup-Netzwerk läuft, wechselt der Nutzer zur Offline-Erfassung,
+legt eine Ausgabe an und speichert. Setup meldet den Hostwechsel ab und stellt A wieder her,
+aber die Anlage läuft gegen den A-Kontext und kann danach mit der B-Bindung synchronisiert
+werden. Die Herkunft einer Eingabe muss während eines verbindungsändernden Setup-Vorgangs
+eindeutig bleiben.
+
+**Behoben (19.11.2026):**
+- Neue `OriginWriteLock` (`frontend/apps/mobile/src/app/sync/origin-write-lock.ts`):
+  serialisiert die gesamte lokale Anlage (`BookingsRepository.save` —
+  Referenzvalidierung gegen Snapshot, Zähler-/Geräte-ID-Lesung, finaler
+  Schreib-Batch) mit dem verbindungsändernden Setup-Commit (FIFO-Promise-Kette,
+  Muster `LocalDatabase.serialize`). `update`/`discard` bleiben außerhalb: Sie
+  können keine der Herkunftsprüfung unsichtbaren neuen Eingaben erzeugen.
+- `SetupComponent.saveAndLoad`: Die entscheidende Herkunftsprüfung
+  (`listPending` + Host-Wechsel) läuft zusätzlich in der geschützten Sektion
+  direkt vor dem atomaren Commit — zwischen Neuprüfung und Commit kann keine
+  neue lokale Eingabe entstehen; eine unter dem alten Host laufende Anlage
+  läuft zuerst zu Ende und verhindert dann den Commit (Herkunft bleibt A).
+  Die Frühprüfung vor dem Pairing bleibt als schnelle Feedback-Stufe (spart
+  die B-Kopplung, wenn der Wechsel ohnehin abgelehnt wird).
+- Zwei deterministische Regressionstests in `setup-sync.spec.ts` (Pair-Gate bzw.
+  Pair-Gate + Write-Gate):
+  (a) Buchung nach leerer Herkunftsprüfung, vor B-Commit → Commit blockiert,
+  Herkunft A bleibt (Meta, Laufzeit-Konfiguration, B-Kopplung widerrufen);
+  (b) unter A laufende Anlage, deren finaler Write auf den B-Commit trifft →
+  B wartet auf die Sperre, Anlage landet an A, B-Commit blockiert.
+
+**Nachgeprüfte Prüfungen (19.11.2026, Worktree `.worktrees/step9-sync`):**
+- `npx ng test mobile` → **315 bestanden**, 1 übersprungen (Integrationsspec ohne
+  `LARIO_SYNC_HOST`), 21 Dateien (vorher 313; +2 neue P1-Tests).
+- `npx ng test host` → 135 bestanden, 15 Dateien (unverändert, keine Host-Änderung).
+- `npx ng lint mobile` → 0 Befunde.
+- `DOTNET_ROOT=/home/mario/.dotnet bash scripts/test-step9-sync.sh` →
+  Integrationstest gegen echten Host bestanden (1/1).
+
 **Schritt 9 ist wegen offener Pflichtabnahmen nicht vollständig abgenommen.**

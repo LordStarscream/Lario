@@ -13,6 +13,7 @@ import { MetaService } from '../db/meta.service';
 import { SnapshotRepository } from '../db/snapshot.repository';
 import type { LocalExpenseInput } from '../db/expense-payload';
 import { SyncConnectionLock } from './sync-connection-lock';
+import { OriginWriteLock } from './origin-write-lock';
 import { SyncService, SYNC_META_KEYS } from './sync.service';
 
 let sqlite: DatabaseSync;
@@ -136,7 +137,7 @@ describe('Manuelle Synchronisation mit echter SQLite', () => {
   beforeEach(async () => {
     sqliteDir=mkdtempSync(join(tmpdir(),'lario-sync-service-'));
     sqlite=new DatabaseSync(join(sqliteDir,'mobile.db'));
-    injector=Injector.create({providers:[LocalDatabase,MetaService,SnapshotRepository,BookingsRepository,SyncConnectionLock,SyncService]});
+    injector=Injector.create({providers:[LocalDatabase,MetaService,SnapshotRepository,BookingsRepository,SyncConnectionLock,OriginWriteLock,SyncService]});
     db=injector.get(LocalDatabase); meta=injector.get(MetaService); repo=injector.get(BookingsRepository);
     service=injector.get(SyncService); lock=injector.get(SyncConnectionLock);
     await db.init();
@@ -169,7 +170,7 @@ describe('Manuelle Synchronisation mit echter SQLite', () => {
     expect(await status(id.bookingId)).toBe('sending');
     const first=vi.mocked(SyncEndpointsService.syncPush).mock.calls[0][0];
     vi.mocked(SyncEndpointsService.syncPush).mockImplementation(request=>ack(request!,'already_processed'));
-    service=Injector.create({providers:[{provide:LocalDatabase,useValue:db},MetaService,SnapshotRepository,BookingsRepository,SyncConnectionLock,SyncService]}).get(SyncService);
+    service=Injector.create({providers:[{provide:LocalDatabase,useValue:db},MetaService,SnapshotRepository,BookingsRepository,SyncConnectionLock,OriginWriteLock,SyncService]}).get(SyncService);
     await service.sync();
     expect(vi.mocked(SyncEndpointsService.syncPush).mock.calls[1][0]).toEqual(first);
     expect(await status(id.bookingId)).toBe('confirmed');

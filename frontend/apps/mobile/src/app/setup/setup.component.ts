@@ -5,6 +5,7 @@ import { LocalDatabase } from '../db/local-database';
 import { SnapshotRepository } from '../db/snapshot.repository';
 import { SYNC_META_KEYS } from '../sync/sync.service';
 import { SyncConnectionLock } from '../sync/sync-connection-lock';
+import { OriginWriteLock } from '../sync/origin-write-lock';
 import { deleteMetaSet, upsertMetaSet } from '../db/statements';
 import {
   AUTH_META_KEYS,
@@ -70,6 +71,7 @@ export class SetupComponent implements OnInit {
   private readonly db = inject(LocalDatabase);
   private readonly snapshotRepository = inject(SnapshotRepository);
   private readonly bookingsRepository = inject(BookingsRepository);
+  private readonly originWriteLock = inject(OriginWriteLock);
 
   /**
    * Formularfelder als Signals (Spec: „Signals: url (Default ''),
@@ -187,12 +189,16 @@ export class SetupComponent implements OnInit {
         now,
       );
       issuedToken = result.token;
-      const previousHost = await this.db.query<{ value: string }>(
+      const previousHostRow = await this.db.query<{ value: string }>(
         'SELECT value FROM meta WHERE key = ?', ['sync.host']);
-      const localEntries = await this.bookingsRepository.listPending();
-      if (localEntries.length > 0 && (previousHost[0]?.value ?? previous?.host) &&
-          (previousHost[0]?.value ?? previous?.host) !== url) {
-        throw new Error('Hostwechsel mit lokalen Eingaben erfordert eine kontrollierte Geräteabstimmung.');
+      const previousHostValue = previousHostRow[0]?.value ?? previous?.host;
+      // Frühprüfung (schnelles Feedback VOR Pairing/Bootstrap — spart
+      // die Kopplung, wenn der Wechsel ohnehin abgelehnt wird; die
+      // entscheidende Prüfung läuft unter Herkunfts-Schreibschutz
+      // direkt vor dem Commit, Review P1 19.11.2026):
+      const earlyEntries = await this.bookingsRepository.listPending();
+      if (hostSwitchWithLocalEntries(earlyEntries, previousHostValue, url)) {
+        throw new Error(HOST_SWITCH_WITH_ENTRIES_MESSAGE);
       }
       const device = await this.hostClient.pair();
       pairedId = device.id;
@@ -211,28 +217,45 @@ export class SetupComponent implements OnInit {
         categories: new Map(bootstrap.categories.map(dto => [dto.id, dto])),
         taxCategories: new Map(bootstrap.taxCategories.map(dto => [dto.id, dto])),
       };
-      // EINE atomare lokale Transaktion: komplettes Snapshot-Replace
-      // (4×DELETE + alle INSERT + Zeitstempel) UND die gemerkten
-      // Verbindungsdaten inkl. des ausgestellten Sitzungstokens
-      // (P2, Batch-C-Review) — all-or-nothing, kein Mischzustand
-      // (z. B. neuer Host + altes Passwort).
       const expiresAt = new Date(
         now.getTime() + result.expiresInMinutes * 60_000,
       ).toISOString();
-      await this.db.executeSet([
-        ...this.snapshotRepository.buildReplaceSets(snapshot, result.fetchedAtUtc),
-        upsertMetaSet(AUTH_META_KEYS.host, url),
-        upsertMetaSet(AUTH_META_KEYS.username, username),
-        upsertMetaSet(AUTH_META_KEYS.password, password),
-        upsertMetaSet(AUTH_META_KEYS.token, result.token),
-        upsertMetaSet(AUTH_META_KEYS.expiresAt, expiresAt),
-        upsertMetaSet('sync.host', url),
-        upsertMetaSet(SYNC_META_KEYS.deviceId, device.id),
-        upsertMetaSet(SYNC_META_KEYS.deviceToken, device.token),
-        upsertMetaSet(SYNC_META_KEYS.cursor, String(bootstrap.cursor)),
-        upsertMetaSet(SYNC_META_KEYS.bootstrapGeneration, String(bootstrap.dbGeneration)),
-        upsertMetaSet(SYNC_META_KEYS.protocolGeneration, String(bootstrap.protocolGeneration)),
-      ]);
+      // Entschiedene Herkunftsprüfung + Commit in einer gegen
+      // Buchungsanlage geschützten Sektion (Review P1, 19.11.2026):
+      // Die gesamte Anlage (BookingsRepository.save) läuft unter derselben
+      // Sperre — zwischen Neuprüfung und Commit kann keine neue lokale
+      // Eingabe entstehen, und ein unter dem alten Host laufender
+      // save() läuft zuerst zu Ende und verhindert dann den Commit.
+      // Ein zweites listPending() außerhalb der Sektion reicht nicht
+      // (Fenster zwischen Check und Write), ein Button-Guard ebenso
+      // nicht (Tabwechsel in die Offline-Erfassung während des
+      // Netzwerklaufs). Bei Blockade wirft die Sektion; der bestehende
+      // Fehlerpfad räumt die neu erzeugte B-Kopplung best-effort auf.
+      await this.originWriteLock.run(async () => {
+        const protectedEntries = await this.bookingsRepository.listPending();
+        if (hostSwitchWithLocalEntries(protectedEntries, previousHostValue, url)) {
+          throw new Error(HOST_SWITCH_WITH_ENTRIES_MESSAGE);
+        }
+        // EINE atomare lokale Transaktion: komplettes Snapshot-Replace
+        // (4×DELETE + alle INSERT + Zeitstempel) UND die gemerkten
+        // Verbindungsdaten inkl. des ausgestellten Sitzungstokens
+        // (P2, Batch-C-Review) — all-or-nothing, kein Mischzustand
+        // (z. B. neuer Host + altes Passwort).
+        await this.db.executeSet([
+          ...this.snapshotRepository.buildReplaceSets(snapshot, result.fetchedAtUtc),
+          upsertMetaSet(AUTH_META_KEYS.host, url),
+          upsertMetaSet(AUTH_META_KEYS.username, username),
+          upsertMetaSet(AUTH_META_KEYS.password, password),
+          upsertMetaSet(AUTH_META_KEYS.token, result.token),
+          upsertMetaSet(AUTH_META_KEYS.expiresAt, expiresAt),
+          upsertMetaSet('sync.host', url),
+          upsertMetaSet(SYNC_META_KEYS.deviceId, device.id),
+          upsertMetaSet(SYNC_META_KEYS.deviceToken, device.token),
+          upsertMetaSet(SYNC_META_KEYS.cursor, String(bootstrap.cursor)),
+          upsertMetaSet(SYNC_META_KEYS.bootstrapGeneration, String(bootstrap.dbGeneration)),
+          upsertMetaSet(SYNC_META_KEYS.protocolGeneration, String(bootstrap.protocolGeneration)),
+        ]);
+      });
       const { accounts, pools, categories } = snapshot;
       this.snapshotFetchedAt.set(result.fetchedAtUtc);
       this.passwordRemembered.set(true);
@@ -367,6 +390,28 @@ export class SetupComponent implements OnInit {
     this.status.set('error');
     this.message.set(message);
   }
+}
+
+const HOST_SWITCH_WITH_ENTRIES_MESSAGE =
+  'Hostwechsel mit lokalen Eingaben erfordert eine kontrollierte '
+  + 'Geräteabstimmung.';
+
+/**
+ * Hostwechsel mit lokalen Eingaben: vorhandene lokale Eingaben UND
+ * geänderter Host (ohne vorherige Hostbindung ist jeder Host erlaubt;
+ * derselbe Host = Neukopplung, ebenfalls erlaubt). `entries` ist das
+ * Ergebnis von `BookingsRepository.listPending()`.
+ */
+function hostSwitchWithLocalEntries(
+  entries: unknown[],
+  previousHost: string | undefined,
+  newHost: string,
+): boolean {
+  return (
+    entries.length > 0 &&
+    previousHost !== undefined &&
+    previousHost !== newHost
+  );
 }
 
 function describeError(error: unknown): string {

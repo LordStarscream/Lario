@@ -21,6 +21,7 @@ import {
   ReferenceCatalog,
   SnapshotRepository,
 } from './snapshot.repository';
+import { OriginWriteLock } from '../sync/origin-write-lock';
 import {
   COUNT_OUTBOX_QUEUED,
   DELETE_BOOKING,
@@ -372,6 +373,7 @@ export class BookingsRepository {
   private readonly db = inject(LocalDatabase);
   private readonly meta = inject(MetaService);
   private readonly snapshotRepository = inject(SnapshotRepository);
+  private readonly originWriteLock = inject(OriginWriteLock);
 
   /**
    * Serialisiert den Read-Modify-Write-Zyklus von `save` (Zähler lesen
@@ -438,6 +440,22 @@ export class BookingsRepository {
   }
 
   private async doSave(
+    input: LocalExpenseInput,
+    now: Date,
+  ): Promise<{ bookingId: string; operationId: string }> {
+    // Herkunfts-Schreibschutz (Review P1, 19.11.2026): Der komplette
+    // Anlagepfad — Referenzvalidierung gegen den Snapshot, Zähler-/ und
+    // Geräte-ID-Lesung, finaler Schreib-Batch — läuft unter derselben
+    // Sperre wie der verbindungsändernde Setup-Commit (OriginWriteLock).
+    // Kein Hostwechsel kann zwischen Validierungsbasis und Schreib-
+    // vorgang erfolgen, und eine Anlage unter dem alten Host verhindert
+    // den Hostwechsel-Commit — eine A-Eingabe kann nicht still an B
+    // landen. `update`/`discard` benötigen die Sperre nicht: Sie können
+    // keine der Herkunftsprüfung unsichtbaren neuen Eingaben erzeugen.
+    return this.originWriteLock.run(() => this.writeExpense(input, now));
+  }
+
+  private async writeExpense(
     input: LocalExpenseInput,
     now: Date,
   ): Promise<{ bookingId: string; operationId: string }> {

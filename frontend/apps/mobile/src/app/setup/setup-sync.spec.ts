@@ -225,6 +225,103 @@ describe('SetupComponent — Sync-Kopplung und Gerätebindung', () => {
     expect(OpenAPI.BASE).toBe(HOST);
   });
 
+  /** Paarungs-Request anhalten; gibt die Resolver-Funktion zurück. */
+  function gatePair(): (response: Response) => void {
+    const previousRouter = mockFetch.getMockImplementation()!;
+    let finishPair: ((response: Response) => void) | undefined;
+    mockFetch.mockImplementation((url: string, init?: RequestInit) =>
+      url.endsWith('/api/v1/sync/pair')
+        ? new Promise<Response>(resolve => { finishPair = resolve; })
+        : previousRouter(url, init));
+    return (response: Response) => {
+      if (finishPair === undefined) throw new Error('Paarung wurde nicht angefragt');
+      finishPair(response);
+    };
+  }
+
+  const pairResponse = (n: number): Response => jsonResponse(200, {
+    id: `device-${n}`, name: 'Lario Android', token: `device-token-${n}`,
+    createdAtUtc: '2026-11-19T00:00:00Z', revokedAtUtc: null, lastUsedAtUtc: null,
+  });
+
+  it('P1: Buchung nach leerer Herkunftsprüfung, vor B-Commit → Commit blockiert, Herkunft A bleibt', async () => {
+    await connect();
+    component.url.set('https://anderer-host.test');
+    const releasePair = gatePair();
+    const setup = component.saveAndLoad();
+    // Bis die Paarung am Gate wartet — die (leere) Herkunftsprüfung
+    // wurde bereits bestanden, Pairing/Bootstrap laufen.
+    await vi.waitFor(() => {
+      expect(mockFetch.mock.calls.some(call => String(call[0]).endsWith('/api/v1/sync/pair'))).toBe(true);
+    });
+    // Neue lokale Eingabe unter Host A während des B-Versuchs (Tabwechsel
+    // in die Offline-Erfassung).
+    await localBooking();
+    expect(dbState.bookings.size).toBe(1);
+    releasePair(pairResponse(2));
+    await setup;
+    expect(component.status()).toBe('error');
+    expect(component.message()).toContain('Hostwechsel');
+    expect(dbState.meta.get('sync.host')).toBe(HOST);
+    expect(dbState.meta.get(SYNC_META_KEYS.deviceToken)).toBe('device-token-1');
+    expect(dbState.bookings.size).toBe(1);
+    expect(OpenAPI.BASE).toBe(HOST);
+    // Fehlerpfad stellt die Laufzeit-Konfiguration auf die weiterhin
+    // gültige gespeicherte Verbindung (Session-Token) zurück;
+    // der Device-Token lebt in der sync-Meta (oben geprüft).
+    expect(OpenAPI.TOKEN).toBe('tok-1');
+    expect(mockFetch.mock.calls.some(call => String(call[0]).endsWith('/sync/devices/device-2') &&
+      (call[1] as RequestInit)?.method === 'DELETE')).toBe(true);
+  });
+
+  it('P1: unter A laufende Anlage, deren Write auf den B-Commit trifft → B wartet und blockiert, Buchung bleibt an A', async () => {
+    await connect();
+    const bookings = TestBed.inject(BookingsRepository);
+    const db = TestBed.inject(LocalDatabase);
+    component.url.set('https://anderer-host.test');
+    const releasePair = gatePair();
+    // Finalen Schreib-Batch der Anlage anhalten: A-Validierung ist
+    // bestanden, der Write ist noch offen.
+    const originalExecuteSet = db.executeSet.bind(db);
+    let writeGate: Promise<void> | null = null;
+    let releaseWrite: (() => void) | undefined;
+    db.executeSet = async (sets: Parameters<typeof originalExecuteSet>[0]) => {
+      if (writeGate === null) {
+        writeGate = new Promise<void>(resolve => { releaseWrite = resolve; });
+      }
+      await writeGate;
+      return originalExecuteSet(sets);
+    };
+    const save = bookings.save({
+      date: '2026-11-19', totalAmountCents: 100, accountId: 'acc-1', note: null,
+      splits: [{ id: 'split-1', amountCents: 100, poolId: 'pool-1', categoryId: 'cat-1', note: null, tax: null }],
+    }, new Date('2026-11-19T00:00:00Z'));
+    const setup = component.saveAndLoad();
+    // Anlage hält am Write-Gate (unter der Herkunftssperre), B-Versuch
+    // hält am Pair-Gate; die Herkunftsprüfung von B sah noch keine
+    // Eingabe.
+    await vi.waitFor(() => expect(releaseWrite).toBeDefined());
+    await vi.waitFor(() => {
+      expect(mockFetch.mock.calls.some(call => String(call[0]).endsWith('/api/v1/sync/pair'))).toBe(true);
+    });
+    expect(dbState.bookings.size).toBe(0);
+    // B läuft durch Pairing/Bootstrap bis zu seinem Commit — der wartet
+    // hinter der noch laufenden Anlage auf die Sperre.
+    releasePair(pairResponse(2));
+    releaseWrite!();
+    const saved = await save;
+    expect(dbState.bookings.size).toBe(1);
+    await setup;
+    expect(component.status()).toBe('error');
+    expect(component.message()).toContain('Hostwechsel');
+    expect(saved.bookingId).toBeDefined();
+    expect(dbState.meta.get('sync.host')).toBe(HOST);
+    expect(dbState.meta.get(SYNC_META_KEYS.deviceToken)).toBe('device-token-1');
+    expect(dbState.outbox.size).toBe(1);
+    expect(OpenAPI.BASE).toBe(HOST);
+    expect(OpenAPI.TOKEN).toBe('tok-1');
+  });
+
   it.each(['database', 'protocol'] as const)('Abmelden erhält Generationbindung und blockiert neue %s-Generation', async (kind) => {
     await connect();
     await localBooking();

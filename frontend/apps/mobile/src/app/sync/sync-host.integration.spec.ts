@@ -19,6 +19,7 @@ import { MetaService } from '../db/meta.service';
 import { SnapshotRepository } from '../db/snapshot.repository';
 import { AUTH_META_KEYS, HostClient } from '../setup/host.client';
 import { SyncConnectionLock } from './sync-connection-lock';
+import { OriginWriteLock } from './origin-write-lock';
 import { SYNC_META_KEYS, SyncService } from './sync.service';
 
 let sqlite: DatabaseSync;
@@ -97,7 +98,7 @@ async function startHost(): Promise<void> {
 
 function mobile(): Injector {
   return Injector.create({ providers: [
-    LocalDatabase, MetaService, BookingsRepository, SnapshotRepository, HostClient, SyncConnectionLock, SyncService,
+    LocalDatabase, MetaService, BookingsRepository, SnapshotRepository, HostClient, SyncConnectionLock, OriginWriteLock, SyncService,
   ] });
 }
 
