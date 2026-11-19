@@ -1,3 +1,8 @@
+> Historischer Entwurf des Batch-A-Vertrags. Maßgeblich für den implementierten
+> Wire-Vertrag sind `frontend/openapi.json`, die generierten Clients und
+> `docs/step-9/sync-contract.md`. Insbesondere Endpunktpfade und 409-/Generationsverhalten
+> dieses Entwurfs sind überholt.
+
 # Schritt 9 — Synchronisation neuer Ausgaben
 
 **Status:** aktiv (Branch `step/9-sync-neue-ausgaben` ab main `85e5925`)

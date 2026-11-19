@@ -195,6 +195,13 @@ Datei-ID, Name, Typ, Größe, Prüfsumme und Buchungsbezug speichern; Dateien au
 
 **Fertig:** Erste vollständige Strecke Einrichtung → offline erfassen → LAN synchronisieren → korrekte Desktop-Salden.
 
+**Technische Präzisierung Schritt 9 (19. November 2026):** Unklare Sendungen bleiben
+inhaltlich eingefroren bis zur eindeutigen Quittung. HTTP-409-Konflikte dürfen nicht
+als lokal verwerfbare Ablehnung erscheinen, weil bereits eine Hostbuchung bestehen
+kann. HTTP 400 erlaubt Korrektur. Datenbank-/Protokollgenerationen werden vor Push
+geprüft; bei Wechsel stoppt die Synchronisation und erhält lokale Eingaben für die
+kontrollierte Geräteabstimmung. Einrichtung und Abmelden umgehen diese Bindung nicht.
+
 ### Schritt 10 – Sync von Änderungen und Konflikten
 
 **Voraussetzung:** 6 und 9.
