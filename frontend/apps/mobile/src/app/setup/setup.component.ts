@@ -3,7 +3,9 @@ import { FormsModule } from '@angular/forms';
 import { BookingsRepository } from '../db/bookings.repository';
 import { LocalDatabase } from '../db/local-database';
 import { SnapshotRepository } from '../db/snapshot.repository';
-import { upsertMetaSet } from '../db/statements';
+import { SYNC_META_KEYS } from '../sync/sync.service';
+import { SyncConnectionLock } from '../sync/sync-connection-lock';
+import { deleteMetaSet, upsertMetaSet } from '../db/statements';
 import {
   AUTH_META_KEYS,
   HostClient,
@@ -63,6 +65,7 @@ export class SetupComponent implements OnInit {
   // Hinweis: `LocalDatabase.init` wird hier NICHT aufgerufen (Design-)
   // Entscheidung: die App-Root initialisiert die DB; `loadLocalState`
   // nutzt Repositories, die init() selbst aufrufen (idempotent).
+  private readonly connectionLock = inject(SyncConnectionLock);
   private readonly hostClient = inject(HostClient);
   private readonly db = inject(LocalDatabase);
   private readonly snapshotRepository = inject(SnapshotRepository);
@@ -161,6 +164,7 @@ export class SetupComponent implements OnInit {
       this.showError('Passwort fehlt');
       return;
     }
+    if (!this.connectionLock.tryAcquire()) return;
     this.status.set('idle');
     this.message.set(null);
     // Sperre vor dem ersten await (P2, Batch-C-Review): kein Fenster,
@@ -172,6 +176,7 @@ export class SetupComponent implements OnInit {
     // (Rollback → auth-Meta unverändert).
     let previous: StoredAuth | null = null;
     let issuedToken: string | undefined;
+    let pairedId: string | undefined;
     try {
       previous = await this.hostClient.loadAuthMeta();
       const now = new Date();
@@ -182,6 +187,30 @@ export class SetupComponent implements OnInit {
         now,
       );
       issuedToken = result.token;
+      const previousHost = await this.db.query<{ value: string }>(
+        'SELECT value FROM meta WHERE key = ?', ['sync.host']);
+      const localEntries = await this.bookingsRepository.listPending();
+      if (localEntries.length > 0 && (previousHost[0]?.value ?? previous?.host) &&
+          (previousHost[0]?.value ?? previous?.host) !== url) {
+        throw new Error('Hostwechsel mit lokalen Eingaben erfordert eine kontrollierte Geräteabstimmung.');
+      }
+      const device = await this.hostClient.pair();
+      pairedId = device.id;
+      const bootstrap = await this.hostClient.bootstrap(device, result.token);
+      const oldGeneration = await this.db.query<{value: string}>(
+        'SELECT value FROM meta WHERE key = ?', [SYNC_META_KEYS.bootstrapGeneration]);
+      const oldProtocol = await this.db.query<{value: string}>(
+        'SELECT value FROM meta WHERE key = ?', [SYNC_META_KEYS.protocolGeneration]);
+      if ((oldGeneration[0] && oldGeneration[0].value !== String(bootstrap.dbGeneration)) ||
+          (oldProtocol[0] && oldProtocol[0].value !== String(bootstrap.protocolGeneration))) {
+        throw new Error('Datenbankgeneration geändert. Einrichtung angehalten; Geräteabstimmung erforderlich.');
+      }
+      const snapshot = {
+        accounts: new Map(bootstrap.accounts.map(dto => [dto.id, dto])),
+        pools: new Map(bootstrap.pools.map(dto => [dto.id, dto])),
+        categories: new Map(bootstrap.categories.map(dto => [dto.id, dto])),
+        taxCategories: new Map(bootstrap.taxCategories.map(dto => [dto.id, dto])),
+      };
       // EINE atomare lokale Transaktion: komplettes Snapshot-Replace
       // (4×DELETE + alle INSERT + Zeitstempel) UND die gemerkten
       // Verbindungsdaten inkl. des ausgestellten Sitzungstokens
@@ -191,14 +220,20 @@ export class SetupComponent implements OnInit {
         now.getTime() + result.expiresInMinutes * 60_000,
       ).toISOString();
       await this.db.executeSet([
-        ...this.snapshotRepository.buildReplaceSets(result.snapshot, result.fetchedAtUtc),
+        ...this.snapshotRepository.buildReplaceSets(snapshot, result.fetchedAtUtc),
         upsertMetaSet(AUTH_META_KEYS.host, url),
         upsertMetaSet(AUTH_META_KEYS.username, username),
         upsertMetaSet(AUTH_META_KEYS.password, password),
         upsertMetaSet(AUTH_META_KEYS.token, result.token),
         upsertMetaSet(AUTH_META_KEYS.expiresAt, expiresAt),
+        upsertMetaSet('sync.host', url),
+        upsertMetaSet(SYNC_META_KEYS.deviceId, device.id),
+        upsertMetaSet(SYNC_META_KEYS.deviceToken, device.token),
+        upsertMetaSet(SYNC_META_KEYS.cursor, String(bootstrap.cursor)),
+        upsertMetaSet(SYNC_META_KEYS.bootstrapGeneration, String(bootstrap.dbGeneration)),
+        upsertMetaSet(SYNC_META_KEYS.protocolGeneration, String(bootstrap.protocolGeneration)),
       ]);
-      const { accounts, pools, categories } = result.snapshot;
+      const { accounts, pools, categories } = snapshot;
       this.snapshotFetchedAt.set(result.fetchedAtUtc);
       this.passwordRemembered.set(true);
       this.status.set('success');
@@ -207,6 +242,7 @@ export class SetupComponent implements OnInit {
           `${pools.size} Pools, ${categories.size} Kategorien)`,
       );
     } catch (error) {
+      if (pairedId && issuedToken) await this.hostClient.revokePair(url, issuedToken, pairedId);
       // Jeder Fehler VOR dem lokalen Commit (Host-Fehler nach Login,
       // DB-Fehler im Persist-Batch) löst dasselbe Aufräumen aus
       // (P2-Regression, Batch-C-Review):
@@ -237,6 +273,7 @@ export class SetupComponent implements OnInit {
       // ersetzt sie).
       this.showError(describeError(error));
     } finally {
+      this.connectionLock.release();
       this.busy.set(false);
     }
   }
@@ -252,6 +289,8 @@ export class SetupComponent implements OnInit {
       this.message.set('Host-Adresse fehlt');
       return;
     }
+    if (!this.connectionLock.tryAcquire()) return;
+    const previousBase = OpenAPI.BASE;
     OpenAPI.BASE = url;
     try {
       const result = await LarioHostService.getHealth();
@@ -265,6 +304,9 @@ export class SetupComponent implements OnInit {
           ? `Host antwortet mit Fehlerstatus ${String((error as ApiError).status)}`
           : 'Host nicht erreichbar',
       );
+    } finally {
+      OpenAPI.BASE = previousBase;
+      this.connectionLock.release();
     }
   }
 
@@ -280,6 +322,7 @@ export class SetupComponent implements OnInit {
     if (this.busy()) {
       return; // paralleler Vorgang läuft (P2, Batch-C-Review)
     }
+    if (!this.connectionLock.tryAcquire()) return;
     // Sperre vor dem ersten await (P2, Batch-C-Review).
     this.busy.set(true);
     try {
@@ -288,14 +331,25 @@ export class SetupComponent implements OnInit {
         this.showError('Nicht verbunden');
         return;
       }
+      if ((await this.bookingsRepository.listPending()).some(operation => operation.status === 'sending')) {
+        this.showError('Unbestätigte Sendung vorhanden. Zuerst erneut synchronisieren; Verbindung bleibt erhalten.');
+        return;
+      }
+      const pairedId = await this.db.query<{value: string}>(
+        'SELECT value FROM meta WHERE key = ?', [SYNC_META_KEYS.deviceId]);
+      if (pairedId[0]) await this.hostClient.revokePair(stored.host, stored.token, pairedId[0].value);
       await this.hostClient.logout(stored.host, stored.token);
-      await this.hostClient.clearAuthMeta();
+      await this.db.executeSet([
+        ...Object.values(AUTH_META_KEYS).map(deleteMetaSet),
+        ...[SYNC_META_KEYS.deviceId, SYNC_META_KEYS.deviceToken].map(deleteMetaSet),
+      ]);
       this.passwordRemembered.set(false);
       this.status.set('success');
       this.message.set(
         'Abgemeldet — Snapshot bleibt lokal verfügbar (Offline-Erfassung)',
       );
     } finally {
+      this.connectionLock.release();
       this.busy.set(false);
     }
   }
