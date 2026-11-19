@@ -19,6 +19,7 @@ import { BookingsRepository } from '../db/bookings.repository';
 import { SnapshotRepository } from '../db/snapshot.repository';
 import { routes } from '../app.config';
 import { EntriesComponent } from './entries.component';
+import { SyncService } from '../sync/sync.service';
 import type {
   AccountDto,
   CategoryDto,
@@ -278,4 +279,66 @@ describe('EntriesComponent (Batch E, P5)', () => {
       ),
     ).toBeNull();
   });
+
+  it('Synchronisieren benötigt Kopplung, sperrt während des Laufs und zeigt das Ergebnis', async () => {
+    const harness = await createHarness();
+    await seedSnapshot();
+    const service = TestBed.inject(SyncService);
+    await harness.navigateByUrl('/eingaben');
+    await flush();
+    harness.detectChanges();
+    const el = harness.fixture.nativeElement as HTMLElement;
+    const button = el.querySelector<HTMLButtonElement>('[data-testid="sync-start"]')!;
+    expect(button.disabled).toBe(true);
+    expect(el.textContent).toContain('Gerät zuerst');
+
+    vi.spyOn(service, 'refreshState').mockImplementation(async () => {
+      service.configured.set(true);
+      service.pending.set(2);
+    });
+    const component = harness.routeDebugElement!.componentInstance as EntriesComponent;
+    await component.refresh();
+    harness.detectChanges();
+    expect(button.disabled).toBe(false);
+    expect(el.querySelector('[data-testid="sync-pending"]')?.textContent).toContain('2 Eingaben ausstehend');
+    let finish!: () => void;
+    const syncSpy = vi.spyOn(service, 'sync').mockImplementation(async () => {
+      service.busy.set(true);
+      service.message.set('Synchronisiere 1/2 …');
+      await new Promise<void>((resolve) => { finish = resolve; });
+      service.busy.set(false);
+      service.message.set('2 übernommen, 0 bestätigt, 0 abgelehnt');
+    });
+    button.click();
+    harness.detectChanges();
+    expect(button.disabled).toBe(true);
+    expect(el.querySelector('[data-testid="sync-message"]')?.textContent).toContain('Synchronisiere 1/2');
+    await component.synchronize();
+    expect(syncSpy).toHaveBeenCalledTimes(1);
+    finish();
+    await flush();
+    harness.detectChanges();
+    expect(button.disabled).toBe(false);
+    expect(el.querySelector('[data-testid="sync-message"]')?.textContent).toContain('2 übernommen');
+  });
+
+  it('zeigt einen Syncfehler und bleibt für einen weiteren Versuch bedienbar', async () => {
+    const harness = await createHarness();
+    await seedSnapshot();
+    const service = TestBed.inject(SyncService);
+    vi.spyOn(service, 'refreshState').mockImplementation(async () => {
+      service.configured.set(true);
+    });
+    vi.spyOn(service, 'sync').mockRejectedValue(new Error('Lokaler Speicher nicht verfügbar'));
+    await harness.navigateByUrl('/eingaben');
+    await flush();
+    harness.detectChanges();
+    const el = harness.fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('[data-testid="sync-start"]')!.click();
+    await flush();
+    harness.detectChanges();
+    expect(el.querySelector('[role="alert"]')?.textContent).toContain('Lokaler Speicher nicht verfügbar');
+    expect(el.querySelector<HTMLButtonElement>('[data-testid="sync-start"]')!.disabled).toBe(false);
+  });
+
 });
