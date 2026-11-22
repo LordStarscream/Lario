@@ -598,3 +598,50 @@ automatisierbaren Prüfungen sind am Head grün. Offen bleibt nur die
 finale Review-Bestätigung/Nachverifizierung durch den Reviewer und die
 Android-Geräteabnahme (Pflichtabnahme, Gerät erforderlich) — Schritt 9
 ist danach vollständig abnehmbar. Merge in `main` nur auf Nutzerfreigabe.
+
+### Review-Befund P1 3 — Snapshot und Herkunftsversion gemeinsam lesen (LordStarscream, 22.11.2026, Kommentar auf `2eafab9`)
+
+`loadSnapshot()` und `currentOriginVersion()` liefen in **getrennten**
+serialisierten Leseabschnitten. Ein laufender Setup-Commit (Hostwechsel:
+Snapshot-Replace + `sync.origin_version`-Erhöhung, eine Sektion) konnte
+dazwischen committen — das Formular zeigte dann Stammdaten von A mit der
+Version von B (Mischpaar). Bei identischen Referenz-IDs (geklonte
+Datenbestände) akzeptierte `save()` die Eingabe still unter der neuen
+Herkunft, weil die Formular-Version der neuen Host-Generation entsprach.
+
+**Behoben (22.11.2026, `da505d7`):**
+- `SnapshotRepository.loadSnapshotWithOrigin` (neu,
+  `SnapshotWithOrigin`): Snapshot UND `sync.origin_version` in **einer**
+  `withSerializedRead`-Sektion. Der Setup-Commit steht auf derselben
+  Connection-Operations-Kette — FIFO davor (dann Paar B sichtbar) oder
+  danach (dann Paar A), nie dazwischen. Mischpaare strukturell
+  ausgeschlossen.
+- `EntryComponent`: kombiniert geladen; ohne Snapshot bleibt
+  `formOriginVersion` `null` (Save gesperrt). Bewusst kein „Version am
+  Aufruf“-Fallback — der wäre der fehlende Herkunftsnachweis.
+- `sync/origin-version.ts` (neu): `ORIGIN_VERSION_META_KEY` +
+  `parseOriginVersion` geteilt; `BookingsRepository` re-exportiert den
+  Key (bestehende Importe stabil).
+
+**Red/Grün:**
+- **Rot (Zwei-Abschnitte-Implementation, Dateizustand pro Lauf
+  verifiziert):** deterministischer Fehlschlag `expected 2 to be 1` —
+  Paar A = alter Snapshot + neue Version (13/13 Läufe).
+- **Grün (integrierte Lese):** 33 aufeinanderfolgende grüne Läufe
+  (11/11); zwei unklare Fehler unmittelbar nach dem Red/Green-Dateiwechsel
+  (1× `expected 1 to be 0`, 1× `expected 1 to be 2`) traten nur direkt
+  nach dem Dateitausch auf und sind seitdem nicht reproduzierbar —
+  danach durch File-State-Verifikation (git hash + diff) abgesichert.
+- Testaufbau: Setup A (leer) → Snapshot-Replace auf B (Host `B-…`) +
+  `version 2` in `executeSet` → Pair-Gate hält die Bootstrap-Antwort →
+  Formularlade startet (Pair-Antwort 1) → `listPending` hält Pair-Antwort 2
+  (Setup-Commit hält `OriginWriteLock` beim geschützten Outbox-Read) →
+  Paar-A-Assertions → Setup-Commit committet → Paar B. Save mit Paar A
+  → `OriginConflictError`, lokal bleibt alles leer.
+
+**Ausgeführte Prüfungen (22.11.2026, Worktree `.worktrees/step9-sync`,
+Head `da505d7`):** 11/11 `setup-sync.spec.ts` (stabil), 317 mobile
+Tests (20 Dateien, 1 übersprungen), lint host+mobile 0 Befunde,
+`build:mobile` grün.
+
+PR-Thread beantwortet und aufgelöst (Reply 22.11.2026 23:11).
