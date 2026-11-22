@@ -531,3 +531,70 @@ Herkunftsprüfung muss den Hostwechsel erkennen und die wartende Anlage ablehnen
 
 **Schritt 9 ist wegen offener Pflichtabnahmen (Android-Gerät) weiterhin nicht
 vollständig abgenommen.**
+
+### Vollständige Nachverifizierung aller Review-Befunde (22.11.2026)
+
+Auf Aufforderung („Kommentare im PR weiterbearbeiten, bis es passt“) wurden
+alle fünf Review-Befunde von PR #21 am aktuellen Head `ccd51bc` gegen den
+Code und mit den vollständigen Prüfungen nachverifiziert.
+
+**Befund-Abgleich im Code (Worktree `.worktrees/step9-sync`):**
+1. **P1 Wire-Vertrag (f5392fc):** Generierte Clients (host + mobile) und
+   `frontend/openapi.json` beschreiben exakt den Host-Vertrag —
+   `syncGetChanges` bindet `[FromQuery] cursor`/`limit`
+   (`src/Lario.Host/Api/Sync/SyncEndpoints.cs`), `SyncPushResponse` trägt
+   `status`/`bookingId`/`protocolGeneration`/`revision`/`ack`.
+   Neu-Generierung beider Clients aus dem eingecheckten `openapi.json`
+   (`npx openapi --client fetch --useUnionTypes`) → **kein Diff**.
+2. **P1 Quittung an gesendeten Inhalt (a631ab1):** `prepareSend` friert
+   `queued → sending` (CAS `WHERE status='queued'`); `markConfirmed`/
+   `markRejected` nur aus `sending` mit CAS auf Status **und**
+   `payload_hash` (`UPDATE_OUTBOX_CONFIRMED`/`UPDATE_OUTBOX_REJECTED`);
+   `update()`/`discard()` verweigern `sending`/`confirmed` via
+   `loadEditable`; Wiederholung sendet denselben eingefrorenen Inhalt
+   (`listSyncable` = queued + sending).
+3. **P2 `confirmed` als Endzustand (a631ab1):** Doppelte/späte Quittung ist
+   vor jedem Write ein no-op (`status === 'confirmed' → return`) — die
+   Buchungs-`base_revision` wird nicht mehr separat erhöht; `confirmed`
+   geht nie zurück auf `rejected`; beide Statements liegen in einer
+   `withWriteTransaction`.
+4. **P1 Herkunftsprüfung vs. parallele Anlage (8d4104c):**
+   `OriginWriteLock` serialisiert den kompletten `save`-Pfad mit dem
+   Setup-Commit; geschützte `listPending`-Neuprüfung unter derselben Sperre
+   direkt vor dem atomaren `executeSet`-Commit; B-Kopplung wird bei
+   Blockade best-effort widerrufen.
+5. **P1 wartende Anlage nach Hostwechsel (2eafab9):**
+   `sync.origin_version` wird nur vom Setup-Commit erhöht (Hostwechsel +1,
+   Neukopplung gleich, erstes Setup 1); `BookingsRepository.save` erfasst
+   die Version **vor** `saveChain`/Sperre und rechnet sie in `doSave`
+   unter der Sperre nach — Abweichung → `OriginConflictError` (nichts
+   gespeichert); `EntryComponent` übergibt die beim Formular-Load erfasste
+   Version.
+
+**Vollständig ausgeführte Prüfungen (22.11.2026, Worktree `.worktrees/step9-sync`,
+Head `ccd51bc`):**
+- Neu-Generierung OpenAPI-Clients aus eingechecktem `openapi.json` →
+  **kein Diff** (Clients im Gleichgewicht mit der Spec).
+- `npx ng test mobile` → **316 bestanden**, 1 übersprungen
+  (Integrationsspec ohne `LARIO_SYNC_HOST`), 21 Dateien.
+- `npx ng test host` → **135 bestanden**, 15 Dateien.
+- `npx ng lint mobile` + `npx ng lint host` → **0 Befunde**.
+- `npx ng build mobile` → grün (Produktionsbuild).
+- `dotnet build Lario.slnx` → **0 Warnungen, 0 Fehler**.
+- `dotnet test` → **573 bestanden**: Domain 214, Infrastructure 200,
+  Api 159 (Api-Tests im Solution-Lauf zunächst Launch-Fehler
+  „No frameworks were found“, direkt gestartet fehlerfrei —
+  Environment-Artefakt, kein Testfehler).
+- `DOTNET_ROOT=/home/mario/.dotnet bash scripts/test-step9-sync.sh` →
+  **1/1** (generierter Client gegen echten Host: Pair/Bootstrap, 20
+  Pushes, Antwortverlust nach Servercommit, idempotente Wiederholung,
+  Widerruf/Neukopplung, Pull, Salden).
+- Worktree nach allen Prüfungen **sauber** (keine unbeabsichtigten
+  Änderungen).
+
+**Fazit:** Alle fünf Review-Befunde sind im Code behoben und durch
+deterministische Tests bzw. die E2E-Smoke abgedeckt; sämtliche
+automatisierbaren Prüfungen sind am Head grün. Offen bleibt nur die
+finale Review-Bestätigung/Nachverifizierung durch den Reviewer und die
+Android-Geräteabnahme (Pflichtabnahme, Gerät erforderlich) — Schritt 9
+ist danach vollständig abnehmbar. Merge in `main` nur auf Nutzerfreigabe.
