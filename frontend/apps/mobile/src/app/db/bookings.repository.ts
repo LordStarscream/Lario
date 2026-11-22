@@ -23,6 +23,10 @@ import {
 } from './snapshot.repository';
 import { OriginWriteLock } from '../sync/origin-write-lock';
 import {
+  ORIGIN_VERSION_META_KEY,
+  parseOriginVersion,
+} from '../sync/origin-version';
+import {
   COUNT_OUTBOX_QUEUED,
   DELETE_BOOKING,
   DELETE_OUTBOX,
@@ -59,8 +63,12 @@ export const DEVICE_ID_META_KEY = 'device.id';
  * nach Erwerb der `OriginWriteLock` erneut: Eine wartende Anlage
  * darf nie still unter der neuen Herkunft validiert und gespeichert
  * werden (Abweichung → `OriginConflictError`).
+ *
+ * Definiert in `sync/origin-version.ts` (gemeinsam mit dem Parsing,
+ * das die Formularlade teilt) und hier re-exportiert, damit
+ * bestehende Importe (Setup-View, Tests) stabil bleiben.
  */
-export const ORIGIN_VERSION_META_KEY = 'sync.origin_version';
+export { ORIGIN_VERSION_META_KEY };
 
 /**
  * UUIDv4 (Muster `app/sqlite.service.ts`): `crypto.randomUUID()` im
@@ -473,9 +481,7 @@ export class BookingsRepository {
         [ORIGIN_VERSION_META_KEY],
       ),
     );
-    const raw = rows[0]?.value ?? null;
-    const parsed = raw === null ? Number.NaN : Number.parseInt(raw, 10);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+    return parseOriginVersion(rows[0]?.value ?? null);
   }
 
   /**

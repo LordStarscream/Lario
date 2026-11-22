@@ -225,17 +225,22 @@ export class EntryComponent implements OnInit {
   private formGeneration = 0;
 
   /**
-   * Herkunfts-Version (Meta `sync.origin_version`) zum Zeitpunkt des
-   * Snapshot-Loads (Review-Befund P1 2, 19.11.2026): Die Referenzdaten,
-   * aus denen die Nutzerin/die Nutzer Konten, Pools und Kategorien
-   * wählen, stammen aus dem dann geladenen Snapshot — diese Version
-   * ist der sichere Herkunftsnachweis für neue Anlagen. `save` gibt
+   * Herkunfts-Version (Meta `sync.origin_version`) des geladenen
+   * Snapshot (Review-Befund P1 2, 19.11.2026; kombinierte Lese,
+   * Review P1, 22.11.2026): Die Referenzdaten, aus denen die
+   * Nutzerin/die Nutzer Konten, Pools und Kategorien wählen, stammen
+   * aus dem dann geladenen Snapshot — die in derselben Lese-Sektion
+   * erfasste Version ist der sichere Herkunftsnachweis für neue
+   * Anlagen (ein Hostwechsel-Commit kann nicht zwischen Snapshot- und
+   * Versionslesen committen; `loadSnapshotWithOrigin`). `save` gibt
    * sie ans Repository weiter; ein Hostwechsel zwischen Laden und
    * Speichern macht sich dort als `OriginConflictError` sichtbar
    * (Formular bleibt erhalten), statt die Eingabe still unter dem
-   * neuen Host zu speichern. `null` = Snapshot-Load fehlgeschlagen
-   * (Save bleibt in dem Fall ohnehin gesperrt, `snapshot === null`)
-   * — das Repository fällt dann auf die Erfassung am Aufruf zurück.
+   * neuen Host zu speichern. `null` = kein Snapshot geladen — Save
+   * ist in dem Fall ohnehin gesperrt (`toLocalInput` liefert ohne
+   * Snapshot `null`); auf das „Repository erfasst die Version am
+   * Aufruf“-Fallback wird bewusst NICHT zurückgefallen, denn das wäre
+   * genau der fehlende Herkunftsnachweis, den der Befund verbietet.
    */
   private formOriginVersion: number | null = null;
 
@@ -266,12 +271,16 @@ export class EntryComponent implements OnInit {
       this.editLoading.set(true);
     }
     try {
-      this.snapshot.set(await this.snapshotRepository.loadSnapshot());
-      // Herkunfts-Version zum Formularladen erfassen (Review P1 2,
-      // 19.11.2026): sie gehört zur gerade geladenen
-      // Validierungsbasis — nicht die beim Speichern gültige Version.
+      // Snapshot UND Herkunfts-Version in EINER Lese-Sektion (Review
+      // P1, 22.11.2026): die Version gehört zur geladenen
+      // Validierungsbasis — ein Hostwechsel-Commit ist entweder
+      // vollständig sichtbar (neuer Snapshot + neue Version) oder
+      // vollständig unsichtbar (alter Snapshot + alte Version).
+      const { snapshot, originVersion } =
+        await this.snapshotRepository.loadSnapshotWithOrigin();
+      this.snapshot.set(snapshot);
       this.formOriginVersion =
-        await this.bookingsRepository.currentOriginVersion();
+        snapshot === null ? null : originVersion;
     } catch (e) {
       this.snapshotError.set(`Snapshot konnte nicht geladen werden: ${describeError(e)}`);
     }

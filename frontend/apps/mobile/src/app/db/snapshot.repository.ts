@@ -30,6 +30,10 @@ import type {
   PoolDto,
   TaxCategoryDto,
 } from '../../generated';
+import {
+  ORIGIN_VERSION_META_KEY,
+  parseOriginVersion,
+} from '../sync/origin-version';
 
 /**
  * Stammdaten-Snapshot der lokalen Offline-Erfassung (Schritt 8, Batch C,
@@ -49,11 +53,33 @@ import type {
  * Lese-Sektion committet — die Lese liefert niemals einen gemischten
  * alten/neuen Stand, der als gespeichert nie existierte.
  *
+ * Konsistente Herkunftspaare (Review P1, 22.11.2026): die
+ * Formularlade `loadSnapshotWithOrigin` liest Snapshot UND
+ * Herkunfts-Version (`sync.origin_version`) in derselben
+ * Lese-Sektion — ein Setup-Commit (Hostwechsel, Snapshot-Replace +
+ * Versionserhöhung) ist entweder vollständig vor oder vollständig
+ * nach der Sektion committet. Ein gemischtes Paar (alter Snapshot +
+ * neue Version) ist damit nicht mehr darstellbar: der
+ * Herkunftsnachweis gehört immer zur geladenen Validierungsbasis.
+ *
  * Der Snapshot dient (1) der Referenzvalidierung lokaler Ausgaben
  * (Buchung muss gegen `active` Stammdaten referenzieren) und
  * (2) der Offline-Auswahl in den Formularfeldern (Batch E). Er enthält
  * KEINE Salden und ist keine Saldenquelle.
  */
+
+/**
+ * Stammdaten-Snapshot mit der zugehörigen Herkunfts-Version als
+ * konsistentes Paar (Review P1, 22.11.2026): beide Werte stammen aus
+ * derselben Lese-Sektion, ein Setup-Commit kann nicht dazwischen
+ * committen. `snapshot === null` (kein geladener Snapshot) ist kein
+ * Fehler — in dem Fall gibt es keinen Herkunftsnachweis für das
+ * Formular (der Save bleibt in dem Fall ohnehin gesperrt).
+ */
+export interface SnapshotWithOrigin {
+  snapshot: MasterDataSnapshot | null;
+  originVersion: number;
+}
 
 /** Stammdaten-Snapshot im Speicherformat (id → DTO). */
 export interface MasterDataSnapshot {
@@ -173,48 +199,88 @@ export class SnapshotRepository {
    * vollständig neue Stand (Klassen-Doku).
    */
   async loadSnapshot(): Promise<MasterDataSnapshot | null> {
+    return this.db.withSerializedRead((db) => this.readSnapshot(db));
+  }
+
+  /**
+   * Snapshot UND Herkunfts-Version in EINER serialisierten Lese-Sektion
+   * lesen (Review P1, 22.11.2026): die Version gehört zur geladenen
+   * Validierungsbasis — der Setup-Commit ersetzt Snapshot UND erhöht
+   * die Version in derselben Transaktion, und diese Sektion ist
+   * atomar gegenüber ihm. Ein Formular erhält damit immer ein
+   * konsistentes Paar (alter Snapshot + alte Version ODER neuer
+   * Snapshot + neue Version), nie ein Mischpaar, das als Herkunft
+   * gespeichert nie existierte.
+   */
+  async loadSnapshotWithOrigin(): Promise<SnapshotWithOrigin> {
     return this.db.withSerializedRead(async (db) => {
-      const fetchedAt = await this.readFetchedAt(db);
-      if (fetchedAt === null) {
-        return null;
-      }
-      const accountRows = await db.query<Record<string, unknown>>(
-        SELECT_SNAPSHOT_ACCOUNTS,
-        [],
-      );
-      const poolRows = await db.query<Record<string, unknown>>(
-        SELECT_SNAPSHOT_POOLS,
-        [],
-      );
-      const categoryRows = await db.query<Record<string, unknown>>(
-        SELECT_SNAPSHOT_CATEGORIES,
-        [],
-      );
-      const taxCategoryRows = await db.query<Record<string, unknown>>(
-        SELECT_SNAPSHOT_TAX_CATEGORIES,
-        [],
-      );
-      return {
-        accounts: new Map(
-          accountRows.map((row) => [String(row['id']), mapAccountRow(row)]),
-        ),
-        pools: new Map(
-          poolRows.map((row) => [String(row['id']), mapPoolRow(row)]),
-        ),
-        categories: new Map(
-          categoryRows.map((row) => [
-            String(row['id']),
-            mapCategoryRow(row),
-          ]),
-        ),
-        taxCategories: new Map(
-          taxCategoryRows.map((row) => [
-            String(row['id']),
-            mapTaxCategoryRow(row),
-          ]),
-        ),
-      };
+      const snapshot = await this.readSnapshot(db);
+      const originVersion = await this.readOriginVersion(db);
+      return { snapshot, originVersion };
     });
+  }
+
+  /**
+   * Gespeicherten Snapshot in einer Lese-Sektion lesen (Handle-basiert;
+   * `null` ohne Zeitstempel-Meta). Geteilt von `loadSnapshot` und
+   * `loadSnapshotWithOrigin` — die Konsistenzgarantien (Klassen-Doku)
+   * gelten jeweils für die umgebende Sektion.
+   */
+  private async readSnapshot(
+    db: LocalDatabaseReadHandle,
+  ): Promise<MasterDataSnapshot | null> {
+    const fetchedAt = await this.readFetchedAt(db);
+    if (fetchedAt === null) {
+      return null;
+    }
+    const accountRows = await db.query<Record<string, unknown>>(
+      SELECT_SNAPSHOT_ACCOUNTS,
+      [],
+    );
+    const poolRows = await db.query<Record<string, unknown>>(
+      SELECT_SNAPSHOT_POOLS,
+      [],
+    );
+    const categoryRows = await db.query<Record<string, unknown>>(
+      SELECT_SNAPSHOT_CATEGORIES,
+      [],
+    );
+    const taxCategoryRows = await db.query<Record<string, unknown>>(
+      SELECT_SNAPSHOT_TAX_CATEGORIES,
+      [],
+    );
+    return {
+      accounts: new Map(
+        accountRows.map((row) => [String(row['id']), mapAccountRow(row)]),
+      ),
+      pools: new Map(
+        poolRows.map((row) => [String(row['id']), mapPoolRow(row)]),
+      ),
+      categories: new Map(
+        categoryRows.map((row) => [
+          String(row['id']),
+          mapCategoryRow(row),
+        ]),
+      ),
+      taxCategories: new Map(
+        taxCategoryRows.map((row) => [
+          String(row['id']),
+          mapTaxCategoryRow(row),
+        ]),
+      ),
+    };
+  }
+
+  /** Herkunfts-Version in einer Lese-Sektion lesen (Handle-basiert). */
+  private async readOriginVersion(
+    db: LocalDatabaseReadHandle,
+  ): Promise<number> {
+    const set = selectMetaSet(ORIGIN_VERSION_META_KEY);
+    const rows = await db.query<{ value: string }>(
+      set.statement,
+      set.values ?? [],
+    );
+    return parseOriginVersion(rows[0]?.value ?? null);
   }
 
   /**

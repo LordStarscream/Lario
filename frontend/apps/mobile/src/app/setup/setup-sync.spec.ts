@@ -15,6 +15,7 @@ import {
   OriginConflictError,
 } from '../db/bookings.repository';
 import { SetupComponent } from './setup.component';
+import { SnapshotRepository } from '../db/snapshot.repository';
 import { SyncService, SYNC_META_KEYS } from '../sync/sync.service';
 
 vi.mock('@capacitor/core', () => ({
@@ -288,7 +289,7 @@ describe('SetupComponent — Sync-Kopplung und Gerätebindung', () => {
     // Pair freigeben: Bootstrap-200, dann hält der Setup-Commit die
     // OriginWriteLock beim geschützten Outbox-Read.
     releasePair(pairResponse(2));
-    await vi.waitFor(() => expect(releaseProtectedRead).toBeDefined());
+    await vi.waitFor(() => expect(releaseProtectedRead).toBeDefined(), { timeout: 5000 });
     // Der Setup-Commit hält die Sperre; die Anlage hat noch nichts
     // geschrieben (sie wartet auf ihre Herkunfts-Erfassung).
     expect(dbState.bookings.size).toBe(0);
@@ -316,6 +317,99 @@ describe('SetupComponent — Sync-Kopplung und Gerätebindung', () => {
     expect(dbState.meta.get('sync.host')).toBe('https://anderer-host.test');
     expect(dbState.meta.get(SYNC_META_KEYS.deviceToken)).toBe('device-token-2');
     expect(dbState.meta.get(ORIGIN_VERSION_META_KEY)).toBe('2');
+  });
+
+  it('Formularlade erhält Snapshot und Herkunfts-Version als konsistentes Paar: der Hostwechsel-Commit trifft nie dazwischen (Review P1, 22.11.2026)', async () => {
+    // Review-Szenario: Die Formularlade liest den Snapshot (Validierungs-
+    // basis) und die Herkunfts-Version. In einer Implementierung mit
+    // getrennten Leseabschnitten konnte der Setup-Commit genau dazwischen
+    // committen — das Formular würde dann Snapshot A mit Versions-Nachweis
+    // B tragen und unter B validiert/spediert werden. Die kombinierte
+    // Lese-Sektion macht das Paar atomar gegenüber dem Commit (FIFO-Op-Chain
+    // + gemeinsame OriginWriteLock).
+    await connect(); // Host A: Snapshot A (Kategorie 'Essen'), Version 1
+    const bookings = TestBed.inject(BookingsRepository);
+    const snapshotRepository = TestBed.inject(SnapshotRepository);
+
+    // Host B liefert einen abweichenden Snapshot (Kategorie 'Essen B'),
+    // damit Snapshot-Anteil und Versions-Anteil des Paares unabhängig
+    // zueinander prüfbar sind.
+    const previousRouter = mockFetch.getMockImplementation()!;
+    mockFetch.mockImplementation((url: string, init?: RequestInit) =>
+      url.endsWith('/api/v1/sync/bootstrap')
+        ? Promise.resolve(jsonResponse(200, {
+            ...bootstrap,
+            dbGeneration: generation,
+            protocolGeneration: protocol,
+            categories: [{ id: 'cat-1', name: 'Essen B', parentId: null, status: 'active', baseRevision: 1, taxPreset: null }],
+          }))
+        : previousRouter(url, init));
+
+    // (1) Geschützter Outbox-Read: hält den Setup-Commit so, dass die
+    // parallele Formularlade deterministisch VOR dem Commit committet
+    // (FIFO) — der frühe Read (vor dem Pair) bleibt ungestört.
+    const originalListPending = bookings.listPending.bind(bookings);
+    let listPendingCalls = 0;
+    let releaseProtectedRead: (() => void) | undefined;
+    bookings.listPending = async () => {
+      listPendingCalls += 1;
+      if (listPendingCalls >= 2) {
+        await new Promise<void>(resolve => { releaseProtectedRead = resolve; });
+      }
+      return originalListPending();
+    };
+
+    component.url.set('https://anderer-host.test');
+    const releasePair = gatePair();
+    const setup = component.saveAndLoad();
+    const pairCalls = () => mockFetch.mock.calls
+      .filter(call => String(call[0]).endsWith('/api/v1/sync/pair')).length;
+    await vi.waitFor(() => expect(pairCalls()).toBe(2));
+
+    // Formularlade startet, während der Setup-Commit noch nicht in der
+    // Operations-Kette ist (Pair-Gate hält den Setup) — ihr Abschnitt
+    // landet damit FIFO VOR dem Commit.
+    const loadBefore = snapshotRepository.loadSnapshotWithOrigin();
+    releasePair(pairResponse(2));
+    // Bis der Setup-Commit die OriginWriteLock beim geschützten Read
+    // hält — der Commit ist jetzt in der Kette, hinter dem Lade-Abschnitt.
+    await vi.waitFor(() => expect(releaseProtectedRead).toBeDefined(), { timeout: 5000 });
+
+    // Commit FREIGEBEN, bevor die Lade awaited wird: Der Commit-Write
+    // wird in die Operations-Kette eingereiht, die Lade-Sektion ist
+    // FIFO davor. Eine Lese, die Snapshot und Version in EINER Sektion
+    // liest, committet damit vollständig vor dem Commit; eine
+    // zwei-Abschnitte-Lese (die alte Implementierung) würde ihren
+    // Versions-Read nach dem Commit einreihen und das Mischpaar
+    // A-Snapshot + Version B zurückgeben (Red/Grün-geprüft).
+    releaseProtectedRead?.();
+
+    // Paar A: alter Snapshot UND alte Version (kein Mischpaar).
+    const before = await loadBefore;
+    expect(before.originVersion).toBe(1);
+    expect(before.snapshot?.categories.get('cat-1')?.name).toBe('Essen');
+
+    await setup;
+    expect(dbState.meta.get(ORIGIN_VERSION_META_KEY)).toBe('2');
+    expect(dbState.meta.get('sync.host')).toBe('https://anderer-host.test');
+
+    // Paar B: neuer Snapshot UND neue Version.
+    const after = await snapshotRepository.loadSnapshotWithOrigin();
+    expect(after.originVersion).toBe(2);
+    expect(after.snapshot?.categories.get('cat-1')?.name).toBe('Essen B');
+
+    // Ein Formular, das Paar A trägt (geladen vor dem Wechsel), darf
+    // nach dem Wechsel keine Buchung an B erzeugen: Herkunftskonflikt,
+    // lokal bleibt alles leer, es geht nichts an B.
+    const input = {
+      date: '2026-11-19', totalAmountCents: 100, accountId: 'acc-1', note: null,
+      splits: [{ id: 'split-1', amountCents: 100, poolId: 'pool-1', categoryId: 'cat-1', note: null, tax: null }],
+    };
+    await expect(
+      bookings.save(input, new Date('2026-11-19T00:00:00Z'), before.originVersion),
+    ).rejects.toThrow(OriginConflictError);
+    expect(dbState.bookings.size).toBe(0);
+    expect(dbState.outbox.size).toBe(0);
   });
 
   it('Hostwechsel mit lokalen Eingaben lässt bisherige Kopplung und Buchung unverändert', async () => {
