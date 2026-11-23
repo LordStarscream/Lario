@@ -310,3 +310,17 @@ Branch `step/3-stammdaten` — wartet auf Nutzerabnahme/Push/Merge
 
 Nächster Schritt: 8 — Produktive mobile Offline-Erfassung (in Arbeit,
 Details: `.tasks/_index.md`).
+
+## Manuelle Synchronisation (Schritt 9)
+
+In der mobilen Einrichtung verbindet „Verbinden & Stammdaten laden“ das Gerät mit
+seinem eigenen widerrufbaren Zugang. Im Tab „Eingaben“ startet „Synchronisieren“
+die Übertragung manuell und zeigt Quittungen, Ablehnungen und Fehler. Bei unklarer
+Antwort erneut synchronisieren; die eingefrorene Eingabe wird identisch wiederholt.
+Die Desktop-Seite „Geräte“ (`/geraete`) zeigt gekoppelte Geräte und ihren Widerruf.
+Ein Widerruf verhindert Sync; lokale Offline-Erfassung bleibt möglich.
+
+Der automatisierte Durchstich mit 20 Ausgaben, echten SQLite-Dateien, Hostneustart,
+Antwortverlust, Wiederholung und Widerruf läuft über `bash scripts/test-step9-sync.sh`.
+Details und verbleibende Android-Abnahmen: [docs/step-9/integration-smoke.md](docs/step-9/integration-smoke.md).
+Wire-Vertrag und Konfliktverhalten: [docs/step-9/sync-contract.md](docs/step-9/sync-contract.md).

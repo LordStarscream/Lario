@@ -2,6 +2,7 @@ using Lario.Domain;
 using Lario.Domain.Attachments;
 using Lario.Domain.Journal;
 using Lario.Domain.MasterData;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lario.Infrastructure;
@@ -27,6 +28,189 @@ public class LarioDbContext : DbContext
     {
     }
 
+    /// <summary>
+    /// Changelog des Sync-Protokolls (Schritt 9): Jede erstellte oder
+    /// geänderte Buchungszeile erzeugt in derselben Transaktion genau
+    /// eine Änderungszeile — unabhängig vom Schreibpfad (Session-API,
+    /// Sync-Push, Korrekturen, Storno). Stammdaten-Änderungen trägt der
+    /// explizite Haken in <c>MasterDataRepository</c> ein (Design D3);
+    /// diese Zeilen zählt der Kontext nur für den Cursor mit. So entsteht
+    /// pro Änderung genau eine Zeile, ohne dass die Haken dupliziert
+    /// werden.
+    /// </summary>
+    public override int SaveChanges()
+    {
+        var neueZeilen = CollectSyncChanges();
+        var result = base.SaveChanges();
+        UpdateCursorCounter(neueZeilen);
+        return result;
+    }
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var neueZeilen = CollectSyncChanges();
+        return SaveChangesAsyncCore(neueZeilen, cancellationToken);
+    }
+
+    private async Task<int> SaveChangesAsyncCore(
+        IReadOnlyList<SyncChange> neueZeilen, CancellationToken cancellationToken)
+    {
+        var result = await base.SaveChangesAsync(cancellationToken);
+        await UpdateCursorCounterAsync(neueZeilen, cancellationToken);
+        return result;
+    }
+
+    /// <summary>
+    /// Cursor (Design D2): <c>SyncProtocolState.CursorCounter</c> spiegelt
+    /// die größte Changelog-Id. Die Zeilen haben ihre Ids erst nach dem
+    /// eigentlichen Save; der kurze Folgesave läuft über diesen Override
+    /// erneut — da dann keine Buchungsänderung mehr offen ist, fügt
+    /// <see cref="CollectSyncChanges"/> nichts hinzu (keine Rekursion).
+    /// </summary>
+    private void UpdateCursorCounter(IReadOnlyList<SyncChange> neueZeilen)
+    {
+        if (neueZeilen.Count == 0)
+            return;
+
+        var maxId = neueZeilen.Max(c => c.Id);
+        var state = SyncProtocolStates.FirstOrDefault(s => s.Id == "1");
+        if (state is not null && state.CursorCounter < maxId)
+        {
+            state.CursorCounter = maxId;
+            SaveChanges();
+        }
+    }
+
+    private async Task UpdateCursorCounterAsync(
+        IReadOnlyList<SyncChange> neueZeilen, CancellationToken cancellationToken)
+    {
+        if (neueZeilen.Count == 0)
+            return;
+
+        var maxId = neueZeilen.Max(c => c.Id);
+        var state = await SyncProtocolStates.FirstOrDefaultAsync(s => s.Id == "1", cancellationToken);
+        if (state is not null && state.CursorCounter < maxId)
+        {
+            state.CursorCounter = maxId;
+            await SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Einmaliger, gecachter Check: existiert die Changelog-Tabelle?
+    /// Auf Legacy-Datenbanken (vor Schritt 9) nicht — der Upgrade-Pfad
+    /// arbeitet dort ohne Sync-Tabellen.
+    /// </summary>
+    private bool? _syncChangelogAvailable;
+
+    private bool SyncChangelogAvailable
+    {
+        get
+        {
+            if (_syncChangelogAvailable is null)
+            {
+                try
+                {
+                    // Skalar-Abfrage von SqlQuery<T>: EF erwartet eine
+                    // Ergebnisspalte mit dem Namen "Value" (Wrapper
+                    // "SELECT s.Value FROM (…) AS s"); ohne Alias wirft die
+                    // Abfrage eine SqliteException, die diesen Check
+                    // stillschweigend deaktivieren würde.
+                    _syncChangelogAvailable = Database
+                        .SqlQuery<int>(
+                            $"SELECT COUNT(*) AS \"Value\" FROM sqlite_master WHERE type = 'table' AND name = 'sync_changes'")
+                        .FirstOrDefault() > 0;
+                }
+                catch (SqliteException)
+                {
+                    // Verbindungs-/Zugriffsproblem: konservativ kein
+                    // Changelog schreiben (die eigentliche SaveChanges
+                    // meldet dann den Fehler).
+                    _syncChangelogAvailable = false;
+                }
+            }
+
+            return _syncChangelogAvailable.Value;
+        }
+    }
+
+    /// <summary>
+    /// Sammelt die Changelog-Zeilen dieses Saves:
+    /// <list type="bullet">
+    /// <item>Neue/geänderte/gelöschte <see cref="Booking"/>-Entitäten →
+    /// je eine Zeile (Design D6: jede Buchungszeile ist eine
+    /// Changelog-Zeile, egal welcher Pfad schreibt — Session-API, Push,
+    /// Korrektur).</item>
+    /// <item>Zusätzlich werden die Changelog-Zeilen gezählt, die externe
+    /// Haken (Design D3: <c>MasterDataRepository</c>) bereits in den
+    /// Tracker gestellt haben — sie gehören zum selben Save und zählen
+    /// für den Cursor, werden aber hier nicht erneut angelegt.</item>
+    /// </list>
+    /// Stammdaten-Entitäten (Konto/Pool/Kategorie/Steuerkategorie/
+    /// Voreinstellung) werden hier bewusst NICHT gesammelt: deren Haken
+    /// liegen nach D3 in den <c>MasterDataRepository</c>-Schreibmethoden;
+    /// eine zusätzliche Sammlung würde pro Änderung zwei Zeilen erzeugen.
+    /// </summary>
+    private IReadOnlyList<SyncChange> CollectSyncChanges()
+    {
+        // Materialisieren: die Entry-Liste ist eine Live-Ansicht und
+        // würde während des Hinzufügens der Changelog-Zeilen modifiziert.
+        var entries = ChangeTracker.Entries().ToList();
+
+        // Zeilen, die ein externer Haken (D3) diesem Save schon zugewiesen
+        // hat: sie zählen für den Cursor, auch wenn der Sammel-Teil unter
+        // dem Strich nichts findet (Legacy-DB, reine Stammdaten-Änderung).
+        var zeilen = entries
+            .Where(e => e.State == EntityState.Added && e.Entity is SyncChange)
+            .Select(e => (SyncChange)e.Entity!)
+            .ToList();
+
+        var buchungen = entries
+            .Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted
+                && e.Entity is Booking)
+            .ToList();
+
+        // Legacy-Datenbank (vor Schritt 9): die Sync-Tabellen existieren
+        // noch nicht (A2-Upgrade-Pfad) — dann gehört kein Changelog dazu.
+        if (buchungen.Count > 0 && !SyncChangelogAvailable)
+        {
+            // Buchungsänderung ohne Changelog-Tabelle: die Haken-Zeilen
+            // würden auf eine nicht existierende Tabelle schreiben und
+            // den Save brechen — das kann hier nur eine Legacy-DB sein,
+            // auf der auch die Haken nicht laufen (Migration legt beide
+            // zusammen an). Defensive Abfrage, in Version 1 nicht
+            // erreichbar.
+            return zeilen;
+        }
+
+        if (buchungen.Count == 0)
+            return zeilen;
+
+        // Datenbank-Generation der Zeile (Restore erzeugt eine neue —
+        // Batch B); fehlender Zustand ist in Version 1 Generation 1.
+        var dbGeneration = SyncProtocolStates.FirstOrDefault(s => s.Id == "1")
+            ?.DbGeneration ?? 1;
+        var now = DateTime.UtcNow;
+
+        foreach (var entry in buchungen)
+        {
+            var booking = (Booking)entry.Entity!;
+            var zeile = new SyncChange
+            {
+                Id = 0,
+                DbGeneration = dbGeneration,
+                EntityType = "booking",
+                EntityId = booking.Id,
+                Revision = booking.BaseRevision,
+                OccurredAtUtc = now
+            };
+            SyncChanges.Add(zeile);
+            zeilen.Add(zeile);
+        }
+
+        return zeilen;
+    }
+
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<Pool> Pools => Set<Pool>();
     public DbSet<Category> Categories => Set<Category>();
@@ -43,6 +227,14 @@ public class LarioDbContext : DbContext
     public DbSet<ReversalDeltaRow> ReversalDeltas => Set<ReversalDeltaRow>();
     public DbSet<BookingCorrection> BookingCorrections => Set<BookingCorrection>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
+
+    // Sync-Protokoll (Schritt 9, Batch A1): Gerätekopplung, Protokoll-
+    // zustand, Changelog und Idempotenznachweise (Infrastruktur-Entitäten,
+    // siehe SyncEntities.cs).
+    public DbSet<SyncDevice> SyncDevices => Set<SyncDevice>();
+    public DbSet<SyncProtocolState> SyncProtocolStates => Set<SyncProtocolState>();
+    public DbSet<SyncChange> SyncChanges => Set<SyncChange>();
+    public DbSet<SyncOperation> SyncOperations => Set<SyncOperation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -432,6 +624,71 @@ public class LarioDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.BookingId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ---------- Sync-Protokoll (Schritt 9, Batch A1) ----------
+
+        // Gekoppeltes Gerät: das Klartext-Gerätetoken wird nicht
+        // persistiert, nur dessen SHA-256-Hash (eindeutig — ein Token
+        // gehört zu genau einem Gerät).
+        modelBuilder.Entity<SyncDevice>(e =>
+        {
+            e.ToTable("sync_devices");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(128);
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => x.TokenHash).IsUnique();
+            e.Property(x => x.CreatedAtUtc).IsRequired();
+            e.Property(x => x.RevokedAtUtc);
+            e.Property(x => x.LastUsedAtUtc);
+        });
+
+        // Protokollzustand: genau eine Zeile (Id '1'); die Zeile wird
+        // von der Migration Step9SyncProtocol angelegt und bleibt für
+        // die gesamte Lebensdauer der Datenbank erhalten.
+        modelBuilder.Entity<SyncProtocolState>(e =>
+        {
+            e.ToTable("sync_protocol_state");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(16);
+            e.Property(x => x.DbGeneration).IsRequired();
+            e.Property(x => x.ProtocolGeneration).IsRequired();
+            e.Property(x => x.CursorCounter).IsRequired();
+        });
+
+        // Changelog-Zeilen: die long-Id ist INTEGER PRIMARY KEY
+        // (rowid + AUTOINCREMENT) und damit der Cursorwert — monoton
+        // wachsend, nie gelöscht, nie wiederverwendet.
+        modelBuilder.Entity<SyncChange>(e =>
+        {
+            e.ToTable("sync_changes");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.DbGeneration).IsRequired();
+            e.Property(x => x.EntityType).HasMaxLength(32).IsRequired();
+            e.Property(x => x.EntityId).HasMaxLength(128).IsRequired();
+            e.Property(x => x.Revision).IsRequired();
+            e.Property(x => x.OccurredAtUtc).IsRequired();
+        });
+
+        // Idempotenznachweis: Komposit-PK (DeviceId, OperationId) —
+        // dieselbe Operation desselben Geräts erzeugt höchstens eine
+        // Zeile; der Unique-Constraint entscheidet parallele
+        // Doppel-Sendungen (einer gewinnt, der andere liest die
+        // bestehende Zeile oder erhält bereits verarbeitete/mismatched).
+        modelBuilder.Entity<SyncOperation>(e =>
+        {
+            e.ToTable("sync_operations");
+            e.HasKey(x => new { x.DeviceId, x.OperationId });
+            e.Property(x => x.DeviceId).HasMaxLength(128);
+            e.Property(x => x.OperationId).HasMaxLength(128);
+            e.Property(x => x.Type).HasMaxLength(32).IsRequired();
+            e.Property(x => x.PayloadHash).HasMaxLength(64).IsRequired();
+            // JSON-Text ohne Max-Length (wie BookingCorrections.Payload).
+            e.Property(x => x.PayloadJson).IsRequired();
+            e.Property(x => x.BookingId).HasMaxLength(128).IsRequired();
+            e.Property(x => x.AcceptedAtUtc).IsRequired();
         });
     }
 }

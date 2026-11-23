@@ -140,15 +140,17 @@ public class MigrationTests
         }
 
         // EF-interne Tabellen (__EFMigrationsHistory, __EFMigrationsLock) ausklammern:
-        // es müssen exakt sechzehn Fachtabellen existieren (acht aus
+        // es müssen exakt zwanzig Fachtabellen existieren (acht aus
         // Schritt 3, dazu ExpenseSplits und SplitTaxMarkings aus Schritt 4,
         // dazu TransferPurposes, ReassignmentAccounts und SettlementPositions
         // aus Schritt 5, dazu ReversalDeltas und BookingCorrections aus
-        // Schritt 6, dazu Attachments aus Schritt 7a).
+        // Schritt 6, dazu Attachments aus Schritt 7a, dazu die vier
+        // Sync-Protokoll-Tabellen aus Schritt 9: sync_devices,
+        // sync_protocol_state, sync_changes, sync_operations).
         var tables = (await db.TableNamesAsync())
             .Where(t => !t.StartsWith("__", StringComparison.Ordinal))
             .ToList();
-        Assert.Equal(16, tables.Count);
+        Assert.Equal(20, tables.Count);
     }
 }
 

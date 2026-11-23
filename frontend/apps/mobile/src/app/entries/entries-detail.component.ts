@@ -1,9 +1,9 @@
 // Batch E (P5) — Eingaben-Detail: eine lokale Ausgabe im Vollbild —
 // Felder, Splits (inkl. Steuer-Block) und Aktionen:
-// - „Ändern“ (nur queued): Link `/erfassen/:bookingId` (die
+// - „Ändern“ (queued/rejected): Link `/erfassen/:bookingId` (die
 //   Erfassung aktiviert dort den Ändern-Modus aus dem Routen-
 //   Parameter);
-// - „Verwerfen“ (nur queued): Zwei-Stufen-Bestätigung, danach
+// - „Verwerfen“ (queued/rejected): Zwei-Stufen-Bestätigung, danach
 //   `bookingsRepository.discard` und Navigation zurück zur Liste.
 //
 // Zoneless: asynchrone Zustände sind Signals; OnPush + Signale.
@@ -125,13 +125,15 @@ export class EntriesDetailComponent implements OnInit {
     return formatCents(cents);
   }
 
-  /**
-   * Status-Anzeige (P5): `queued` → „ausstehend“, sonst roher Status
-   * (Schritt 8 kennt nur `queued`; `confirmed`/`unknown` werden roh
-   * angezeigt).
-   */
+  /** Lokaler Übertragungsstatus für die Eingabenansicht. */
   statusLabel(status: LocalBookingDetail['status']): string {
-    return status === 'queued' ? 'ausstehend' : status;
+    return {
+      queued: 'ausstehend',
+      sending: 'Bestätigung ausstehend',
+      confirmed: 'synchronisiert',
+      rejected: 'abgelehnt',
+      unknown: 'unbekannt',
+    }[status];
   }
 
   /**
@@ -142,7 +144,11 @@ export class EntriesDetailComponent implements OnInit {
    */
   async onDiscard(): Promise<void> {
     const detail = this.detail();
-    if (detail === null || this.discarding()) {
+    if (
+      detail === null ||
+      (detail.status !== 'queued' && detail.status !== 'rejected') ||
+      this.discarding()
+    ) {
       return;
     }
     if (!this.confirmingDiscard()) {

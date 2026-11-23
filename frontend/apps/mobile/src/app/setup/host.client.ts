@@ -6,6 +6,9 @@ import {
   LarioHostService,
   MasterDataEndpointsService,
   OpenAPI,
+  SyncEndpointsService,
+  type DeviceDto,
+  type BootstrapResponseDto,
 } from '../../generated';
 
 /**
@@ -168,6 +171,41 @@ export class HostClient {
       expiresInMinutes: Number(login.expiresInMinutes),
       token: login.token,
     };
+  }
+
+  /** Gerätekopplung mit Sitzungstoken, konsistenter Snapshot mit Gerätetoken. */
+  async pair(): Promise<DeviceDto> {
+    return SyncEndpointsService.syncPair({ name: 'Lario Android' });
+  }
+
+  async bootstrap(device: DeviceDto, sessionToken: string): Promise<BootstrapResponseDto> {
+    if (!device.id || !device.token) throw new Error('Ungültige Gerätekopplung');
+    OpenAPI.TOKEN = device.token;
+    try {
+      const result = await SyncEndpointsService.syncBootstrap();
+      for (const value of [result.cursor, result.dbGeneration, result.protocolGeneration]) {
+        if (!Number.isSafeInteger(Number(value)) || Number(value) < 0) {
+          throw new Error('Ungültiger Synchronisationsstand des Hosts');
+        }
+      }
+      if (![result.accounts, result.pools, result.categories, result.taxCategories].every(Array.isArray)) {
+        throw new Error('Unvollständiger Stammdaten-Snapshot');
+      }
+      return result;
+    } finally {
+      OpenAPI.TOKEN = sessionToken;
+    }
+  }
+
+  /** Nicht lokal gespeicherte Kopplung nach einem Fehler zurücknehmen. */
+  async revokePair(host: string, sessionToken: string, deviceId: string): Promise<void> {
+    OpenAPI.BASE = host;
+    OpenAPI.TOKEN = sessionToken;
+    try {
+      await SyncEndpointsService.syncRevokeDevice(deviceId);
+    } catch {
+      // Bei verlorenem Netz später in der Desktop-Geräteverwaltung widerrufen.
+    }
   }
 
   /**

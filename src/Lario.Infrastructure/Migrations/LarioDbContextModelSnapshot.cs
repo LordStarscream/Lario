@@ -532,6 +532,126 @@ namespace Lario.Infrastructure.Migrations
                     b.ToTable("ReversalDeltas", (string)null);
                 });
 
+            modelBuilder.Entity("Lario.Infrastructure.SyncChange", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("DbGeneration")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EntityId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("sync_changes", (string)null);
+                });
+
+            modelBuilder.Entity("Lario.Infrastructure.SyncDevice", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastUsedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("sync_devices", (string)null);
+                });
+
+            modelBuilder.Entity("Lario.Infrastructure.SyncOperation", b =>
+                {
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OperationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("AcceptedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BookingId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("DeviceId", "OperationId");
+
+                    b.ToTable("sync_operations", (string)null);
+                });
+
+            modelBuilder.Entity("Lario.Infrastructure.SyncProtocolState", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CursorCounter")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("DbGeneration")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("ProtocolGeneration")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("sync_protocol_state", (string)null);
+                });
+
             modelBuilder.Entity("Lario.Domain.Attachments.Attachment", b =>
                 {
                     b.HasOne("Lario.Domain.Journal.Booking", null)

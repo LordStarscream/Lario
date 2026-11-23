@@ -94,6 +94,15 @@ function defaultRouter(): (url: string, init?: RequestInit) => Promise<Response>
     if (u.includes('/api/v1/auth/login')) {
       return Promise.resolve(jsonResponse(200, { token: 'tok-1', expiresInMinutes: 30 }));
     }
+    if (u.includes('/api/v1/sync/pair')) {
+      return Promise.resolve(jsonResponse(200, {id: 'paired-1', name: 'Android', token: 'device-token', createdAtUtc: '2026-11-19T00:00:00Z', revokedAtUtc: null, lastUsedAtUtc: null}));
+    }
+    if (u.includes('/api/v1/sync/bootstrap')) {
+      return Promise.all(['/api/v1/accounts', '/api/v1/pools', '/api/v1/categories', '/api/v1/tax-categories'].map(path => defaultRouter()(path).then(r => r.json())))
+        .then(([accounts, pools, categories, taxCategories]) => jsonResponse(200, {dbGeneration: 1, protocolGeneration: 1, cursor: 4, accounts, pools, categories, taxCategories}));
+    }
+    if (u.includes('/api/v1/auth/logout')) return Promise.resolve(jsonResponse(204, {}));
+    if (u.includes('/api/v1/sync/devices/')) return Promise.resolve(jsonResponse(204, {}));
     if (u.includes('/api/v1/accounts')) {
       return Promise.resolve(jsonResponse(200, [
         { id: 'acc-1', name: 'Giro', type: 'bank', isInterestBearing: false, status: 'active', baseRevision: 1 },
@@ -208,7 +217,7 @@ describe('SetupComponent (Batch C)', () => {
     expect(OpenAPI.TOKEN).toBe('tok-1');
     expect(comp.passwordRemembered()).toBe(true);
     // Genau ein Batch: Login + 4 Listen.
-    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch).toHaveBeenCalledTimes(7);
   });
 
   it('saveAndLoad: Login ok, listPools 500 → Fehler, keine auth-Meta, Widerruf des ausgestellten Tokens (kein Re-Login)', async () => {
@@ -258,7 +267,7 @@ describe('SetupComponent (Batch C)', () => {
     // Persist-Batch widerruft den ausgestellten Token (P2-Regression,
     // Batch-C-Review) und entfernt den Bearer (keine vorherige
     // Verbindung).
-    expect(mockFetch).toHaveBeenCalledTimes(6);
+    expect(mockFetch).toHaveBeenCalledTimes(9);
     expect(mockFetch.mock.calls.filter(([url]) =>
       String(url).includes('/api/v1/auth/login'),
     )).toHaveLength(1);
@@ -295,6 +304,11 @@ describe('SetupComponent (Batch C)', () => {
               : [{ id: 'acc-B', name: 'Konto B', type: 'bank', isInterestBearing: false, status: 'active', baseRevision: 1 }],
           ),
         );
+      }
+      if (u.includes('/api/v1/sync/bootstrap')) {
+        return Promise.resolve(jsonResponse(200, {dbGeneration: 1, protocolGeneration: 1, cursor: 4,
+          accounts: [{id: u.startsWith('http://host-a') ? 'acc-A' : 'acc-B', name: u.startsWith('http://host-a') ? 'Konto A' : 'Konto B', type: 'bank', isInterestBearing: false, status: 'active', baseRevision: 1}],
+          pools: [], categories: [], taxCategories: []}));
       }
       if (u.includes('/api/v1/auth/logout')) {
         return Promise.resolve(jsonResponse(204, {}));
@@ -394,7 +408,7 @@ describe('SetupComponent (Batch C)', () => {
     expect(comp.passwordRemembered()).toBe(false);
     // 5 Calls (connect) + 1 Call (Widerruf des gemerkten Tokens, kein
     // Re-Login, P2 Batch-C-Review).
-    expect(mockFetch).toHaveBeenCalledTimes(6);
+    expect(mockFetch).toHaveBeenCalledTimes(9);
     expect(mockFetch.mock.calls.filter(([url]) =>
       String(url).includes('/api/v1/auth/login'),
     )).toHaveLength(1);
@@ -430,7 +444,7 @@ describe('SetupComponent (Batch C)', () => {
     expect(comp.busy()).toBe(false);
     expect(comp.status()).toBe('success');
     // Genau ein fetch-Batch: 1 Login + 4 Listen (kein zweiter Login).
-    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch).toHaveBeenCalledTimes(7);
     expect(mockFetch.mock.calls.filter(([url]) =>
       String(url).includes('/api/v1/auth/login'),
     )).toHaveLength(1);
@@ -489,7 +503,7 @@ describe('SetupComponent (Batch C)', () => {
     expect(dbState.meta.get('auth.host')).toBe('http://192.168.1.226:8080');
     expect(dbState.meta.get('auth.token')).toBe('tok-1');
     // 1 Login + 4 Listen (kein Logout-Call).
-    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch).toHaveBeenCalledTimes(7);
     expect(mockFetch.mock.calls.filter(([url]) =>
       String(url).includes('/api/v1/auth/logout'),
     )).toHaveLength(0);
@@ -527,7 +541,7 @@ describe('SetupComponent (Batch C)', () => {
     expect(dbState.meta.get('auth.host')).toBeUndefined();
     expect(dbState.meta.get('auth.token')).toBeUndefined();
     // 5 (connect) + 1 (Logout) Calls — kein zweiter connect-Batch.
-    expect(mockFetch).toHaveBeenCalledTimes(6);
+    expect(mockFetch).toHaveBeenCalledTimes(9);
     expect(mockFetch.mock.calls.filter(([url]) =>
       String(url).includes('/api/v1/auth/login'),
     )).toHaveLength(1);

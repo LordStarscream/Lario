@@ -534,45 +534,17 @@ public static class MasterDataEndpoints
         catalog.FindCategory(id)
             ?? throw new InvalidReferenceException($"Unbekannte Kategorie '{id}'.");
 
-    private static AccountDto ToDto(Account account) => new(
-        account.Id,
-        account.Name,
-        AccountTypeToString(account.Type),
-        account.IsInterestBearing,
-        StatusToString(account.Status),
-        account.BaseRevision);
-
-    private static PoolDto ToDto(Pool pool) => new(
-        pool.Id,
-        pool.Name,
-        StatusToString(pool.Status),
-        pool.BaseRevision);
-
+    // DTO-Mapping in <see cref="MasterDataDtoMapper"/>, damit der
+    // Sync-Bootstrap (Schritt 9) exakt dieselben DTOs liefert wie diese
+    // Endpunkte.
+    private static AccountDto ToDto(Account account) => MasterDataDtoMapper.ToDto(account);
+    private static PoolDto ToDto(Pool pool) => MasterDataDtoMapper.ToDto(pool);
     private static CategoryDto ToDto(Category category, MasterDataCatalog catalog)
-    {
-        var preset = catalog.ResolveEffectivePreset(category.Id);
-        return new CategoryDto(
-            category.Id,
-            category.Name,
-            category.ParentId,
-            StatusToString(category.Status),
-            category.BaseRevision,
-            preset is null ? null : ToPresetDto(preset, catalog));
-    }
-
-    private static TaxCategoryDto ToDto(TaxCategory taxCategory) => new(
-        taxCategory.Id,
-        taxCategory.Name,
-        taxCategory.ParentId,
-        StatusToString(taxCategory.Status),
-        taxCategory.BaseRevision);
-
-    private static TaxPresetDto ToPresetDto(TaxPreset preset, MasterDataCatalog catalog) => new(
-        preset.TaxRelevant,
-        preset.TaxCategoryId,
-        preset.TaxCategoryId is { } id ? catalog.FindTaxCategory(id)?.Name : null,
-        preset.InheritToChildren,
-        preset.BaseRevision);
+        => MasterDataDtoMapper.ToDto(category, catalog);
+    private static TaxCategoryDto ToDto(TaxCategory taxCategory)
+        => MasterDataDtoMapper.ToDto(taxCategory);
+    private static TaxPresetDto ToPresetDto(TaxPreset preset, MasterDataCatalog catalog)
+        => MasterDataDtoMapper.ToPresetDto(preset, catalog);
 
     // ---------- Protokoll-Hilfen (keine Fachlogik) ----------
 
@@ -581,13 +553,6 @@ public static class MasterDataEndpoints
     /// Client-Ids für Stammdaten fest (anders als bei Buchungen, T4).
     /// </summary>
     private static string NewId(string prefix) => $"{prefix}-{Guid.NewGuid():N}";
-
-    private static string AccountTypeToString(AccountType type) => type switch
-    {
-        AccountType.Bank => "bank",
-        AccountType.Savings => "savings",
-        _ => throw new LarioDomainException($"Unbekannter Kontotyp '{type}'.")
-    };
 
     private static AccountType ParseAccountType(string? value) =>
         string.IsNullOrWhiteSpace(value)
@@ -600,11 +565,4 @@ public static class MasterDataEndpoints
                 _ => throw new LarioDomainException(
                     $"Kontotyp '{value}' ist unbekannt; erlaubt sind 'bank' und 'savings'.")
             };
-
-    private static string StatusToString(EntityStatus status) => status switch
-    {
-        EntityStatus.Active => "active",
-        EntityStatus.Archived => "archived",
-        _ => throw new LarioDomainException($"Unbekannter Status '{status}'.")
-    };
 }

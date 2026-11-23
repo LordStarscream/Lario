@@ -1,3 +1,24 @@
+<section class="entries-sync" aria-label="Synchronisation">
+  <p data-testid="sync-pending">{{ syncService.pending() }} Eingaben ausstehend</p>
+  <button
+    type="button"
+    data-testid="sync-start"
+    [disabled]="syncService.busy() || !syncService.configured()"
+    (click)="synchronize()"
+  >
+    {{ syncService.busy() ? 'Synchronisation läuft …' : 'Synchronisieren' }}
+  </button>
+  @if (!syncService.configured()) {
+    <p>Gerät zuerst in der <a routerLink="/einrichtung">Einrichtung</a> verbinden.</p>
+  }
+  @if (syncService.message(); as message) {
+    <p role="status" data-testid="sync-message">{{ message }}</p>
+  }
+  @if (syncLoadError(); as error) {
+    <p role="alert">{{ error }}</p>
+  }
+</section>
+
 <!-- Batch E (P5) — Eingaben-Liste. Zoneless: keine manuelle
      Change-Detection; Signale + OnPush. Built-in Control Flow. -->
 @if (notice()) {
@@ -29,18 +50,34 @@
             <div class="entries-item-meta">{{ poolLabel(item.poolIds) }}</div>
           }
         </div>
-        <div class="entries-item-status" [class.sent]="item.status !== 'queued'">
+        <div class="entries-item-status" [class.sent]="item.status === 'confirmed'">
           {{ statusLabel(item.status) }}
         </div>
+        @if (item.status === 'rejected') {
+          <p class="entries-error" data-testid="entry-rejected">
+            {{ item.statusReason ?? 'Der Host hat diese Eingabe abgelehnt.' }}
+            Bitte ändern oder verwerfen.
+          </p>
+        }
+        @if (item.status === 'sending') {
+          <p data-testid="entry-sending">
+            Erneut synchronisieren, um die Übernahme zu bestätigen.
+            Bis dahin ist diese Eingabe gesperrt.
+          </p>
+        }
         <div class="entries-item-actions">
-          <a
-            [routerLink]="['/erfassen', item.bookingId]"
-            data-testid="entry-edit"
-            >Ändern</a
-          >
-          <a [routerLink]="['/eingaben', item.bookingId]" data-testid="entry-discard"
-            >Verwerfen</a
-          >
+          @if (!syncService.busy() && (item.status === 'queued' || item.status === 'rejected')) {
+            <a
+              [routerLink]="['/erfassen', item.bookingId]"
+              data-testid="entry-edit"
+              >Ändern</a
+            >
+            <a [routerLink]="['/eingaben', item.bookingId]" data-testid="entry-discard"
+              >Verwerfen</a
+            >
+          } @else {
+            <a [routerLink]="['/eingaben', item.bookingId]">Anzeigen</a>
+          }
         </div>
       </li>
     }
