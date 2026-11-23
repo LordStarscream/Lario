@@ -82,6 +82,35 @@ public class OpeningBalanceSpecTests
         Assert.Throws<LarioDomainException>(() => spec.ValidateAgainst(Catalog()));
     }
 
+    [Fact(DisplayName = "Null-Gesamtbetrag wird abgelehnt (L3: belegt Konto dauerhaft ohne Finanzwirkung)")]
+    public void ZeroTotal_IsRejected()
+    {
+        var catalog = Catalog();
+
+        // Ein 0-€-Anfangsbestand ist ein Datenfehler: über die
+        // Einmaligkeitsregel (Zwischenstep 7.5) würde das Konto dauerhaft
+        // belegt, ohne dass eine Finanzwirkung entsteht. Konsistent mit
+        // dem Korrekturweg (CorrectionSpec), der nur positive
+        // Gesamtbeträge zulässt.
+        var zeroTotal = new OpeningBalanceSpec(
+            "init-zero", DateOnly.FromDateTime(new DateTime(2026, 1, 1)), "acc-haupt",
+            Money.Zero, []);
+        var ex = Assert.Throws<LarioDomainException>(() => zeroTotal.ValidateAgainst(catalog));
+        Assert.Contains("muss positiv sein", ex.Message);
+
+        // Auch mit Verteilung bleibt der 0-€-Gesamtbetrag ungültig.
+        var zeroWithDistribution = new OpeningBalanceSpec(
+            "init-zero2", DateOnly.FromDateTime(new DateTime(2026, 1, 1)), "acc-haupt",
+            Money.Zero, [new PoolAllocation("pool-flex", Money.Zero)]);
+        Assert.Throws<LarioDomainException>(() => zeroWithDistribution.ValidateAgainst(catalog));
+
+        // 1 Cent ist der kleinste gültige Betrag.
+        var oneCent = new OpeningBalanceSpec(
+            "init-onecent", DateOnly.FromDateTime(new DateTime(2026, 1, 1)), "acc-haupt",
+            Money.FromCents(1), []);
+        oneCent.ValidateAgainst(catalog);
+    }
+
     [Fact(DisplayName = "Negativer Gesamtbetrag und negativer Teilbetrag werden abgelehnt")]
     public void NegativeAmounts_AreRejected()
     {

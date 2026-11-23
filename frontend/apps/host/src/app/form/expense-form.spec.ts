@@ -1,4 +1,4 @@
-import { TestBed } from '@angular/core/testing';
+import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ActivatedRoute, Router } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -972,5 +972,118 @@ describe('ExpenseForm (Review R7-5: Note-Semantik in der Korrektur)', () => {
       .mock.calls[0] as [string, CorrectionCommand];
     // Unverändert → null: der Server hält die Original-Notiz.
     expect(command.note).toBeNull();
+  });
+});
+
+/**
+ * Review-Nachgang L2 (LordStarscream): Validierungshinweise erst nach
+ * dem ersten Absenden — das Formular startet ohne Hinweise, der Button
+ * bleibt aktiv und leitet fehlende Felder auf den Hinweis aus. Ein
+ * dauernd deaktivierter Button ohne Erklärung ist keine brauchbare
+ * Fehlermeldung.
+ */
+describe('ExpenseForm — Validierung erst nach Submit (Review L2)', () => {
+  async function renderForm(): Promise<{
+    fixture: ComponentFixture<ExpenseForm>;
+    component: ExpenseForm;
+  }> {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [ExpenseForm],
+      providers: [
+        {
+          provide: Router,
+          useValue: {
+            navigate: vi.fn().mockResolvedValue(true),
+            navigateByUrl: vi.fn().mockResolvedValue(true),
+          },
+        },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: {
+              paramMap: {
+                get: (key: string) => (key === 'id' ? null : null),
+              },
+            },
+          },
+        },
+        {
+          provide: CatalogService,
+          useValue: {
+            accounts: () => [],
+            pools: () => [],
+            categories: () => [],
+            taxCategories: () => [],
+            load: vi.fn().mockResolvedValue(undefined),
+          } as unknown as CatalogService,
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(ExpenseForm);
+    fixture.detectChanges();
+    return { fixture, component: fixture.componentInstance };
+  }
+
+  function hint(root: Element): Element | null {
+    return root.querySelector('.issue-hint');
+  }
+
+  it('zeigt vor dem ersten Submit keinen Hinweis — der Button ist aktiv', async () => {
+    const { fixture, component } = await renderForm();
+    const root = fixture.nativeElement as Element;
+
+    expect(component.submitAttempted()).toBe(false);
+    expect(component.formIssue()).not.toBeNull(); // Formular ist leer
+    expect(hint(root)).toBeNull();
+    const button = root.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    );
+    expect(button?.disabled).toBe(false);
+  });
+
+  it('zeigt nach Submit mit fehlenden Feldern einen Hinweis — ohne API-Call', async () => {
+    const { fixture, component } = await renderForm();
+
+    // Leeres Formular absenden: es fehlt das Konto.
+    await component.submit();
+    fixture.detectChanges();
+
+    expect(component.submitAttempted()).toBe(true);
+    expect(component.formIssue()).not.toBeNull();
+    expect(hint(fixture.nativeElement as Element)?.textContent).toContain(
+      'Konto fehlt',
+    );
+    // Keine Buchung angefragt.
+    expect(JournalWriteEndpointsService.createExpense).not.toHaveBeenCalled();
+    expect(
+      JournalWriteEndpointsService.correctBooking,
+    ).not.toHaveBeenCalled();
+    // Der Button bleibt aktiv — er leitet auf den Hinweis aus.
+    const button = (fixture.nativeElement as Element).querySelector<
+      HTMLButtonElement
+    >('button[type="submit"]');
+    expect(button?.disabled).toBe(false);
+  });
+
+  it('lässt den Hinweis verschwinden, sobald die Eingabe vollständig ist', async () => {
+    const { fixture, component } = await renderForm();
+    const root = fixture.nativeElement as Element;
+
+    await component.submit();
+    fixture.detectChanges();
+    expect(hint(root)).not.toBeNull();
+
+    // Realistischer Weg: die Felder werden befüllt; das Input-Event auf
+    // dem Gesamtbetrag markiert die View (zoneless) und löst die
+    // erneute Auswertung des Hinweises aus.
+    fillValidForm(component);
+    const totalInput = root.querySelector<HTMLInputElement>('input[name="total"]');
+    totalInput!.value = '100,00';
+    totalInput!.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+
+    expect(component.formIssue()).toBeNull();
+    expect(hint(root)).toBeNull();
   });
 });

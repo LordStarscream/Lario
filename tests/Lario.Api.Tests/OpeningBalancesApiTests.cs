@@ -319,6 +319,52 @@ public class OpeningBalancesApiTests : IDisposable
     }
 
     [Fact]
+    public async Task Anlage_mit_0_Euro_Gesamtbetrag_wird_abgelehnt()
+    {
+        // Review-Nachgang L3: ein 0-€-Anfangsbestand ist ein Datenfehler —
+        // über die Einmaligkeitsregel (Zwischenstep 7.5) würde das Konto
+        // dauerhaft belegt, ohne Finanzwirkung. Die Anlage wird mit
+        // 400 abgelehnt; das Konto bleibt für einen echten
+        // Anfangsbestand frei.
+        var (acc1, _, _, _) = await SeedAsync();
+
+        var response = await _client.PostAsJsonAsync(
+            "/api/v1/opening-balances", new
+        {
+            id = "init-zero",
+            date = "2026-01-01",
+            total = 0L,
+            accountId = acc1,
+            distribution = new object[0],
+            note = (string?)null
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<Lario.Host.Api.ErrorResponse>();
+        Assert.Equal("validation_error", body!.Error.Code);
+        Assert.Contains("muss positiv sein", body.Error.Message);
+
+        // Das Konto ist weiterhin ohne Anfangsbestand belegt: die Anlage
+        // hat nichts geschrieben, ein gültiger Anfangsbestand ist möglich.
+        var listResponse = await _client.GetAsync("/api/v1/opening-balances");
+        listResponse.EnsureSuccessStatusCode();
+        var list = (await listResponse.Content.ReadFromJsonAsync<JsonElement>())!;
+        Assert.Equal(0, list.GetArrayLength());
+
+        var okResponse = await _client.PostAsJsonAsync(
+            "/api/v1/opening-balances", new
+        {
+            id = "init-1",
+            date = "2026-01-01",
+            total = 5_000L,
+            accountId = acc1,
+            distribution = new object[0],
+            note = (string?)null
+        });
+        okResponse.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
     public async Task Ohne_Token_401()
     {
         var anonymous = _factory.CreateClient();

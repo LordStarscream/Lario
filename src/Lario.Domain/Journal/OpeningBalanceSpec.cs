@@ -66,7 +66,12 @@ public sealed record OpeningBalanceSpec(
     /// Prüft die Vorgabedaten gegen den Stammdaten-Katalog:
     /// - Konto existiert und ist aktiv;
     /// - Pools existieren und sind aktiv, keine doppelte Pool-Zeile;
-    /// - Total ≥ 0, alle Teilbeträge ≥ 0, Summe ≤ Total (Rest sichtbar).
+    /// - Total &gt; 0, alle Teilbeträge ≥ 0, Summe ≤ Total (Rest sichtbar).
+///   Ein 0-€-Gesamtbetrag ist ein Datenfehler (Review-Nachgang L3): er
+///   belegt das Konto dauerhaft über die Einmaligkeitsregel (Zwischenstep
+///   7.5) ohne jede Finanzwirkung und ist daher bei der Anlage ungültig —
+///   konsistent mit dem Korrekturweg (CorrectionSpec), der einen
+///   korrigierten Gesamtbetrag ebenfalls nur positiv zulässt.
     /// </summary>
     public void ValidateAgainst(MasterDataCatalog catalog)
     {
@@ -85,11 +90,12 @@ public sealed record OpeningBalanceSpec(
                 $"Anfangsbestand '{Id}' referenziert archiviertes Konto '{AccountId}'.");
         }
 
-        if (Total.Cents < 0)
+        if (Total.Cents <= 0)
         {
             throw new LarioDomainException(
-                $"Anfangsbestand '{Id}' hat einen negativen Gesamtbetrag ({Total.ToEuro():0.00} €); " +
-                "negative Anfangsbestände werden in Version 1 nicht unterstützt.");
+                $"Anfangsbestand '{Id}' hat einen Gesamtbetrag von {Total.ToEuro():0.00} €; " +
+                "der Gesamtbetrag muss positiv sein — ein 0-€-Anfangsbestand " +
+                "belegt das Konto dauerhaft ohne Finanzwirkung.");
         }
 
         var seenPools = new HashSet<string>(StringComparer.Ordinal);

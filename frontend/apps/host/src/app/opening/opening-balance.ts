@@ -96,6 +96,15 @@ export class OpeningBalance {
   readonly loadError = signal<ApiErrorInfo | null>(null);
   /** Ladefehler der Liste (A3) — blockiert das Formular nicht. */
   readonly listError = signal<ApiErrorInfo | null>(null);
+  /**
+   * Validierungshinweise erscheinen erst nach dem ersten Absenden
+   * (Review-Nachgang L2, LordStarscream): das Formular startet ohne
+   * Hinweise, der Button bleibt aktiv und leitet fehlende Felder auf
+   * den Hinweis aus — ein dauernd deaktivierter Button ohne Erklärung
+   * ist keine brauchbare Fehlermeldung. Der Hinweis verschwindet,
+   * sobald die Eingabe vollständig ist.
+   */
+  readonly submitAttempted = signal(false);
 
   /**
    * Vorhandene Anfangsbestände (Zwischenstep 7.5, A3): Liste über dem
@@ -347,8 +356,13 @@ export class OpeningBalance {
       return 'Konto fehlt.';
     }
     const total = parseEuroToCents(this.totalText);
-    if (total === null || total <= 0) {
+    if (total === null) {
       return 'Gesamtbetrag fehlt oder ungültig.';
+    }
+    if (total <= 0) {
+      // L3: 0 € ist ein Datenfehler — das Konto würde dauerhaft belegt
+      // (Einmaligkeitsregel) ohne Finanzwirkung.
+      return 'Der Gesamtbetrag muss größer als 0 € sein.';
     }
     const usedPoolIds = new Set<string>();
     for (const row of this.distribution) {
@@ -377,6 +391,9 @@ export class OpeningBalance {
   // ---------- Einreichen ----------
 
   async submit(): Promise<void> {
+    // Erstes Absenden markieren: Validierungshinweise werden sichtbar
+    // (Review-Nachgang L2) — der Button selbst bleibt aktiv.
+    this.submitAttempted.set(true);
     if (this.busy() || this.issue() !== null) {
       return;
     }
@@ -476,6 +493,7 @@ export class OpeningBalance {
           `Anfangsbestand für ${savedAccountName} gebucht — nächstes ` +
             'Konto erfassen.',
         );
+        this.submitAttempted.set(false);
         this.accountId = '';
         this.totalText = '';
         this.note = '';

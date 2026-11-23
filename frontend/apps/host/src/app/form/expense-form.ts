@@ -143,6 +143,15 @@ export class ExpenseForm implements OnInit {
   readonly submitError = signal<ApiErrorInfo | null>(null);
   readonly busy = signal(false);
   readonly success = signal<string | null>(null);
+  /**
+   * Validierungshinweise erscheinen erst nach dem ersten Absenden
+   * (Review-Nachgang L2, LordStarscream): das Formular startet ohne
+   * Hinweise, der Button bleibt aktiv und leitet fehlende Felder auf
+   * den Hinweis aus — ein dauernd deaktivierter Button ohne Erklärung
+   * ist keine brauchbare Fehlermeldung. Der Hinweis verschwindet,
+   * sobald die Eingabe vollständig ist.
+   */
+  readonly submitAttempted = signal(false);
 
   constructor() {
     const id = this.route.snapshot.paramMap.get('id');
@@ -613,6 +622,9 @@ export class ExpenseForm implements OnInit {
   }
 
   async submit(): Promise<void> {
+    // Erstes Absenden markieren: Validierungshinweise werden sichtbar
+    // (Review-Nachgang L2) — der Button selbst bleibt aktiv.
+    this.submitAttempted.set(true);
     if (this.busy() || this.formIssue() !== null) {
       return;
     }
