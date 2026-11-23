@@ -58,6 +58,12 @@ nochmal in ein Feld klickt, taucht der Banner „Anmeldung fehlgeschlagen“ auf
 **Abnahmekriterium für den Fix:** Falsches Passwort → Banner erscheint
 **ohne** weitere Benutzerinteraktion; Button wird sofort wieder aktiv.
 
+**Status:** **geschlossen** — `login.ts` nutzt Signale für `error`/`busy`
+(Angular signal-based refresh, kein `setTimeout`-Workaround) und
+`login.spec.ts` deckt die Abnahmekriterien ab (401 → Banner ohne
+weitere Interaktion, Button frei; während des Verkehrs gesperrt).
+Nachgewiesen auf `main` am 23.11.2026.
+
 ### L2 [P2] — Formular-Validierung zeigt rote Fehlerzeile ohne jeden Benutzerfehler
 
 **Nutzerbefund (21. Okt. 2026, Browser):** Im Anfangsbestände-Formular
@@ -99,8 +105,16 @@ einen Klick; er ist einfach immer da.
   fehlenden Feldern; Hinweis verschwindet bei korrekter Eingabe; keine
   Anfrage bei unvollständigem Formular.
 
-**Status:** offen (Befund festgehalten 21. Okt. 2026; Fix nicht beauftragt —
-Nutzer: Befunde sammeln, Fixes bündeln)
+**Status:** **fixiert 23.11.2026** (Branch `step/7-abnahme-fixes`, Nutzer hat
+am 23.11.2026 „7 fertig machen“ beauftragt): `submitAttempted`-Signal in
+`opening-balance.ts` und `expense-form.ts` (beim Submit gesetzt, nach
+erfolgreichem Speichern zurückgesetzt); Hinweis nur bei
+`submitAttempted && issue`; Button wird nicht mehr durch `issue` deaktiviert
+(bleibt aktiv, `submit()` validiert und sendet bei unvollständigem Formular
+nichts). Host-UI-Tests: kein Hinweis vor erstem Submit, Hinweis nach Submit
+mit fehlenden Feldern, Hinweis verschwindet bei korrekter Eingabe, keine
+Anfrage bei unvollständigem Formular (jeweils in `opening-balance.spec.ts`
+und `expense-form.spec.ts`). Frontend-Suite grün: 317/317.
 
 ### L3 [P3] — Anfangsbestand 0 €: UI blockt, API akzeptiert (Inkonsistenz)
 
@@ -124,8 +138,16 @@ Anfangsbestand erhalten (409).
 (+ Tests), UI-Meldung klarer („Der Gesamtbetrag muss größer als 0 € sein“).
 UI-Sperre bleibt.
 
-**Status:** offen (Befund festgehalten 21. Okt. 2026; Fix nicht beauftragt —
-Nutzer: Befunde sammeln, Fixes bündeln)
+**Status:** **fixiert 23.11.2026** (Branch `step/7-abnahme-fixes`, gemäß
+Empfehlung oben): Domain-Regel auf `Total > 0` nachgeschärft
+(`OpeningBalanceSpec.ValidateAgainst`: `Total.Cents <= 0` →
+`LarioDomainException` mit klarer Begründung — konsistent mit dem
+Korrekturweg); UI-Meldung getrennt: „Der Gesamtbetrag muss größer als
+0 € sein.“ Tests: Domain-Regeltest (0 € abgelehnt, positiv akzeptiert,
+negativ weiterhin abgelehnt), API-Integrationstest gegen echte SQLite
+(POST 0 € → 400, Konto bleibt frei für echten Anfangsbestand), UI-Test
+für die 0-€-Meldung. .NET-Suite grün (Domain 215, API 160,
+Infrastructure 200), Frontend 317/317.
 
 ### Anmerkung: Einnahmen-UI noch nicht vorhanden (kein Befund)
 
@@ -244,9 +266,9 @@ geplant ist, dann passt das erst mal so“ — Befund sammeln, nicht jetzt ände
 
 ## Status
 
-- L1: offen (Befund festgehalten 20. Okt. 2026; Fix nicht beauftragt).
-- L2: offen (Befund festgehalten 21. Okt. 2026; Fix nicht beauftragt).
-- L3: offen (Befund festgehalten 21. Okt. 2026; Fix nicht beauftragt).
+- L1: **geschlossen** (Fix auf `main` nachgewiesen, 23.11.2026).
+- L2: **fixiert** 23.11.2026 auf `step/7-abnahme-fixes` (PR offen).
+- L3: **fixiert** 23.11.2026 auf `step/7-abnahme-fixes` (PR offen).
 - D1 (Verfügbarkeit): offen — Diskussionsthema nach Testabschluss.
 - D2 (Transfer-UI): **geschlossen 21.10.2026** — verbindlich Schritt 12
   zugeordnet, im Implementierungsplan konkretisiert.

@@ -287,7 +287,10 @@
       </div>
     }
 
-    @if (issueText) {
+    @if (submitAttempted() && issueText) {
+      <!-- Review-Nachgang L2: Hinweis erst nach dem ersten Absenden;
+           der Button bleibt aktiv und leitet fehlende Felder auf
+           diesen Hinweis aus. -->
       <p class="form-hint issue-hint">{{ issueText }}</p>
     }
 
@@ -300,7 +303,7 @@
       <button
         type="submit"
         class="btn btn-primary"
-        [disabled]="busy() || issueText !== null"
+        [disabled]="busy()"
       >
         {{
           busy()

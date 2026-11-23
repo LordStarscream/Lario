@@ -873,3 +873,127 @@ describe('OpeningBalance — bleibt nach Speichern auf der Seite (offener Punkt 
     expect(rows.length).toBe(1);
   });
 });
+
+/**
+ * Review-Nachgang L2 (LordStarscream): Validierungshinweise erst nach
+ * dem ersten Absenden — das Formular startet ohne Hinweise, der Button
+ * bleibt aktiv und leitet fehlende Felder auf den Hinweis aus. Ein
+ * dauernd deaktivierter Button ohne Erklärung ist keine brauchbare
+ * Fehlermeldung.
+ */
+describe('OpeningBalance — Validierung erst nach Submit (Review L2)', () => {
+  const acc1 = { id: 'acc-1', name: 'Konto Eins', status: 'active' };
+  const acc2 = { id: 'acc-2', name: 'Konto Zwei', status: 'active' };
+
+  function emptyBalances(): BalancesDto {
+    return {
+      accounts: [],
+      pools: [],
+      totalAccountBalance: 0,
+      totalPoolBalance: 0,
+      totalIncome: 0,
+      accountPoolGap: 0,
+      unallocatedOpeningBalances: [],
+    };
+  }
+
+  async function renderForm(): Promise<{
+    fixture: ComponentFixture<OpeningBalance>;
+    component: OpeningBalance;
+  }> {
+    vi.mocked(JournalEndpointsService.listOpeningBalances).mockResolvedValue([]);
+    vi.mocked(JournalEndpointsService.getBalances).mockResolvedValue(
+      emptyBalances(),
+    );
+    const fixture = createFixture(null, [acc1, acc2], true);
+    const component = fixture.componentInstance;
+    await vi.waitFor(() => expect(component.loading()).toBe(false));
+    fixture.detectChanges();
+    return { fixture, component };
+  }
+
+  function hint(root: Element): Element | null {
+    return root.querySelector('.issue-hint');
+  }
+
+  function submitButton(root: Element): HTMLButtonElement | null {
+    return root.querySelector('button[type="submit"]');
+  }
+
+  it('zeigt vor dem ersten Submit keinen Hinweis — der Button ist aktiv', async () => {
+    const { fixture, component } = await renderForm();
+    const root = fixture.nativeElement as Element;
+
+    expect(component.submitAttempted()).toBe(false);
+    expect(component.issue()).not.toBeNull(); // Formular ist leer
+    expect(hint(root)).toBeNull();
+    expect(submitButton(root)?.disabled).toBe(false);
+  });
+
+  it('zeigt nach Submit mit fehlenden Feldern einen Hinweis — ohne API-Call', async () => {
+    const { fixture, component } = await renderForm();
+
+    // Leeres Formular absenden: es fehlen Konto und Betrag.
+    await component.submit();
+    fixture.detectChanges();
+
+    expect(component.submitAttempted()).toBe(true);
+    expect(component.issue()).not.toBeNull();
+    expect(hint(fixture.nativeElement as Element)?.textContent).toContain(
+      'Konto fehlt',
+    );
+    // Keine Buchung angefragt.
+    expect(
+      JournalWriteEndpointsService.createOpeningBalance,
+    ).not.toHaveBeenCalled();
+    // Der Button bleibt aktiv — er leitet auf den Hinweis aus.
+    expect(
+      submitButton(fixture.nativeElement as Element)?.disabled,
+    ).toBe(false);
+  });
+
+  it('lässt den Hinweis verschwinden, sobald die Eingabe vollständig ist', async () => {
+    const { fixture, component } = await renderForm();
+    const root = fixture.nativeElement as Element;
+
+    await component.submit();
+    fixture.detectChanges();
+    expect(hint(root)).not.toBeNull();
+
+    // Realistischer Weg: der User wählt das Konto und tippt den Betrag
+    // ein — ngModel übernimmt über die DOM-Events (zoneless: das Event
+    // markiert die View und löst die erneute Auswertung des Hinweises
+    // aus; ein rein programmatisches Setzen der Properties würde das
+    // nicht).
+    const accountSelect = root.querySelector<HTMLSelectElement>(
+      'select[name="accountId"]',
+    );
+    accountSelect!.value = 'acc-1';
+    accountSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+    const totalInput = root.querySelector<HTMLInputElement>(
+      'input[name="totalText"]',
+    );
+    totalInput!.value = '100,00';
+    totalInput!.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+
+    expect(component.issue()).toBeNull();
+    expect(hint(root)).toBeNull();
+  });
+
+  it('zeigt bei 0-€-Gesamtbetrag die klare L3-Meldung', async () => {
+    const { fixture, component } = await renderForm();
+
+    component.accountId = 'acc-1';
+    component.totalText = '0,00';
+    await component.submit();
+    fixture.detectChanges();
+
+    expect(hint(fixture.nativeElement as Element)?.textContent).toContain(
+      'Der Gesamtbetrag muss größer als 0 € sein.',
+    );
+    expect(
+      JournalWriteEndpointsService.createOpeningBalance,
+    ).not.toHaveBeenCalled();
+  });
+});
